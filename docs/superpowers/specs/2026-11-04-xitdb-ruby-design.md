@@ -1,6 +1,6 @@
 # xitdb for Ruby: compatible storage and Ruby value profiles
 
-Status: builder review complete, awaiting user approval.
+Status: approved by the user on 2026-11-04.
 
 ## Intent
 
