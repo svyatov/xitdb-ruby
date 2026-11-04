@@ -43,7 +43,9 @@ module XitDB
       end
 
       def empty_container(kind, context:, path:)
-        XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path, kind: kind)
+        kind, key_kind = kind if ::Array === kind
+        XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path,
+                                   kind: kind, key_kind: key_kind)
       end
 
       def input_kind(value, path:)
@@ -64,6 +66,12 @@ module XitDB
         when CollectionDeclaration
           unless CollectionDeclaration.equal?(klass)
             raise UnsupportedValueError.new("collection declaration subclasses are unsupported", path: path)
+          end
+          if %i[sorted_map sorted_set].include?(value.kind)
+            unless value.key_kind
+              raise UnsupportedValueError.new("Ruby sorted collections require an explicit key: kind", path: path)
+            end
+            return [value.kind, value.key_kind]
           end
           kinds = {hash_map: :map, counted_hash_map: :map, hash_set: :set, counted_hash_set: :set,
                    array_list: :array, linked_array_list: :linked_array}

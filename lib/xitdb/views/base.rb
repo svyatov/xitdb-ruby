@@ -157,8 +157,9 @@ module XitDB
         check!
         case kind
         when :map, :sorted_map
-          context.profile.key_bytes(key)
-          key.is_a?(String) ? key.dup.freeze : key
+          collection = adapter
+          collection.respond_to?(:selector_identity) ? collection.selector_identity(key) : context.profile.key_bytes(key)
+          String === key || Time === key ? key.dup.freeze : key
         when :array, :linked_array then normalize_index(key)
         else raise TypeError, "byte streams require a map or array view"
         end

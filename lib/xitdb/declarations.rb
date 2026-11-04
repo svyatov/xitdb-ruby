@@ -13,12 +13,16 @@ module XitDB
   class CollectionDeclaration
     KINDS = %i[hash_map counted_hash_map hash_set counted_hash_set array_list linked_array_list sorted_map sorted_set].freeze
 
-    attr_reader :kind
+    attr_reader :kind, :key_kind
 
-    def initialize(kind)
+    def initialize(kind, key: nil)
       raise ArgumentError, "unknown collection kind" unless KINDS.include?(kind)
+      if !nil.equal?(key) && (!%i[sorted_map sorted_set].include?(kind) || !%i[string integer float time].include?(key))
+        raise ArgumentError, "sorted key kind must be :string, :integer, :float, or :time"
+      end
 
       @kind = kind
+      @key_kind = key
       freeze
     end
 
@@ -59,11 +63,11 @@ module XitDB
     CollectionDeclaration.new(:linked_array_list)
   end
 
-  def self.sorted_map
-    CollectionDeclaration.new(:sorted_map)
+  def self.sorted_map(key: nil)
+    CollectionDeclaration.new(:sorted_map, key: key)
   end
 
-  def self.sorted_set
-    CollectionDeclaration.new(:sorted_set)
+  def self.sorted_set(key: nil)
+    CollectionDeclaration.new(:sorted_set, key: key)
   end
 end

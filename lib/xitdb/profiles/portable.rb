@@ -97,7 +97,12 @@ module XitDB
           end
           return {Hash => :hash_map, Array => :array_list, Set => :hash_set}.fetch(klass)
         end
-        value.kind if CollectionDeclaration === value
+        if CollectionDeclaration === value
+          if value.key_kind
+            raise UnsupportedValueError.new("typed sorted declarations require the Ruby profile", path: path)
+          end
+          value.kind
+        end
       end
 
       def input_entries(value, path:)

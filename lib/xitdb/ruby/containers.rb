@@ -1,16 +1,21 @@
 # frozen_string_literal: true
 
+require_relative "ordered_keys"
+
 module XitDB
   module Ruby
     class Containers
-      MARKERS = {array: 0x52420101, linked_array: 0x52420102, map: 0x52420103, set: 0x52420104}.freeze
+      MARKERS = {array: 0x52420101, linked_array: 0x52420102, map: 0x52420103, set: 0x52420104,
+                 sorted_map: 0x52420105, sorted_set: 0x52420106}.freeze
+      KEY_KINDS = {string: 1, integer: 2, float: 3, time: 4}.freeze
 
       attr_reader :kind, :cursor
 
-      def initialize(profile, cursor, context:, path:, kind: nil)
+      def initialize(profile, cursor, context:, path:, kind: nil, key_kind: nil)
         @profile, @cursor, @context, @path = profile, cursor, context, path
         if kind
           @kind = kind
+          @key_kind = key_kind
           initialize_empty
         elsif cursor.slot.empty?
           @kind = :map
@@ -30,6 +35,13 @@ module XitDB
       end
 
       def lookup(selector)
+        if sorted?
+          bytes = key_bytes(selector)
+          stored = @collection.get(bytes)
+          return sorted_entry(bytes, stored).last if stored
+
+          return nil
+        end
         return @collection.get(selector) unless ordered?
 
         bytes = key_bytes(selector)
@@ -39,7 +51,18 @@ module XitDB
       end
 
       def assign(selector, stored)
-        if ordered?
+        if sorted?
+          bytes = key_bytes(selector)
+          previous = @collection.get(bytes)
+          if previous
+            sorted_entry(bytes, previous)
+            original = kind == :sorted_set ? previous : Core::ArrayList.new(@context.cursor(previous)).get(0)
+          else
+            original = @profile.encode_scalar(selector, core: @context.database.core)
+          end
+          value = kind == :sorted_set ? original : array([original, stored]).cursor.slot
+          @collection.put(bytes, value: value)
+        elsif ordered?
           bytes = key_bytes(selector)
           initialize_empty unless @envelope
           digest = @profile.hasher.digest(bytes)
@@ -62,7 +85,14 @@ module XitDB
       end
 
       def delete(selector)
-        if ordered?
+        if sorted?
+          bytes = key_bytes(selector)
+          stored = @collection.get(bytes)
+          return self unless stored
+
+          sorted_entry(bytes, stored)
+          @collection.remove(bytes)
+        elsif ordered?
           bytes = key_bytes(selector)
           digest = @profile.hasher.digest(bytes)
           record = record_for(digest, expected_bytes: bytes)
@@ -138,7 +168,9 @@ module XitDB
         index += size if index.negative?
         return self unless index >= 0 && index < size
 
-        if kind == :linked_array
+        if sorted?
+          @collection.each_from_index(index) { |bytes, stored| yield(*sorted_entry(bytes, stored)) }
+        elsif kind == :linked_array
           @collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
         else
           (index...size).each { |position| yield position, lookup(position) }
@@ -150,7 +182,9 @@ module XitDB
         return enum_for(__method__) unless block_given?
         return self unless @envelope
 
-        if ordered?
+        if sorted?
+          @collection.each { |bytes, stored| yield(*sorted_entry(bytes, stored)) }
+        elsif ordered?
           @order.each do |id_bytes, hash_slot|
             invalid! unless id_bytes.bytesize == 8
             digest = raw_bytes(hash_slot)
@@ -165,6 +199,21 @@ module XitDB
         self
       end
 
+      def rank(selector)
+        @collection.rank(key_bytes(selector))
+      end
+
+      def each_from(selector)
+        return enum_for(__method__, selector) unless block_given?
+
+        @collection.each_from(key_bytes(selector)) { |bytes, stored| yield(*sorted_entry(bytes, stored)) }
+        self
+      end
+
+      def selector_identity(selector)
+        %i[array linked_array].include?(kind) ? selector : key_bytes(selector)
+      end
+
       protected
 
       attr_reader :collection
@@ -175,6 +224,10 @@ module XitDB
         kind == :map || kind == :set
       end
 
+      def sorted?
+        kind == :sorted_map || kind == :sorted_set
+      end
+
       def array(fields)
         output = Core::ArrayList.new(@context.cursor(Core::Slot.new))
         fields.each { |field| output.append(field) }
@@ -183,7 +236,10 @@ module XitDB
 
       def initialize_empty
         marker = Core::Slot.uint(MARKERS.fetch(kind))
-        if ordered?
+        if sorted?
+          @collection = Core::SortedMap.new(@context.cursor(Core::Slot.new))
+          @envelope = array([marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), @collection.cursor.slot])
+        elsif ordered?
           @next_id = 0
           @lookup = Core::HashMap.new(@context.cursor(Core::Slot.new), counted: true)
           @order = Core::SortedMap.new(@context.cursor(Core::Slot.new))
@@ -200,8 +256,12 @@ module XitDB
         @envelope = Core::ArrayList.new(cursor)
         marker = @envelope.get(0)
         invalid! unless marker&.tag == :uint && (@kind = MARKERS.key(marker.value))
-        invalid! unless @envelope.size == (ordered? ? 4 : 2)
-        if ordered?
+        invalid! unless @envelope.size == (ordered? ? 4 : (sorted? ? 3 : 2))
+        if sorted?
+          key, child = @envelope.get(1), @envelope.get(2)
+          invalid! unless key.tag == :uint && (@key_kind = KEY_KINDS.key(key.value)) && child.tag == :sorted_map
+          @collection = Core::SortedMap.new(@context.cursor(child))
+        elsif ordered?
           id, lookup, order = (1..3).map { |index| @envelope.get(index) }
           invalid! unless id.tag == :uint && lookup.tag == :counted_hash_map && order.tag == :sorted_map
           @next_id = id.value
@@ -218,7 +278,9 @@ module XitDB
       end
 
       def publish
-        if ordered?
+        if sorted?
+          @envelope.put(2, @collection.cursor.slot)
+        elsif ordered?
           @envelope.put(1, Core::Slot.uint(@next_id))
           @envelope.put(2, @lookup.cursor.slot)
           @envelope.put(3, @order.cursor.slot)
@@ -230,7 +292,7 @@ module XitDB
       end
 
       def key_bytes(selector)
-        @profile.key_bytes(selector)
+        sorted? ? OrderedKeys.dump(selector, kind: @key_kind) : @profile.key_bytes(selector)
       rescue ValueError => error
         raise error.class.new(error.message, path: @path + [selector]), cause: error
       end
@@ -265,6 +327,24 @@ module XitDB
         invalid! unless raw_bytes(@order.get([id.value].pack("Q>"))) == digest
         invalid! if kind == :set && record.get(1) != Core::Slot.null
         record
+      end
+
+      def sorted_entry(bytes, stored)
+        if kind == :sorted_map
+          invalid! unless stored.tag == :array_list
+          record = Core::ArrayList.new(@context.cursor(stored))
+          invalid! unless record.size == 2
+          original, value = record.get(0), record.get(1)
+        else
+          original, value = stored, Core::Slot.null
+        end
+        key = decode_key(original)
+        begin
+          invalid! unless OrderedKeys.dump(key, kind: @key_kind) == bytes
+        rescue UnsupportedValueError, UnsupportedEncodingError
+          invalid!
+        end
+        [key, value]
       end
 
       def invalid!

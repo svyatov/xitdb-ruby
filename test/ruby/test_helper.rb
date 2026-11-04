@@ -3,6 +3,7 @@
 require_relative "../test_helper"
 require "xitdb/ruby/wire"
 require "xitdb/ruby/key_encoding"
+require "xitdb/ruby/ordered_keys"
 require "xitdb/ruby/scalars"
 
 class RubyProfileTest < Minitest::Test
@@ -16,6 +17,10 @@ class RubyProfileTest < Minitest::Test
 
   def key_bytes(value)
     XitDB::Ruby::KeyEncoding.dump(value)
+  end
+
+  def ordered(value, kind)
+    XitDB::Ruby::OrderedKeys.dump(value, kind: kind)
   end
 
   def singleton_inputs

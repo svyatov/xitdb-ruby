@@ -39,6 +39,31 @@ module XitDB
 
     class SortedMap < Map
       include Sorted
+
+      def merge!(hash)
+        return super unless defined?(Profiles::Ruby) && context.profile.is_a?(Profiles::Ruby)
+
+        check!
+        context.writable!
+        unless Object.instance_method(:instance_of?).bind_call(hash, Hash)
+          raise TypeError, "merge! requires a Hash"
+        end
+        replaced = []
+        added = false
+        targets = Hash.instance_method(:keys).bind_call(hash).map { |key| path + [key] }
+        edit(targets: targets) do |collection|
+          context.profile.input_kind(hash, path: path)
+          hash.each_pair do |key, value|
+            added = true unless collection.lookup(key)
+            stored = context.profile.encode(value, context: context, path: path + [key])
+            collection.assign(key, stored)
+            replaced << key
+          end
+        end
+        replaced.each { |key| context.replace_location(path + [key]) }
+        context.change_membership(path) if added
+        self
+      end
     end
 
     class SortedSet < Set

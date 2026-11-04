@@ -206,7 +206,17 @@ module XitDB
     end
 
     def path_key(path)
-      path.map { |selector| Integer === selector ? selector : profile.key_bytes(selector) }
+      slot = root
+      path.each_with_index.map do |selector, index|
+        adapter = profile.container(slot, context: self, path: path.first(index))
+        key = if adapter.respond_to?(:selector_identity)
+          adapter.selector_identity(selector)
+        else
+          Integer === selector ? selector : profile.key_bytes(selector)
+        end
+        slot = adapter.lookup(selector) if index < path.size - 1
+        key
+      end
     end
   end
 end
