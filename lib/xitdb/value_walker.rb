@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "set"
+require_relative "input_guard"
 
 module XitDB
   module ValueWalker
@@ -14,6 +15,7 @@ module XitDB
         if current
           input, location = current
           current = nil
+          InputGuard.check!(input, path: location)
           if input.is_a?(Views::Base)
             input.check!
             unless input.context.reference_compatible?(context)

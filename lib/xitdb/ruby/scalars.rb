@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../core"
+require_relative "../input_guard"
 require_relative "wire"
 
 module XitDB
@@ -19,9 +20,7 @@ module XitDB
 
     module Scalars
       def self.encode(value, core:, registry: nil)
-        unless value.singleton_methods.empty?
-          raise UnsupportedValueError, "singleton scalar behavior is unsupported"
-        end
+        InputGuard.check!(value)
 
         payload = case value
         when nil then return Core::Slot.null

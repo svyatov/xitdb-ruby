@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "../input_guard"
+
 module XitDB
   module Profiles
     class Portable
@@ -19,6 +21,7 @@ module XitDB
       end
 
       def encode_scalar(value, core:)
+        InputGuard.check!(value)
         case value
         when nil then Core::Slot.null
         when UInt then Core::Slot.uint(value.value)
@@ -51,8 +54,8 @@ module XitDB
       end
 
       def key_bytes(value)
+        InputGuard.check!(value)
         raise UnsupportedValueError, "portable keys must be strings" unless value.is_a?(String)
-        raise UnsupportedValueError, "singleton key behavior is unsupported" unless value.singleton_methods.empty?
 
         value.b.freeze
       end
@@ -80,9 +83,7 @@ module XitDB
       end
 
       def input_kind(value, path:)
-        unless value.singleton_methods.empty?
-          raise UnsupportedValueError.new("singleton behavior is unsupported", path: path)
-        end
+        InputGuard.check!(value, path: path)
         if value.is_a?(Hash) || value.is_a?(Array) || value.is_a?(Set)
           unless [Hash, Array, Set].include?(value.class)
             raise UnsupportedValueError.new("container subclasses and singleton behavior are unsupported", path: path)

@@ -1,14 +1,13 @@
 # frozen_string_literal: true
 
 require_relative "wire"
+require_relative "../input_guard"
 
 module XitDB
   module Ruby
     module KeyEncoding
       def self.dump(value)
-        unless value.singleton_methods.empty?
-          raise UnsupportedValueError, "singleton key behavior is unsupported"
-        end
+        InputGuard.check!(value)
 
         bytes = case value
         when nil then "\x00".b

@@ -60,4 +60,14 @@ class RubyKeyEncodingTest < RubyProfileTest
       assert_equal expected, output
     end
   end
+
+  def test_rejects_all_singleton_behavior_without_calling_input_reflection
+    singleton_inputs.each do |value|
+      assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
+    end
+  end
+
+  def test_rejects_basic_object_without_object_methods
+    assert_raises(XitDB::UnsupportedValueError) { key_bytes(BasicObject.new) }
+  end
 end

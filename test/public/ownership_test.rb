@@ -34,6 +34,53 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  def test_rejects_private_singleton_keys_and_values_without_copy_hooks
+    input = +"text"
+    class << input
+      private
+
+      def hidden = true
+      def singleton_methods(*) = raise("must not call singleton_methods")
+      def singleton_class = raise("must not call singleton_class")
+      def class = raise("must not call class")
+      def is_a?(*) = raise("must not call is_a?")
+      def dup = raise("must not call dup")
+      def freeze = raise("must not call freeze")
+      def initialize_dup(*) = raise("must not call initialize_dup")
+    end
+    @db.transaction do |root|
+      root["kept"] = 1
+      bound = root.context.read_bound
+      key_error = assert_raises(XitDB::UnsupportedValueError) { root[input] = 2 }
+      assert_equal ["text"], key_error.path
+      assert key_error.path.frozen?
+      assert key_error.path.first.frozen?
+      assert_instance_of XitDB::UnsupportedValueError, key_error.cause
+      value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = input }
+      assert_equal ["value"], value_error.path
+      assert_equal bound, root.context.read_bound
+      assert_equal({"kept" => 1}, root.to_ruby)
+    end
+    refute Object.instance_method(:frozen?).bind_call(input)
+    assert_equal "text", input
+  end
+
+  def test_rejects_basic_object_keys_and_values_with_immutable_error_paths
+    @db.transaction do |root|
+      root["kept"] = 1
+      bound = root.context.read_bound
+      key_error = assert_raises(XitDB::UnsupportedValueError) { root[BasicObject.new] = 2 }
+      assert_equal ["#<unsupported BasicObject>"], key_error.path
+      assert key_error.path.frozen?
+      assert key_error.path.first.frozen?
+      assert_instance_of XitDB::UnsupportedValueError, key_error.cause
+      value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = BasicObject.new }
+      assert_equal ["value"], value_error.path
+      assert_equal bound, root.context.read_bound
+      assert_equal({"kept" => 1}, root.to_ruby)
+    end
+  end
+
   def test_rescued_assignment_is_atomic
     @db.transaction do |root|
       root["items"] = [[1], [2]]

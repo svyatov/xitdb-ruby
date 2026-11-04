@@ -119,4 +119,14 @@ class RubyScalarsTest < RubyProfileTest
     def value.special = true
     assert_raises(XitDB::UnsupportedValueError) { store(value) }
   end
+
+  def test_rejects_all_singleton_behavior_without_calling_input_reflection
+    singleton_inputs.each do |value|
+      assert_raises(XitDB::UnsupportedValueError) { store(value) }
+    end
+  end
+
+  def test_rejects_basic_object_without_object_methods
+    assert_raises(XitDB::UnsupportedValueError) { store(BasicObject.new) }
+  end
 end

@@ -27,9 +27,14 @@ module XitDB
 
     def copy_path(value)
       case value
-      when Array then value.map { |part| copy_path(part) }.freeze
-      when Hash then value.to_h { |key, part| [copy_path(key), copy_path(part)] }.freeze
-      else value.dup.freeze
+      when Array then Array.instance_method(:map).bind_call(value) { |part| copy_path(part) }.freeze
+      when Hash then Hash.instance_method(:to_h).bind_call(value) { |key, part| [copy_path(key), copy_path(part)] }.freeze
+      when String then String.new(value).freeze
+      when nil, true, false, Integer, Float, Symbol then value
+      else
+        klass = Object.instance_method(:class).bind_call(value)
+        name = Module.instance_method(:name).bind_call(klass) || "anonymous class"
+        "#<unsupported #{name}>".freeze
       end
     end
   end

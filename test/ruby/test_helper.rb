@@ -18,6 +18,41 @@ class RubyProfileTest < Minitest::Test
     XitDB::Ruby::KeyEncoding.dump(value)
   end
 
+  def singleton_inputs
+    values = %i[public protected private].map do |visibility|
+      value = +"text"
+      value.singleton_class.class_eval do
+        define_method(:hidden) { true }
+        send(visibility, :hidden)
+      end
+      value
+    end
+    extension = Module.new do
+      private
+
+      def hidden = true
+    end
+    values << (+"text").extend(extension)
+    values << (+"text").extend(extension).freeze
+    value = +"text"
+    value.singleton_class.prepend(extension)
+    values << value
+    value = +"text"
+    class << value
+      private
+
+      def bytesize = raise("must reject before bytesize")
+    end
+    values << value
+    value = +"text"
+    def value.singleton_methods(*) = []
+    def value.singleton_class = raise("must not call singleton_class")
+    def value.class = raise("must not call class")
+    def value.is_a?(*) = raise("must not call is_a?")
+    values << value
+    values
+  end
+
   def store(value)
     @core.transaction { |root| root.replace(XitDB::Ruby::Scalars.encode(value, core: @core)) }
     @core.root_cursor.slot
