@@ -6,8 +6,14 @@ require_relative "../input_guard"
 module XitDB
   module Ruby
     module KeyEncoding
+      TYPES = [NilClass, FalseClass, TrueClass, Integer, Float, String, Symbol].freeze
+      private_constant :TYPES
+
       def self.dump(value)
         InputGuard.check!(value)
+        unless TYPES.include?(Object.instance_method(:class).bind_call(value))
+          raise UnsupportedValueError, "unsupported Ruby key class"
+        end
 
         bytes = case value
         when nil then "\x00".b

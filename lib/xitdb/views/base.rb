@@ -130,6 +130,21 @@ module XitDB
 
       protected
 
+      def clear_entries
+        collection = adapter
+        needed = collection.respond_to?(:clear_needed?) ? collection.clear_needed? : !collection.size.zero?
+        return false unless needed
+
+        edit do |current|
+          if current.respond_to?(:clear)
+            current.clear
+          else
+            current.each_entry { |selector, _| current.delete(selector) }
+          end
+        end
+        true
+      end
+
       def edit(**options)
         context.mutate(path, **options) do |cursor|
           collection = context.profile.container(cursor.slot, context: context, path: path)

@@ -21,8 +21,15 @@ module XitDB
     end
 
     module Scalars
+      TYPES = [NilClass, FalseClass, TrueClass, Integer, Float, String, Symbol, Time, Date, DateTime,
+               BigDecimal, Rational, EncodedValue, Core::ByteValue].freeze
+      private_constant :TYPES
+
       def self.encode(value, core:, registry: nil)
         InputGuard.check!(value)
+        unless TYPES.include?(Object.instance_method(:class).bind_call(value))
+          raise UnsupportedValueError, "unsupported Ruby scalar class"
+        end
 
         payload = case value
         when nil then return Core::Slot.null

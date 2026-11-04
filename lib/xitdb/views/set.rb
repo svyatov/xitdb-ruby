@@ -30,9 +30,8 @@ module XitDB
       def clear
         check!
         context.writable!
-        return self if empty?
+        return self unless clear_entries
 
-        edit { |collection| collection.each_entry { |selector, _| collection.delete(selector) } }
         context.change_membership(path)
         self
       end

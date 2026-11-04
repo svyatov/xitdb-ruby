@@ -107,13 +107,8 @@ module XitDB
       def clear
         check!
         context.writable!
-        return self if empty?
+        return self unless clear_entries
 
-        context.mutate(path) do |cursor|
-          collection = context.profile.container(cursor.slot, context: context, path: path)
-          collection.each_entry { |selector, _| collection.delete(selector) }
-          cursor.replace(collection.slot)
-        end
         context.invalidate_children(path)
         context.change_membership(path)
         self

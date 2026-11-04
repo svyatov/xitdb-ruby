@@ -16,7 +16,7 @@ module XitDB
           input, location = current
           current = nil
           InputGuard.check!(input, path: location)
-          if input.is_a?(Views::Base)
+          if Views::Base === input
             input.check!
             unless input.context.reference_compatible?(context)
               raise ForeignValueError.new("view belongs to another store or file generation", path: location)
