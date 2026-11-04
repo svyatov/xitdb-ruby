@@ -1,0 +1,41 @@
+# frozen_string_literal: true
+
+require_relative "wire"
+
+module XitDB
+  module Ruby
+    module KeyEncoding
+      def self.dump(value)
+        unless value.singleton_methods.empty?
+          raise UnsupportedValueError, "singleton key behavior is unsupported"
+        end
+
+        bytes = case value
+        when nil then "\x00".b
+        when false then "\x01".b
+        when true then "\x02".b
+        when Integer then "\x03".b + Wire.z(value)
+        when Float
+          raise UnsupportedValueError, "NaN keys are unsupported" if value.nan?
+
+          "\x04".b + Wire.f64(value.zero? ? 0.0 : value)
+        when String then "\x05".b + string_body(value)
+        when Symbol then "\x06".b + string_body(value.to_s)
+        else
+          raise UnsupportedValueError, "unsupported Ruby key: #{value.class}"
+        end
+        bytes.freeze
+      end
+
+      def self.string_body(value)
+        label = if value.empty? || (value.encoding.ascii_compatible? && value.ascii_only?)
+          ""
+        else
+          value.encoding.name
+        end
+        Wire.t(label) + Wire.b(value)
+      end
+      private_class_method :string_body
+    end
+  end
+end
