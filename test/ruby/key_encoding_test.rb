@@ -70,4 +70,13 @@ class RubyKeyEncodingTest < RubyProfileTest
   def test_rejects_basic_object_without_object_methods
     assert_raises(XitDB::UnsupportedValueError) { key_bytes(BasicObject.new) }
   end
+
+  def test_rejects_extensions_without_calling_their_identity_hooks
+    each_identity_hook_input do |value, calls, behavior|
+      assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { key_bytes(value) }
+      assert_empty calls
+      assert_equal "text", value
+    end
+    assert_equal "05000474657874", key_bytes("text".freeze).unpack1("H*")
+  end
 end

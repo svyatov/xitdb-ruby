@@ -17,7 +17,7 @@ module XitDB
       end
       klass = Object.instance_method(:class).bind_call(value)
       Module.instance_method(:ancestors).bind_call(singleton).each do |ancestor|
-        break if ancestor.equal?(klass)
+        break if BasicObject.instance_method(:equal?).bind_call(ancestor, klass)
 
         %i[public_instance_methods protected_instance_methods private_instance_methods].each do |visibility|
           unless Module.instance_method(visibility).bind_call(ancestor, false).empty?

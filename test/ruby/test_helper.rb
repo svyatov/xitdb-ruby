@@ -53,6 +53,27 @@ class RubyProfileTest < Minitest::Test
     values
   end
 
+  def each_identity_hook_input
+    %i[true false mutate raise].each do |behavior|
+      value = +"text"
+      calls = []
+      extension = Module.new do
+        private
+
+        def hidden = true
+      end
+      extension.define_singleton_method(:equal?) do |*|
+        calls << behavior
+        value.replace("changed") if behavior == :mutate
+        raise "identity hook ran" if behavior == :raise
+
+        behavior != :false
+      end
+      value.extend(extension)
+      yield value, calls, behavior
+    end
+  end
+
   def store(value)
     @core.transaction { |root| root.replace(XitDB::Ruby::Scalars.encode(value, core: @core)) }
     @core.root_cursor.slot

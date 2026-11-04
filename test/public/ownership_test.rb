@@ -81,6 +81,35 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  def test_rejects_extensions_without_calling_their_identity_hooks
+    %i[true false mutate raise].each do |behavior|
+      input = +"text"
+      calls = []
+      extension = Module.new do
+        private
+
+        def hidden = true
+      end
+      extension.define_singleton_method(:equal?) do |*|
+        calls << behavior
+        input.replace("changed") if behavior == :mutate
+        raise "identity hook ran" if behavior == :raise
+
+        behavior != :false
+      end
+      input.extend(extension)
+      @db.transaction do |root|
+        assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { root[input] = input }
+        assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { root["value"] = input }
+        assert_empty calls
+        assert_equal "text", input
+        assert_empty root.to_ruby
+      end
+    end
+    @db.transaction { |root| root["frozen".freeze] = [nil, 1, 1.0, "text".freeze] }
+    assert_equal [nil, 1, 1.0, "text"], @db.snapshot["frozen"].to_ruby
+  end
+
   def test_rescued_assignment_is_atomic
     @db.transaction do |root|
       root["items"] = [[1], [2]]

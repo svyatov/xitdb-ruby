@@ -129,4 +129,13 @@ class RubyScalarsTest < RubyProfileTest
   def test_rejects_basic_object_without_object_methods
     assert_raises(XitDB::UnsupportedValueError) { store(BasicObject.new) }
   end
+
+  def test_rejects_extensions_without_calling_their_identity_hooks
+    each_identity_hook_input do |value, calls, behavior|
+      assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { store(value) }
+      assert_empty calls
+      assert_equal "text", value
+    end
+    assert_equal "text", round_trip("text".freeze)
+  end
 end
