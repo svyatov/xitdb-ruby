@@ -284,7 +284,7 @@ class StoreTest < Minitest::Test
       fault_file(store, :flock) { |_original, *_args| 0 }
     end
     first.with_exclusive_lock do
-      assert_raises(XitDB::BusyError) { second.with_exclusive_lock(timeout: 0) { flunk "writer ran" } }
+      assert_raises(XitDB::TransactionStateError) { second.with_exclusive_lock(timeout: 0) { flunk "writer ran" } }
     end
     first.close
     assert_equal :released, second.with_exclusive_lock(timeout: 0) { :released }

@@ -7,12 +7,18 @@ module XitDB
       private_constant :UNSET
 
       def [](key)
-        stored = adapter.lookup(key)
-        context.profile.decode(stored, context: context, path: path + [key]) if stored
+        context.read do
+          stored = adapter.lookup(key)
+          context.profile.decode(stored, context: context, path: path + [key]) if stored
+        end
       end
 
       def fetch(key, default = UNSET)
-        return self[key] if key?(key)
+        found, value = context.read do
+          present = key?(key)
+          [present, present ? self[key] : nil]
+        end
+        return value if found
         return yield key if block_given?
         return default unless default.equal?(UNSET)
 
@@ -20,6 +26,10 @@ module XitDB
       end
 
       def dig(*keys)
+        context.read { dig_value(keys) }
+      end
+
+      def dig_value(keys)
         raise ArgumentError, "at least one key is required" if keys.empty?
 
         value = self[keys.shift]
@@ -28,9 +38,10 @@ module XitDB
 
         value.dig(*keys)
       end
+      private :dig_value
 
       def key?(key)
-        !adapter.lookup(key).nil?
+        context.read { !adapter.lookup(key).nil? }
       end
 
       def each_key
@@ -48,11 +59,11 @@ module XitDB
       end
 
       def keys
-        each_key.to_a
+        context.read { each_key.to_a }
       end
 
       def values
-        each_value.to_a
+        context.read { each_value.to_a }
       end
 
       def []=(key, value)

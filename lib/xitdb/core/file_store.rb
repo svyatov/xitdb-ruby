@@ -145,6 +145,9 @@ module XitDB
       end
 
       def lock_writer(deadline)
+        if @writer_mutex.owned?
+          raise TransactionStateError, "writer lock for this file is already held by this thread"
+        end
         super
         acquired = false
         begin

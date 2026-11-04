@@ -29,6 +29,13 @@ module XitDB
       transaction&.check_active!
     end
 
+    def read
+      database.core.with_operation do
+        check!
+        yield
+      end
+    end
+
     def writable!
       check!
       raise ReadOnlyError, "view is read-only" if @readonly || !transaction

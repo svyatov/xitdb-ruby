@@ -25,8 +25,10 @@ module XitDB
       end
 
       def slot
-        check!
-        context.resolve(path)
+        context.read do
+          check!
+          context.resolve(path)
+        end
       end
 
       def adapter
@@ -34,7 +36,7 @@ module XitDB
       end
 
       def size
-        adapter.size
+        context.read { adapter.size }
       end
 
       def empty?
@@ -44,7 +46,7 @@ module XitDB
       def each
         return enum_for(__method__) unless block_given?
 
-        each_entries(adapter.each_entry) { |*entry| yield(*entry) }
+        each_entries(-> { adapter.each_entry }) { |*entry| yield(*entry) }
       end
 
       def slot_for_assignment(context:, path:)
@@ -52,12 +54,14 @@ module XitDB
       end
 
       def to_ruby
-        ValueWalker.materialize(self)
+        context.read { ValueWalker.materialize(self) }
       end
 
       def ==(other)
-        other = other.to_ruby if other.is_a?(Base)
-        to_ruby == other
+        context.read do
+          other = other.to_ruby if other.is_a?(Base)
+          to_ruby == other
+        end
       end
 
       def inspect
@@ -96,21 +100,37 @@ module XitDB
       end
 
       def each_entries(entries)
-        check!
-        generation = @location&.membership
-        entries.each do |selector, stored|
-          check!
-          if @location&.membership != generation
-            raise ConcurrentModificationError, "collection membership changed during iteration"
+        iterator = nil
+        generation = nil
+        exhausted = false
+        while true
+          values = context.read do
+            check!
+            unless iterator
+              iterator = entries.call
+              generation = @location&.membership
+            end
+            if @location&.membership != generation
+              raise ConcurrentModificationError, "collection membership changed during iteration"
+            end
+            begin
+              selector, stored = iterator.next
+            rescue StopIteration
+              exhausted = true
+              next
+            end
+            if %i[set sorted_set].include?(kind)
+              [selector]
+            else
+              # Transaction entries resolve again so replacement values stay live.
+              stored = adapter.lookup(selector) if context.transaction
+              value = context.profile.decode(stored, context: context, path: entry_path(selector))
+              %i[map sorted_map].include?(kind) ? [selector, value] : [value]
+            end
           end
-          if %i[set sorted_set].include?(kind)
-            yield selector
-          else
-            # Transaction entries resolve again so replacement values stay live.
-            stored = adapter.lookup(selector) if context.transaction
-            value = context.profile.decode(stored, context: context, path: entry_path(selector))
-            %i[map sorted_map].include?(kind) ? yield(selector, value) : yield(value)
-          end
+          break if exhausted
+
+          yield(*values)
         end
         self
       end

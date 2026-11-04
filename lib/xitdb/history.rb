@@ -9,14 +9,16 @@ module XitDB
     end
 
     def [](index)
-      cursor = @database.core.root_cursor
-      count = @database.history_array(cursor).size
-      raise TypeError, "history index must be an Integer" unless index.is_a?(Integer)
+      @database.core.with_operation do
+        cursor = @database.core.root_cursor
+        count = @database.history_array(cursor).size
+        raise TypeError, "history index must be an Integer" unless index.is_a?(Integer)
 
-      index += count if index.negative?
-      return nil unless index >= 0 && index < count
+        index += count if index.negative?
+        return nil unless index >= 0 && index < count
 
-      @database.snapshot_from_history(cursor, index)
+        @database.snapshot_from_history(cursor, index)
+      end
     end
 
     def fetch(index)
@@ -24,14 +26,27 @@ module XitDB
     end
 
     def size
-      @database.history_array(@database.core.root_cursor).size
+      @database.core.with_operation { @database.history_array(@database.core.root_cursor).size }
     end
 
     def each
       return enum_for(__method__) unless block_given?
 
-      cursor = @database.core.root_cursor
-      @database.history_array(cursor).size.times { |index| yield @database.snapshot_from_history(cursor, index) }
+      cursor = count = nil
+      index = 0
+      while count.nil? || index < count
+        snapshot = @database.core.with_operation do
+          unless cursor
+            cursor = @database.core.root_cursor
+            count = @database.history_array(cursor).size
+          end
+          @database.snapshot_from_history(cursor, index) if index < count
+        end
+        break unless snapshot
+
+        yield snapshot
+        index += 1
+      end
       self
     end
   end

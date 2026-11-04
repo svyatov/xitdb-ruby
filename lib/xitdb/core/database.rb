@@ -73,6 +73,10 @@ module XitDB
         @store.closed?
       end
 
+      def with_operation(&block)
+        @store.with_operation(&block)
+      end
+
       def storage_identity
         check_open!
         @store.storage_identity

@@ -4,7 +4,7 @@ module XitDB
   module Views
     class Set < Base
       def include?(value)
-        !adapter.lookup(value).nil?
+        context.read { !adapter.lookup(value).nil? }
       end
 
       def add(value)

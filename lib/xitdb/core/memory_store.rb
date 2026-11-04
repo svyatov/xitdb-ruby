@@ -59,6 +59,21 @@ module XitDB
         end
       end
 
+      # Pin the handle across all storage calls in one logical operation.
+      def with_operation
+        thread = Thread.current
+        synchronize { @operation_users[thread] = @operation_users.fetch(thread, 0) + 1 }
+        begin
+          yield
+        ensure
+          @state.synchronize do
+            @operation_users[thread] -= 1
+            @operation_users.delete(thread) if @operation_users[thread].zero?
+            @idle.broadcast
+          end
+        end
+      end
+
       def with_exclusive_lock(timeout: 5, on_release_error: nil)
         raise TypeError, "timeout must be a real Numeric" unless timeout.is_a?(Numeric) && timeout.real?
         raise ArgumentError, "timeout must be finite and nonnegative" unless timeout.finite? && timeout >= 0
@@ -108,10 +123,13 @@ module XitDB
         @state.synchronize do
           return if @closed
           raise TransactionStateError, "cannot close inside the writer block" if @lock_owner == Thread.current
+          if @operation_users.key?(Thread.current)
+            raise TransactionStateError, "cannot close inside an active operation"
+          end
 
           @closing = true
           begin
-            @idle.wait until @lock_users.zero?
+            @idle.wait until @lock_users.zero? && @operation_users.empty?
             return if @closed
 
             flush_bytes
@@ -134,6 +152,7 @@ module XitDB
         @idle = @state.new_cond
         @writer_mutex = writer_mutex
         @lock_users = 0
+        @operation_users = {}
         @lock_owner = nil
         @closed = false
         @closing = false
@@ -142,7 +161,9 @@ module XitDB
 
       def synchronize
         @state.synchronize do
-          raise ClosedError, "store is closed" if @closed || (@closing && @lock_owner != Thread.current)
+          if @closed || (@closing && @lock_owner != Thread.current && !@operation_users.key?(Thread.current))
+            raise ClosedError, "store is closed"
+          end
 
           yield
         end

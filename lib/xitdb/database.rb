@@ -82,6 +82,10 @@ module XitDB
       raise ArgumentError, "transaction requires a block" unless block_given?
       raise ReadOnlyError, "database is read-only" if @readonly
 
+      core.with_operation { perform_transaction { |root| yield root } }
+    end
+
+    def perform_transaction
       committed = core.transaction do |history_cursor|
         array = history_array(history_cursor)
         slot = array.size.zero? ? Core::Slot.new : array.get(-1)
@@ -98,14 +102,17 @@ module XitDB
       end
       snapshot_from_cursor(committed)
     end
+    private :perform_transaction
 
     def snapshot(revision: nil)
-      if revision
-        raise TypeError, "revision must be an XitDB::Revision" unless revision.is_a?(Revision)
+      core.with_operation do
+        if revision
+          raise TypeError, "revision must be an XitDB::Revision" unless revision.is_a?(Revision)
 
-        return revision.resolve(self)
+          return revision.resolve(self)
+        end
+        snapshot_from_cursor(core.root_cursor)
       end
-      snapshot_from_cursor(core.root_cursor)
     end
 
     def history
@@ -114,6 +121,10 @@ module XitDB
     end
 
     def revert(value)
+      core.with_operation { perform_revert(value) }
+    end
+
+    def perform_revert(value)
       target = if value.is_a?(Snapshot)
         unless value.context.database.core.header.file_id == core.header.file_id
           raise ForeignRevisionError, "snapshot belongs to another database"
@@ -138,6 +149,7 @@ module XitDB
       end
       snapshot_from_cursor(committed)
     end
+    private :perform_revert
 
     def close
       core.close
@@ -156,14 +168,16 @@ module XitDB
     end
 
     def snapshot_from_history(cursor, index, revision: nil)
-      slot = history_array(cursor).get(index)
-      raise IndexError, "history index outside history" unless slot
-      raise ProfileMismatchError, "history entry must contain a root map" if slot.empty?
+      core.with_operation do
+        slot = history_array(cursor).get(index)
+        raise IndexError, "history index outside history" unless slot
+        raise ProfileMismatchError, "history entry must contain a root map" if slot.empty?
 
-      context = Context.new(database: self, root: slot, bound: cursor.bound)
-      validate_root(slot, context)
-      revision ||= revision_for(cursor, index)
-      Snapshot.new(context: context, revision: revision)
+        context = Context.new(database: self, root: slot, bound: cursor.bound)
+        validate_root(slot, context)
+        revision ||= revision_for(cursor, index)
+        Snapshot.new(context: context, revision: revision)
+      end
     end
 
     private

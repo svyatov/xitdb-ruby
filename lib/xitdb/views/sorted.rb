@@ -4,19 +4,19 @@ module XitDB
   module Views
     module Sorted
       def rank(key)
-        adapter.rank(key)
+        context.read { adapter.rank(key) }
       end
 
       def from(key)
         return enum_for(__method__, key) unless block_given?
 
-        each_entries(adapter.each_from(key)) { |*entry| yield(*entry) }
+        each_entries(-> { adapter.each_from(key) }) { |*entry| yield(*entry) }
       end
 
       def from_index(index)
         return enum_for(__method__, index) unless block_given?
 
-        each_entries(adapter.each_from_index(integer_argument(index))) { |*entry| yield(*entry) }
+        each_entries(-> { adapter.each_from_index(integer_argument(index)) }) { |*entry| yield(*entry) }
       end
 
       def page(offset:, limit:)

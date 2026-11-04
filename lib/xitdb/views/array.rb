@@ -9,6 +9,10 @@ module XitDB
       alias length size
 
       def [](index, count = UNSET)
+        context.read { read_index(index, count) }
+      end
+
+      def read_index(index, count)
         unless count.equal?(UNSET)
           return read_slice(integer_argument(index), integer_argument(count))
         end
@@ -27,10 +31,15 @@ module XitDB
 
         context.profile.decode(adapter.lookup(index), context: context, path: entry_path(index))
       end
+      private :read_index
 
       def fetch(index, default = UNSET)
-        position = normalize_index(index)
-        return self[position] if position >= 0 && position < size
+        found, value = context.read do
+          position = normalize_index(index)
+          present = position >= 0 && position < size
+          [present, present ? self[position] : nil]
+        end
+        return value if found
         return yield index if block_given?
         return default unless default.equal?(UNSET)
 
@@ -38,18 +47,22 @@ module XitDB
       end
 
       def first(count = UNSET)
-        check!
-        return self[0] if count.equal?(UNSET)
+        context.read do
+          check!
+          return self[0] if count.equal?(UNSET)
 
-        count = nonnegative_count(count)
-        each.take(count)
+          count = nonnegative_count(count)
+          each.take(count)
+        end
       end
 
       def last(count = UNSET)
-        return self[-1] if count.equal?(UNSET)
+        context.read do
+          return self[-1] if count.equal?(UNSET)
 
-        count = [nonnegative_count(count), size].min
-        ((size - count)...size).map { |index| self[index] }
+          count = [nonnegative_count(count), size].min
+          ((size - count)...size).map { |index| self[index] }
+        end
       end
 
       def []=(index, value)
