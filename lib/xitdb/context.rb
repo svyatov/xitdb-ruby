@@ -3,6 +3,9 @@
 module XitDB
   # Owns one captured root or one transaction's logical root.
   class Context
+    Location = Struct.new(:path, :membership, :expired)
+    private_constant :Location
+
     attr_reader :database, :profile, :transaction, :root
 
     def initialize(database:, root:, bound:, transaction: nil, readonly: false)
@@ -13,9 +16,7 @@ module XitDB
       @transaction = transaction
       @readonly = readonly
       @changed = false
-      @replacements = Hash.new(0)
-      @children = Hash.new(0)
-      @memberships = Hash.new(0)
+      @locations = ObjectSpace::WeakMap.new if transaction && !readonly
     end
 
     def check!
@@ -96,31 +97,47 @@ module XitDB
       end
     end
 
-    def generations(path)
+    def observe(path)
       check!
-      (0..path.size).flat_map do |length|
-        key = path_key(path.first(length))
-        [@replacements[key], length < path.size ? @children[key] : 0]
-      end
+      return unless @locations
+
+      location = Location.new(path_key(path), 0, false)
+      @locations[location] = true
+      location
     end
 
     def replace_location(path)
-      @replacements[path_key(path)] += 1
+      each_location(path) { |location| location.expired = true }
     end
 
-    def membership(path)
-      @memberships[path_key(path)]
+    def invalidate_positions(path, start)
+      each_location(path) do |location|
+        index = location.path[path.size]
+        location.expired = true if index.is_a?(Integer) && index >= start
+      end
     end
 
     def change_membership(path)
-      @memberships[path_key(path)] += 1
+      each_location(path) { |location| location.membership += 1 if location.path.size == path.size }
     end
 
     def invalidate_children(path)
-      @children[path_key(path)] += 1
+      each_location(path) { |location| location.expired = true if location.path.size > path.size }
     end
 
     private
+
+    def each_location(path)
+      key = path_key(path)
+      retained = ObjectSpace::WeakMap.new
+      @locations.each_key do |location|
+        next if location.expired
+
+        yield location if location.path.first(key.size) == key
+        retained[location] = true unless location.expired
+      end
+      @locations = retained
+    end
 
     def path_key(path)
       path.map { |selector| selector.is_a?(Integer) ? selector : profile.key_bytes(selector) }

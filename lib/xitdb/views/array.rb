@@ -98,7 +98,7 @@ module XitDB
           collection.assign(collection.size, Core::Slot.null) while collection.size < index
           encoded.each_with_index { |stored, offset| collection.insert(index + offset, stored) }
         end
-        invalidate_positions(index, previous_size)
+        invalidate_positions(index)
         self
       end
 
@@ -113,7 +113,7 @@ module XitDB
         stored = adapter.lookup(index)
         value = context.profile.decode(stored, context: captured, path: [index])
         edit { |collection| collection.delete(index) }
-        invalidate_positions(index, previous_size)
+        invalidate_positions(index)
         value
       end
 
@@ -131,7 +131,7 @@ module XitDB
           context.profile.decode(adapter.lookup(index), context: captured, path: [index])
         end
         edit { |collection| collection.truncate(previous_size - count) }
-        invalidate_positions(previous_size - count, previous_size)
+        invalidate_positions(previous_size - count)
         values
       end
 
@@ -205,8 +205,8 @@ module XitDB
         0
       end
 
-      def invalidate_positions(start, previous_size)
-        (start...previous_size).each { |index| context.replace_location(path + [index]) }
+      def invalidate_positions(start)
+        context.invalidate_positions(path, start)
         context.change_membership(path)
       end
     end

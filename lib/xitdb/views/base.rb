@@ -14,12 +14,12 @@ module XitDB
         @context = context
         @path = path.map { |selector| selector.is_a?(String) ? selector.dup.freeze : selector }.freeze
         @kind = kind
-        @generations = context.generations(@path)
+        @location = context.observe(@path)
       end
 
       def check!
         context.check!
-        unless context.generations(path) == @generations
+        if @location&.expired
           raise ExpiredViewError, "view ancestor was replaced"
         end
       end
@@ -97,10 +97,10 @@ module XitDB
 
       def each_entries(entries)
         check!
-        generation = context.membership(path)
+        generation = @location&.membership
         entries.each do |selector, stored|
           check!
-          if context.membership(path) != generation
+          if @location&.membership != generation
             raise ConcurrentModificationError, "collection membership changed during iteration"
           end
           if %i[set sorted_set].include?(kind)
