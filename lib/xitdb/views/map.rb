@@ -88,13 +88,14 @@ module XitDB
 
         context.check_stream_mutation!(path, targets: [path + [key]])
 
-        # The removed value must remain readable after its old location expires.
-        stored = adapter.lookup(key)
-        context.transaction.freeze
-        captured = Context.new(database: context.database, root: stored, bound: context.read_bound,
-                               transaction: context.transaction)
-        value = context.profile.decode(stored, context: captured, path: [])
+        value = nil
         context.mutate(path, targets: [path + [key]]) do |cursor|
+          # Capture before deletion, with loaders inside the mutation checkpoint.
+          stored = adapter.lookup(key)
+          context.transaction.freeze
+          captured = Context.new(database: context.database, root: stored, bound: context.read_bound,
+                                 transaction: context.transaction)
+          value = context.profile.decode(stored, context: captured, path: [])
           collection = context.profile.container(cursor.slot, context: context, path: path)
           collection.delete(key)
           cursor.replace(collection.slot)

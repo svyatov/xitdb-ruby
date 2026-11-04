@@ -124,10 +124,12 @@ module XitDB
 
         context.check_stream_mutation!(path, positions: index..)
 
-        captured = captured_context
-        stored = adapter.lookup(index)
-        value = context.profile.decode(stored, context: captured, path: [index])
-        edit(positions: index..) { |collection| collection.delete(index) }
+        value = nil
+        edit(positions: index..) do |collection|
+          captured = captured_context
+          value = context.profile.decode(collection.lookup(index), context: captured, path: [index])
+          collection.delete(index)
+        end
         invalidate_positions(index)
         value
       end
@@ -142,11 +144,14 @@ module XitDB
 
         previous_size = size
         context.check_stream_mutation!(path, positions: (previous_size - count)..)
-        captured = captured_context
-        values = ((previous_size - count)...previous_size).map do |index|
-          context.profile.decode(adapter.lookup(index), context: captured, path: [index])
+        values = nil
+        edit(positions: (previous_size - count)..) do |collection|
+          captured = captured_context
+          values = ((previous_size - count)...previous_size).map do |index|
+            context.profile.decode(collection.lookup(index), context: captured, path: [index])
+          end
+          collection.truncate(previous_size - count)
         end
-        edit(positions: (previous_size - count)..) { |collection| collection.truncate(previous_size - count) }
         invalidate_positions(previous_size - count)
         values
       end

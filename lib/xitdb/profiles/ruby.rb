@@ -1,17 +1,15 @@
 # frozen_string_literal: true
 
+require_relative "../ruby/codec"
+
 module XitDB
   module Profiles
     class Ruby
       attr_reader :hasher, :codecs
 
       def initialize(codecs: [])
-        unless Object.instance_method(:instance_of?).bind_call(codecs, ::Array) &&
-               ::Array.instance_method(:empty?).bind_call(codecs)
-          raise CodecConfigurationError, "custom codecs are not available"
-        end
-
-        @codecs = ::Array.new.freeze
+        @registry = XitDB::Ruby::CodecRegistry.new(codecs)
+        @codecs = @registry.codecs
         @hasher = Core::Hasher.new(id: "rb01", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end
@@ -21,14 +19,15 @@ module XitDB
       end
 
       def encode_scalar(value, core:)
-        XitDB::Ruby::Scalars.encode(value, core: core)
+        XitDB::Ruby::Scalars.encode(value, core: core, registry: @registry)
       end
 
       def decode(slot, context:, path:, immutable: true)
         if (adapter = container(slot, context: context, path: path))
           context.view(slot, path: path, kind: adapter.kind)
         else
-          XitDB::Ruby::Scalars.decode(slot, core: context.database.core, bound: context.read_bound, immutable: immutable)
+          XitDB::Ruby::Scalars.decode(slot, core: context.database.core, bound: context.read_bound,
+                                    registry: @registry, immutable: immutable)
         end
       end
 
@@ -50,6 +49,8 @@ module XitDB
 
       def input_kind(value, path:)
         InputGuard.check!(value, path: path)
+        return nil if @registry.for_value(value)
+
         klass = Object.instance_method(:class).bind_call(value)
         case value
         when Hash, ::Array, ::Set

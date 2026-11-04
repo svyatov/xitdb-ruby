@@ -27,7 +27,11 @@ module XitDB
 
       def self.encode(value, core:, registry: nil)
         InputGuard.check!(value)
-        unless TYPES.include?(Object.instance_method(:class).bind_call(value))
+        if (codec = registry&.for_value(value))
+          payload = "\x01\x0a".b + Wire.t(codec.id) + Wire.b(codec.dump(value))
+          return core.bytes(payload, format_tag: "rb")
+        end
+        unless builtin_type?(Object.instance_method(:class).bind_call(value))
           raise UnsupportedValueError, "unsupported Ruby scalar class"
         end
 
@@ -65,6 +69,10 @@ module XitDB
         core.bytes("\x01".b + payload, format_tag: "rb")
       end
 
+      def self.builtin_type?(type)
+        TYPES.include?(type)
+      end
+
       def self.decode(slot, core:, bound: nil, registry: nil, immutable: true)
         value = case slot.tag
         when :none then nil
@@ -75,16 +83,16 @@ module XitDB
           stored = core.read_bytes(slot, bound: bound)
           case stored.format_tag
           when nil then stored.bytes.dup
-          when "rb" then decode_payload(stored.bytes)
+          when "rb" then decode_payload(stored.bytes, registry: registry)
           else stored
           end
         else
           raise InvalidValueError, "expected Ruby scalar, got slot tag #{slot.tag}"
         end
-        immutable ? value.freeze : value
+        immutable ? Object.instance_method(:freeze).bind_call(value) : value
       end
 
-      def self.decode_payload(bytes)
+      def self.decode_payload(bytes, registry: nil)
         reader = Wire::Reader.new(bytes)
         version = reader.byte
         raise UnsupportedEncodingError, "unsupported Ruby payload version #{version}" unless version == 1
@@ -114,8 +122,10 @@ module XitDB
         when 9 then reader.q
         when 10
           codec_id = reader.t
-          reader.b
-          EncodedValue.new(codec_id: codec_id, bytes: bytes)
+          payload = reader.b
+          reader.finish!
+          codec = registry&.for_id(codec_id)
+          return codec ? codec.load(payload) : EncodedValue.new(codec_id: codec_id, bytes: bytes)
         else
           raise UnsupportedEncodingError, "unsupported Ruby builtin type #{type}"
         end
