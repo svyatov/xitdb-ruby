@@ -55,7 +55,7 @@ module XitDB
 
       def key_bytes(value)
         InputGuard.check!(value)
-        raise UnsupportedValueError, "portable keys must be strings" unless value.is_a?(String)
+        raise UnsupportedValueError, "portable keys must be strings" unless String === value
 
         value.b.freeze
       end

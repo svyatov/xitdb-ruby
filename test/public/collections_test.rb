@@ -38,6 +38,26 @@ class PublicCollectionsTest < Minitest::Test
     assert_kind_of ::Array, sorted.map { |key, _| key }
   end
 
+  def test_portable_string_subclass_keys_do_not_call_type_hooks
+    calls = []
+    klass = Class.new(String) do
+      define_method(:is_a?) { |*| calls << :type; raise "key type hook ran" }
+    end
+    key = klass.new("stream")
+    assert_equal "stream".b, @db.profile.key_bytes(key)
+    @db.transaction do |root|
+      root["stream"] = "old"
+      root.open_bytes("stream") do |reader|
+        assert_raises(XitDB::ConcurrentModificationError) { root.merge!(key => "blocked", "adjacent" => "bad") }
+        root.merge!(klass.new("adjacent") => "good")
+        assert_equal "old", reader.read
+      end
+      assert_equal "old", root["stream"]
+      assert_equal "good", root["adjacent"]
+    end
+    assert_empty calls
+  end
+
   def test_array_supported_reads_match_ruby
     @db.transaction { |root| root["items"] = [0, 1, 2, 3] }
     items = @db.snapshot["items"]
