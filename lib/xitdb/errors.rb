@@ -39,6 +39,7 @@ module XitDB
   class UnsupportedEncodingError < ValueError; end
   class CyclicValueError < ValueError; end
   class ForeignValueError < ValueError; end
+  class KeyCollisionError < ValueError; end
 
   class CommitError < Error
     attr_reader :outcome

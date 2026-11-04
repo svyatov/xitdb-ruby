@@ -156,4 +156,16 @@ class FormatTest < Minitest::Test
     end
     assert_raises(ArgumentError) { XitDB::CommitError.new("I/O failed", outcome: :retry) }
   end
+
+  def test_key_collision_error_has_an_owned_immutable_value_path
+    assert XitDB.const_defined?(:KeyCollisionError, false), "KeyCollisionError must be available"
+    path = [+"records", 1]
+    error = XitDB::KeyCollisionError.new("distinct keys have the same bytes", path: path)
+    assert_kind_of XitDB::ValueError, error
+    path.first.replace("changed")
+    path << "extra"
+    assert_equal ["records", 1], error.path
+    assert_predicate error.path, :frozen?
+    assert_predicate error.path.first, :frozen?
+  end
 end
