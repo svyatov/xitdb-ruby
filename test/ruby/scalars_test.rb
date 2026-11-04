@@ -138,4 +138,14 @@ class RubyScalarsTest < RubyProfileTest
     end
     assert_equal "text", round_trip("text".freeze)
   end
+
+  def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
+    %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
+      value = +"text"
+      value.singleton_class.undef_method(method)
+      assert_raises(XitDB::UnsupportedValueError, method.to_s) { store(value) }
+      value.freeze
+      assert_raises(XitDB::UnsupportedValueError, "frozen #{method}") { store(value) }
+    end
+  end
 end

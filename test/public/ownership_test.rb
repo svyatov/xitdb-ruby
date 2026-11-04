@@ -110,6 +110,49 @@ class PublicOwnershipTest < Minitest::Test
     assert_equal [nil, 1, 1.0, "text"], @db.snapshot["frozen"].to_ruby
   end
 
+  def test_rejects_removed_string_methods_before_key_or_value_consumption
+    %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
+      input = +"text"
+      input.singleton_class.undef_method(method)
+      @db.transaction do |root|
+        root["kept"] = 1
+        bound = root.context.read_bound
+        key_error = assert_raises(XitDB::UnsupportedValueError, method.to_s) { root[input] = 1 }
+        assert_equal ["text"], key_error.path
+        value_error = assert_raises(XitDB::UnsupportedValueError, method.to_s) { root["value"] = input }
+        assert_equal ["value"], value_error.path
+        assert_equal bound, root.context.read_bound
+        assert_equal({"kept" => 1}, root.to_ruby)
+      end
+    end
+  end
+
+  def test_rejects_removed_container_methods_before_consumption
+    [[[1], :each], [[1], :reverse], [{"key" => 1}, :each_pair], [Set[1], :each]].each do |input, method|
+      input.singleton_class.undef_method(method)
+      @db.transaction do |root|
+        root["kept"] = 1
+        bound = root.context.read_bound
+        error = assert_raises(XitDB::UnsupportedValueError, method.to_s) { root["value"] = input }
+        assert_equal ["value"], error.path
+        assert_equal bound, root.context.read_bound
+        assert_equal({"kept" => 1}, root.to_ruby)
+      end
+    end
+  end
+
+  def test_fresh_root_remains_usable_after_rejecting_removed_methods
+    input = [1]
+    input.singleton_class.undef_method(:reverse)
+    @db.transaction do |root|
+      assert_raises(XitDB::UnsupportedValueError) { root["rejected"] = input }
+      assert_empty root.to_ruby
+      root["valid"] = [1]
+      assert_equal({"valid" => [1]}, root.to_ruby)
+    end
+    assert_equal({"valid" => [1]}, @db.snapshot.to_ruby)
+  end
+
   def test_rescued_assignment_is_atomic
     @db.transaction do |root|
       root["items"] = [[1], [2]]

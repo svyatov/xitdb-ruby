@@ -79,4 +79,14 @@ class RubyKeyEncodingTest < RubyProfileTest
     end
     assert_equal "05000474657874", key_bytes("text".freeze).unpack1("H*")
   end
+
+  def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
+    %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
+      value = +"text"
+      value.singleton_class.undef_method(method)
+      assert_raises(XitDB::UnsupportedValueError, method.to_s) { key_bytes(value) }
+      value.freeze
+      assert_raises(XitDB::UnsupportedValueError, "frozen #{method}") { key_bytes(value) }
+    end
+  end
 end

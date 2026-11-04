@@ -25,6 +25,12 @@ module XitDB
           end
         end
       end
+      %i[instance_methods private_instance_methods].each do |visibility|
+        reflection = Module.instance_method(visibility)
+        unless (reflection.bind_call(klass) - reflection.bind_call(singleton)).empty?
+          raise UnsupportedValueError.new("singleton method removal is unsupported", path: path)
+        end
+      end
     end
   end
 end
