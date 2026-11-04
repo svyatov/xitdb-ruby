@@ -2,6 +2,7 @@
 
 require_relative "test_helper"
 require "json"
+require "open3"
 
 class RubyScalarsTest < RubyProfileTest
   Scalars = XitDB::Ruby::Scalars
@@ -146,6 +147,43 @@ class RubyScalarsTest < RubyProfileTest
       assert_raises(XitDB::UnsupportedValueError, method.to_s) { store(value) }
       value.freeze
       assert_raises(XitDB::UnsupportedValueError, "frozen #{method}") { store(value) }
+    end
+  end
+
+  def test_string_validation_is_nonmutating_and_warning_clean
+    program = <<~'RUBY'
+      require "xitdb/ruby"
+      [XitDB, XitDB::Ruby].each do |profile|
+        profile.memory do |db|
+          db.transaction do |root|
+            ["literal", "converted".to_s, String.new("owned"), "frozen".freeze].each do |value|
+              root[value] = value
+              raise "value changed" unless root[value] == value
+              raise "caller frozen" if value != "frozen" && value.frozen?
+            end
+          end
+        end
+      end
+    RUBY
+    output, errors, status = Open3.capture3(RbConfig.ruby, "-w", "-Ilib", "-e", program)
+    assert status.success?, errors
+    assert_empty output
+    assert_empty errors
+  end
+
+  def test_rejects_private_overrides_of_existing_methods_without_calling_them
+    %i[initialize_copy puts].each do |name|
+      [false, true].each do |prepend|
+        value = +"text"
+        behavior = Module.new do
+          define_method(name) { |*| raise "private override ran" }
+          private name
+        end
+        prepend ? value.singleton_class.prepend(behavior) : value.extend(behavior)
+        assert_raises(XitDB::UnsupportedValueError) { store(value) }
+        value.freeze
+        assert_raises(XitDB::UnsupportedValueError) { store(value) }
+      end
     end
   end
 end

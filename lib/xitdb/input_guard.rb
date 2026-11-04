@@ -9,26 +9,25 @@ module XitDB
         raise UnsupportedValueError.new("unsupported Ruby object", path: path)
       end
 
-      begin
-        singleton = Object.instance_method(:singleton_class).bind_call(value)
-      rescue TypeError
-        # Immediate values and frozen Strings without a singleton class cannot add one.
-        return
+      unless Object.instance_method(:singleton_methods).bind_call(value).empty?
+        raise UnsupportedValueError.new("singleton behavior is unsupported", path: path)
       end
-      klass = Object.instance_method(:class).bind_call(value)
-      Module.instance_method(:ancestors).bind_call(singleton).each do |ancestor|
-        break if BasicObject.instance_method(:equal?).bind_call(ancestor, klass)
 
-        %i[public_instance_methods protected_instance_methods private_instance_methods].each do |visibility|
-          unless Module.instance_method(visibility).bind_call(ancestor, false).empty?
-            raise UnsupportedValueError.new("singleton behavior is unsupported", path: path)
-          end
+      klass = Object.instance_method(:class).bind_call(value)
+      %i[public protected private].each do |visibility|
+        expected = Module.instance_method("#{visibility}_instance_methods").bind_call(klass)
+        actual = Object.instance_method("#{visibility}_methods").bind_call(value)
+        unless (expected - actual).empty? && (actual - expected).empty?
+          raise UnsupportedValueError.new("singleton behavior or method removal is unsupported", path: path)
         end
       end
-      %i[instance_methods private_instance_methods].each do |visibility|
-        reflection = Module.instance_method(visibility)
-        unless (reflection.bind_call(klass) - reflection.bind_call(singleton)).empty?
-          raise UnsupportedValueError.new("singleton method removal is unsupported", path: path)
+      # Private singleton overrides are absent from #singleton_methods. Inspect
+      # their owners without creating a singleton class on chilled Strings.
+      Object.instance_method(:private_methods).bind_call(value, false).each do |name|
+        owner = Object.instance_method(:method).bind_call(value, name).owner
+        expected = Module.instance_method(:instance_method).bind_call(klass, name).owner
+        unless BasicObject.instance_method(:equal?).bind_call(owner, expected)
+          raise UnsupportedValueError.new("singleton behavior is unsupported", path: path)
         end
       end
     end
