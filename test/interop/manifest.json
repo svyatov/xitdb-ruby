@@ -1,0 +1,26 @@
+{
+  "references": {
+    "go": {
+      "repository": "xit-vcs/xitdb-go",
+      "revision": "86db69bc728d2e9bdd015f9cefa23df40beaab65",
+      "source_sha256": "4bd4cc1c108935565a6ad61941e72be66f691c1cd5a8ca41316b1216a0d6b4b1"
+    }
+  },
+  "hash": {"id": "sha1", "size": 20},
+  "file_id": "1",
+  "scalars": [
+    {"tag": "none", "full": true, "bits": "0"},
+    {"tag": "int", "full": false, "bits": "9223372036854775808"},
+    {"tag": "int", "full": false, "bits": "9223372036854775807"},
+    {"tag": "uint", "full": false, "bits": "18446744073709551615"},
+    {"tag": "float", "full": false, "bits": "9223372036854775808"},
+    {"tag": "float", "full": false, "bits": "4609434218613702656"},
+    {"tag": "float", "full": false, "bits": "9218868437227405312"},
+    {"tag": "float", "full": false, "bits": "9221120237041090561"},
+    {"tag": "short_bytes", "full": false, "hex": "", "format_tag": null},
+    {"tag": "short_bytes", "full": false, "hex": "3132333435363738", "format_tag": null},
+    {"tag": "short_bytes", "full": true, "hex": "313233343536", "format_tag": "ff00"},
+    {"tag": "bytes", "full": false, "hex": "610062", "format_tag": null},
+    {"tag": "bytes", "full": true, "hex": "31323334353637", "format_tag": "007f"}
+  ]
+}
