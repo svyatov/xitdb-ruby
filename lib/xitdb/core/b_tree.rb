@@ -17,9 +17,10 @@ module XitDB
 
       attr_reader :cursor
 
-      def initialize(cursor)
+      def initialize(cursor, tag: :linked_array_list)
         @cursor = cursor
-        unless %i[none linked_array_list].include?(cursor.slot.tag)
+        @tag = tag
+        unless [:none, @tag].include?(cursor.slot.tag)
           raise InvalidValueError, "slot does not contain a linked array list"
         end
         if cursor.slot.tag == :none && cursor.transaction
@@ -237,7 +238,7 @@ module XitDB
       def header
         slot = cursor.slot
         return [0, nil] if slot.tag == :none
-        raise InvalidValueError, "slot does not contain a linked array list" unless slot.tag == :linked_array_list
+        raise InvalidValueError, "slot does not contain the expected B-tree type" unless slot.tag == @tag
 
         read(slot.value, HEADER_SIZE).unpack("Q>Q>")
       end
@@ -460,13 +461,13 @@ module XitDB
       def publish(tx, count, pointer, propagate: true)
         bytes = [count, pointer].pack("Q>Q>")
         old = cursor.slot
-        position = if old.tag == :linked_array_list && old.value >= tx.mutable_start
+        position = if old.tag == @tag && old.value >= tx.mutable_start
           tx.write_at(old.value, bytes)
           old.value
         else
           tx.append(bytes)
         end
-        cursor.update_collection(Slot.new(tag: :linked_array_list, value: position), propagate: propagate)
+        cursor.update_collection(Slot.new(tag: @tag, value: position), propagate: propagate)
       end
     end
   end

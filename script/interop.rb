@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -38,6 +38,8 @@ module Interop
         linked_array_insert(binary, dir)
       elsif options[:case] == "linked-array-edit"
         linked_array_edit(binary, dir)
+      elsif options[:case] == "sorted-collections"
+        sorted_collections(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -69,7 +71,7 @@ module Interop
                file_id: MANIFEST.fetch("file_id"), value: value}
     request[:values] = request.delete(:value) if name == "array-list"
     request.merge!(request.delete(:value)) if name == "hash-collections"
-    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit].include?(name)
+    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit sorted-collections].include?(name)
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -259,6 +261,71 @@ module Interop
 
   def self.hash_value(db, slot)
     read_cursor_value(XitDB::Core::Cursor.new(database: db, slot: slot, bound: db.committed_size))
+  end
+
+  def self.sorted_collections(binary, dir)
+    %w[sorted_map sorted_set].each do |tag|
+      [0, 17, 257, 4097].each do |length|
+        keys = ["", "\0", "a", "a\0", "aa", "b", "é".b, "\xff".b, "long-key-with-bytes"]
+        keys.concat((0...[length - keys.size, 0].max).map { |i| format("k%08d", i) })
+        keys = keys.first(length)
+        entries = keys.each_with_index.map do |key, i|
+          value = if tag == "sorted_set" || i.zero?
+            nil
+          else
+            {"tag" => "uint", "bits" => i.to_s, "full" => false}
+          end
+          {"key_hex" => key.unpack1("H*"), "value" => value}
+        end.shuffle(random: Random.new(8))
+        if length.positive?
+          entries << {"key_hex" => "62", "value" => {"tag" => "none", "bits" => "0", "full" => true}}
+          entries << {"key_hex" => "62", "value" => nil}
+        end
+        removals = length.zero? ? [] : ["00", "6161", "6b3030303030303031"]
+        final = {}
+        entries.each do |entry|
+          key = entry.fetch("key_hex")
+          final[key] = entry.fetch("value") if !final.key?(key) || entry.fetch("value")
+        end
+        removals.each { |key| final.delete(key) }
+        empty = {"tag" => "none", "bits" => "0", "full" => false}
+        expected_entries = final.sort.map { |key, value| {"key_hex" => key, "value" => value || empty} }
+        expected = {"tag" => tag, "count" => final.size, "entries" => expected_entries}
+        request = {"collection" => tag, "sorted_entries" => entries, "removals" => removals}
+        ruby_path = File.join(dir, "ruby-#{tag}-#{length}.xit")
+        XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+          db.transaction do |root|
+            map = XitDB::Core::SortedMap.new(root, set: tag == "sorted_set")
+            entries.each do |entry|
+              key = [entry.fetch("key_hex")].pack("H*")
+              entry.fetch("value") ? map.put(key, value: hash_slot(db, entry.fetch("value"))) : map.add(key)
+            end
+            removals.each { |key| map.remove([key].pack("H*")) }
+          end
+        end
+        assert_equal expected, adapter(binary, "read", "sorted-collections", ruby_path, request)
+        go_path = File.join(dir, "go-#{tag}-#{length}.xit")
+        assert_equal expected, adapter(binary, "write", "sorted-collections", go_path, request)
+        XitDB::Core::Database.open(go_path, readonly: true) do |db|
+          map = XitDB::Core::SortedMap.new(db.root_cursor)
+          assert_equal tag, db.root_cursor.slot.tag.to_s
+          assert_equal expected_entries.size, map.size
+          actual = map.map { |key, slot| {"key_hex" => key.unpack1("H*"), "value" => hash_value(db, slot)} }
+          assert_equal expected_entries, actual
+          expected_entries.each_with_index do |entry, i|
+            key = [entry.fetch("key_hex")].pack("H*")
+            assert_equal true, map.include?(key)
+            assert_equal i, map.rank(key)
+            assert_equal entry.fetch("value"), hash_value(db, map.get(key))
+            assert_equal key, map.at(i).first
+          end
+          tail = expected_entries.last(2).map { |entry| [entry.fetch("key_hex")].pack("H*") }
+          assert_equal tail, map.each_from(tail.first || "").map(&:first)
+          assert_equal tail, map.each_from_index([map.size - 2, 0].max).map(&:first)
+        end
+      end
+    end
+    puts "2 sorted tags and 4 lengths checked with byte keys, key-only records, replacement, removal, ranks, and suffix iteration"
   end
 
   def self.linked_array_edit(binary, dir)

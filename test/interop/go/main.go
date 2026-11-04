@@ -4,7 +4,9 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"iter"
 	"os"
 	"slices"
 	"strconv"
@@ -29,18 +31,24 @@ type request struct {
 		ID   string `json:"id"`
 		Size int    `json:"size"`
 	} `json:"hash"`
-	FileID     string      `json:"file_id"`
-	Value      value       `json:"value"`
-	Values     []value     `json:"values"`
-	Collection string      `json:"collection"`
-	Entries    []hashEntry `json:"entries"`
-	Removals   []string    `json:"removals"`
-	Positions  []int64     `json:"positions"`
-	Length     int64       `json:"length"`
-	Deletions  []int64     `json:"deletions"`
-	SplitIndex int64       `json:"split_index"`
-	Offset     int64       `json:"offset"`
-	Size       int64       `json:"size"`
+	FileID        string        `json:"file_id"`
+	Value         value         `json:"value"`
+	Values        []value       `json:"values"`
+	Collection    string        `json:"collection"`
+	Entries       []hashEntry   `json:"entries"`
+	Removals      []string      `json:"removals"`
+	Positions     []int64       `json:"positions"`
+	Length        int64         `json:"length"`
+	Deletions     []int64       `json:"deletions"`
+	SplitIndex    int64         `json:"split_index"`
+	Offset        int64         `json:"offset"`
+	Size          int64         `json:"size"`
+	SortedEntries []sortedEntry `json:"sorted_entries"`
+}
+
+type sortedEntry struct {
+	KeyHex string `json:"key_hex"`
+	Value  *value `json:"value"`
 }
 
 type hashEntry struct {
@@ -74,7 +82,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" && req.Case != "sorted-collections" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -120,6 +128,9 @@ func run() error {
 	if req.Case == "linked-array-edit" {
 		return linkedArrayEdit(db, req)
 	}
+	if req.Case == "sorted-collections" {
+		return sortedCollections(db, req)
+	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
 		if err != nil {
@@ -132,6 +143,148 @@ func run() error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func sortedCollections(db *xitdb.Database, req request) error {
+	set := req.Collection == "sorted_set"
+	if !set && req.Collection != "sorted_map" {
+		return fmt.Errorf("unsupported sorted collection: %s", req.Collection)
+	}
+	if req.Operation == "write" {
+		if _, err := db.RootCursor().WritePath([]xitdb.PathPart{xitdb.SortedMapInitPart{Set: set}}); err != nil {
+			return err
+		}
+		for _, entry := range req.SortedEntries {
+			key, err := hex.DecodeString(entry.KeyHex)
+			if err != nil {
+				return err
+			}
+			var target xitdb.SortedMapGetTarget = xitdb.SortedMapGetKey{Key: key}
+			if entry.Value != nil {
+				target = xitdb.SortedMapGetValue{Key: key}
+			}
+			path := []xitdb.PathPart{xitdb.SortedMapGetPart{Target: target}}
+			if entry.Value != nil {
+				data, err := writeValue(*entry.Value)
+				if err != nil {
+					return err
+				}
+				path = append(path, xitdb.WriteData{Data: data})
+			}
+			if _, err := db.RootCursor().WritePath(path); err != nil {
+				return err
+			}
+		}
+		for _, encoded := range req.Removals {
+			key, err := hex.DecodeString(encoded)
+			if err != nil {
+				return err
+			}
+			_, err = db.RootCursor().WritePath([]xitdb.PathPart{xitdb.SortedMapRemovePart{Key: key}})
+			if err != nil && !errors.Is(err, xitdb.ErrKeyNotFound) {
+				return err
+			}
+		}
+	}
+	reader, err := xitdb.NewReadSortedMap(db.RootCursor().ReadCursor)
+	if err != nil {
+		return err
+	}
+	slot, err := reader.Slot()
+	if err != nil {
+		return err
+	}
+	expectedTag := xitdb.TagSortedMap
+	if set {
+		expectedTag = xitdb.TagSortedSet
+	}
+	if slot.Tag != expectedTag {
+		return fmt.Errorf("unexpected sorted tag: %d", slot.Tag)
+	}
+	count, err := reader.Count()
+	if err != nil {
+		return err
+	}
+	entries := make([]map[string]any, 0, count)
+	keys := make([]string, 0, count)
+	for cursor, err := range reader.All() {
+		if err != nil {
+			return err
+		}
+		pair, err := cursor.ReadKeyValuePair()
+		if err != nil {
+			return err
+		}
+		key, err := pair.KeyCursor.ReadBytesObject(1 << 20)
+		if err != nil {
+			return err
+		}
+		v, err := readValue(pair.ValueCursor)
+		if err != nil {
+			return err
+		}
+		rank, err := reader.RankByBytes(key.Value)
+		if err != nil {
+			return err
+		}
+		if rank != int64(len(entries)) {
+			return fmt.Errorf("sorted rank %d at %d", rank, len(entries))
+		}
+		indexed, err := reader.GetIndexKeyValuePair(rank)
+		if err != nil {
+			return err
+		}
+		indexedKey, err := indexed.KeyCursor.ReadBytesObject(1 << 20)
+		if err != nil {
+			return err
+		}
+		encoded := hex.EncodeToString(key.Value)
+		if hex.EncodeToString(indexedKey.Value) != encoded {
+			return fmt.Errorf("sorted index differs at %d", rank)
+		}
+		keys = append(keys, encoded)
+		entries = append(entries, map[string]any{"key_hex": encoded, "value": v})
+	}
+	if count != int64(len(entries)) {
+		return fmt.Errorf("sorted count %d differs from %d entries", count, len(entries))
+	}
+	start := max(len(keys)-2, 0)
+	startKey := []byte{}
+	if len(keys) > 0 {
+		startKey, err = hex.DecodeString(keys[start])
+		if err != nil {
+			return err
+		}
+	}
+	for _, seq := range []iter.Seq2[*xitdb.ReadCursor, error]{reader.AllFrom(startKey), reader.AllFromIndex(int64(start))} {
+		actual, err := sortedIterationKeys(seq)
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(keys[start:], actual) {
+			return fmt.Errorf("sorted suffix differs")
+		}
+	}
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{"tag": req.Collection, "count": count, "entries": entries})
+}
+
+func sortedIterationKeys(seq iter.Seq2[*xitdb.ReadCursor, error]) ([]string, error) {
+	keys := []string{}
+	for cursor, err := range seq {
+		if err != nil {
+			return nil, err
+		}
+		pair, err := cursor.ReadKeyValuePair()
+		if err != nil {
+			return nil, err
+		}
+		key, err := pair.KeyCursor.ReadBytesObject(1 << 20)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, hex.EncodeToString(key.Value))
+	}
+	return keys, nil
 }
 
 func linkedArrayEdit(db *xitdb.Database, req request) error {
