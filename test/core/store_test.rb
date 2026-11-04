@@ -16,6 +16,20 @@ class StoreTest < Minitest::Test
     FileUtils.remove_entry(@directory)
   end
 
+  def test_exclusive_creation_and_existing_only_open_preserve_file_identity
+    assert_raises(Errno::ENOENT) { file_store(create: false) }
+    refute File.exist?(@path)
+    created = file_store(exclusive: true)
+    created.write_at(0, "kept")
+    created.sync
+    assert_raises(Errno::EEXIST) { file_store(exclusive: true) }
+    existing = file_store(create: false)
+    assert_equal "kept", existing.read_at(0, 4)
+    assert_raises(ArgumentError) { file_store(create: false, exclusive: true) }
+    assert_raises(ArgumentError) { file_store(readonly: true, exclusive: true) }
+    assert_equal "kept", File.binread(@path)
+  end
+
   # Catches shared-position reads, incorrect append offsets, and oversized buffering.
   def test_positional_reads_and_bounded_pending_writes
     each_store do |store|

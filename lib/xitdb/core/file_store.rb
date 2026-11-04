@@ -9,11 +9,15 @@ module XitDB
       WRITERS_MUTEX = Mutex.new
       private_constant :WRITERS, :WRITERS_MUTEX
 
-      def self.open(path, readonly: false, buffer_limit: 2 * 1024 * 1024)
+      def self.open(path, readonly: false, buffer_limit: 2 * 1024 * 1024, create: true, exclusive: false)
         raise TypeError, "buffer_limit must be an Integer" unless buffer_limit.is_a?(Integer)
         raise ArgumentError, "buffer_limit must be positive" unless buffer_limit.positive?
+        raise ArgumentError, "exclusive opening requires writable creation" if exclusive && (readonly || !create)
 
-        file = File.open(path, readonly ? File::RDONLY : File::RDWR | File::CREAT, 0o666)
+        flags = readonly ? File::RDONLY : File::RDWR
+        flags |= File::CREAT if create && !readonly
+        flags |= File::EXCL if exclusive
+        file = File.open(path, flags, 0o666)
         begin
           new(file, readonly, buffer_limit)
         rescue Exception

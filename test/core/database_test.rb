@@ -8,6 +8,26 @@ require_relative "../support/fault_store"
 class DatabaseTest < Minitest::Test
   Core = XitDB::Core
 
+  def test_empty_initialization_can_be_disabled_without_changing_raw_defaults
+    store = Core::MemoryStore.new
+    assert_raises(XitDB::CorruptionError) { Core::Database.new(store: store, initialize_empty: false) }
+    assert_equal 0, store.length
+    core = Core::Database.new(store: store)
+    assert_equal 62, core.committed_size
+    existing = Core::Database.new(store: store, initialize_empty: false)
+    assert existing.root_cursor.slot.empty?
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "empty.xit")
+      File.binwrite(path, "")
+      assert_raises(XitDB::CorruptionError) { Core::Database.open(path, initialize_empty: false) }
+      assert_equal 0, File.size(path)
+      Core::Database.open(path) { |raw| assert_equal 62, raw.committed_size }
+      assert_equal 62, File.size(path)
+    end
+  ensure
+    store&.close
+  end
+
   def test_empty_file_and_exception_rollback
     core = Core::Database.memory(file_id: 1)
     assert_equal 62, core.committed_size

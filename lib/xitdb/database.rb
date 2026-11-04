@@ -20,8 +20,9 @@ module XitDB
     def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0)
       selected = hasher(hash) unless hash.nil?
       options = selected ? {hash_id: selected.id, hash_size: selected.size} : {}
-      core = Core::Database.open(path, readonly: readonly, lock_timeout: lock_timeout, **options)
+      store, created = open_store(path, readonly: readonly)
       begin
+        core = Core::Database.new(store: store, initialize_empty: created, lock_timeout: lock_timeout, **options)
         if core.header.hash_id == "rb01"
           raise ProfileMismatchError, "Ruby profile file requires XitDB::Ruby.open"
         end
@@ -34,7 +35,7 @@ module XitDB
         end
         database = new(core: core, profile: Profiles::Portable.new(hasher: selected), readonly: readonly)
       rescue Exception
-        core.close
+        store.close rescue nil
         raise
       end
       return database unless block_given?
@@ -45,6 +46,17 @@ module XitDB
         database.close
       end
     end
+
+    def self.open_store(path, readonly:)
+      return [Core::FileStore.open(path, readonly: true), false] if readonly
+
+      begin
+        [Core::FileStore.open(path, exclusive: true), true]
+      rescue Errno::EEXIST
+        [Core::FileStore.open(path, create: false), false]
+      end
+    end
+    private_class_method :open_store
 
     def self.memory(hash: :sha1)
       selected = hasher(hash)

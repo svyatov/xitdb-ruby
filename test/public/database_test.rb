@@ -218,6 +218,44 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  def test_existing_empty_file_is_rejected_unchanged_while_missing_path_is_created
+    Dir.mktmpdir do |dir|
+      empty_path = File.join(dir, "empty.xit")
+      File.binwrite(empty_path, "")
+      [false, true].each do |readonly|
+        assert_raises(XitDB::CorruptionError) { XitDB.open(empty_path, readonly: readonly) }
+        assert_equal 0, File.size(empty_path)
+      end
+
+      missing_path = File.join(dir, "created.xit")
+      XitDB.open(missing_path) do |db|
+        assert_empty db.snapshot
+        db.transaction { |root| root["created"] = 1 }
+      end
+      XitDB.open(missing_path) { |db| assert_equal 1, db.snapshot["created"] }
+      assert_equal 0, File.size(empty_path)
+    end
+  end
+
+  def test_existing_path_removed_during_creation_fallback_is_not_recreated
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "removed.xit")
+      File.binwrite(path, "")
+      removed = false
+      trace = TracePoint.new(:raise) do |event|
+        if !removed && event.raised_exception.is_a?(Errno::EEXIST)
+          File.unlink(path)
+          removed = true
+        end
+      end
+      assert_raises(Errno::ENOENT) { trace.enable { XitDB.open(path) } }
+      assert removed
+      refute File.exist?(path)
+    ensure
+      trace&.disable
+    end
+  end
+
   def test_restored_file_rejects_stale_proof_even_with_same_file_identity
     Dir.mktmpdir do |dir|
       path = File.join(dir, "db.xit")

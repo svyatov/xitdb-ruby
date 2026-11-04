@@ -33,7 +33,7 @@ module XitDB
         new(store: MemoryStore.new, hash_size: hash_size, hash_id: hash_id, file_id: file_id)
       end
 
-      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0)
+      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true)
         @store = store
         @lock_timeout = lock_timeout
         @needs_reopen = false
@@ -41,6 +41,7 @@ module XitDB
         initialize_file = lambda do
           if store.length.zero?
             raise CorruptionError, "empty read-only database" if store.readonly?
+            raise CorruptionError, "existing empty database" unless initialize_empty
 
             @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id)
             store.write_at(0, @header.to_bytes + "\0".b * 17)
