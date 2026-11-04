@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -32,6 +32,8 @@ module Interop
         empty(binary, dir)
       elsif options[:case] == "array-list"
         array_list(binary, dir)
+      elsif options[:case] == "hash-collections"
+        hash_collections(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -62,6 +64,7 @@ module Interop
     request = {operation: operation, case: name, path: path, hash: MANIFEST.fetch("hash"),
                file_id: MANIFEST.fetch("file_id"), value: value}
     request[:values] = request.delete(:value) if name == "array-list"
+    request.merge!(request.delete(:value)) if name == "hash-collections"
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -145,6 +148,76 @@ module Interop
 
   def self.assert_equal(expected, actual)
     raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
+  end
+
+  def self.hash_collections(binary, dir)
+    scalar = ->(tag, bits = "0", full = false) { {"tag" => tag, "bits" => bits, "full" => full} }
+    hashes = ["1" + "a" * 39, "2" + "a" * 39, "3" + "a" * 39, "0" * 39 + "1", "0" * 39 + "f"]
+    vectors = hashes.each_with_index.map do |hash, index|
+      {"hash" => hash, "key" => scalar.call("uint", (index + 1).to_s), "value" => scalar.call("uint", (index + 7).to_s)}
+    end
+    vectors[0]["key"] = scalar.call("int", "18446744073709551615")
+    vectors[0]["value"] = scalar.call("none")
+    vectors[2]["key"] = scalar.call("float", "9223372036854775808")
+    vectors[2]["value"] = scalar.call("none", "0", true)
+    vectors[4]["key"] = {"tag" => "bytes", "hex" => "00" * 9, "format_tag" => "7273", "full" => true}
+    vectors << vectors[4].merge("key" => scalar.call("uint", "999"), "value" => scalar.call("uint", "77"))
+    XitDB::Core::HashMap::TAGS.each do |tag|
+      [[], vectors].each_with_index do |entries, index|
+        removals = index.zero? ? [] : [hashes[1], hashes[3]]
+        request = {"collection" => tag.to_s, "entries" => entries, "removals" => removals}
+        final = index.zero? ? [] : [vectors[0], vectors[2], vectors[4].merge("value" => scalar.call("uint", "77"))]
+        expected = {"tag" => tag.to_s, "count" => final.size, "entries" => final.sort_by { |entry| entry.fetch("hash") }, "missing" => true}
+        ruby_path = File.join(dir, "ruby-#{tag}-#{index}.xit")
+        XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+          db.transaction do |root|
+            map = XitDB::Core::HashMap.new(root, counted: tag.to_s.start_with?("counted"), set: tag.to_s.end_with?("set"))
+            entries.each do |entry|
+              key = hash_slot(db, entry.fetch("key"))
+              value = hash_slot(db, entry.fetch("value"))
+              if value.empty?
+                map.add([entry.fetch("hash")].pack("H*"), key: key)
+              else
+                map.put([entry.fetch("hash")].pack("H*"), key: key, value: value)
+              end
+            end
+            removals.each { |hash| assert_equal true, map.remove([hash].pack("H*")) }
+          end
+        end
+        assert_equal expected, adapter(binary, "read", "hash-collections", ruby_path, request)
+        go_path = File.join(dir, "go-#{tag}-#{index}.xit")
+        assert_equal expected, adapter(binary, "write", "hash-collections", go_path, request)
+        XitDB::Core::Database.open(go_path, readonly: true) do |db|
+          map = XitDB::Core::HashMap.from_cursor(db.root_cursor)
+          assert_equal tag, db.root_cursor.slot.tag
+          assert_equal final.size, map.size
+          actual = map.each_entry.map do |hash, key, value|
+            {"hash" => hash.unpack1("H*"), "key" => hash_value(db, key), "value" => hash_value(db, value)}
+          end
+          assert_equal expected.fetch("entries"), actual.sort_by { |entry| entry.fetch("hash") }
+          final.each do |entry|
+            hash = [entry.fetch("hash")].pack("H*")
+            assert_equal true, map.include?(hash)
+            assert_equal entry.fetch("key"), hash_value(db, map.key(hash))
+            assert_equal entry.fetch("value"), hash_value(db, map.get(hash))
+          end
+          assert_equal false, map.include?("\xff".b * 20)
+        end
+      end
+    end
+    puts "4 hash tags checked empty and populated, with deep collisions, removals, raw keys, key-only records, and occupied nulls"
+  end
+
+  def self.hash_slot(db, value)
+    if value.key?("hex")
+      db.bytes([value.fetch("hex")].pack("H*"), format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
+    else
+      XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")), full: value.fetch("full"))
+    end
+  end
+
+  def self.hash_value(db, slot)
+    read_cursor_value(XitDB::Core::Cursor.new(database: db, slot: slot, bound: db.committed_size))
   end
 end
 

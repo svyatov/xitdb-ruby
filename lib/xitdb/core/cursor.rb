@@ -30,7 +30,7 @@ module XitDB
         limit = transaction ? transaction.length : @bound
         path.reverse_each do |child|
           reader = self.class.new(database: database, slot: value, bound: limit)
-          value = ArrayList.new(reader).get(child.selector)
+          value = reader.collection.get(child.selector)
           raise ExpiredViewError, "cursor element was removed" unless value
 
           child.instance_variable_set(:@slot, value)
@@ -50,7 +50,7 @@ module XitDB
         transaction.check_replacement!(self, slot)
         self.slot
         if @parent
-          ArrayList.new(@parent).replace_child(@selector, slot, owner: self)
+          @parent.collection.replace_child(@selector, slot, owner: self)
         end
         @slot = slot
         invalidate_children
@@ -58,10 +58,16 @@ module XitDB
       end
 
       def child(kind:, selector:)
-        raise ArgumentError, "unsupported child kind: #{kind.inspect}" unless kind == :array_list
+        unless kind == :array_list || HashMap::TAGS.include?(kind)
+          raise ArgumentError, "unsupported child kind: #{kind.inspect}"
+        end
         return nil if slot.tag == :none
 
-        ArrayList.new(self).cursor_at(selector)
+        if kind == :array_list
+          ArrayList.new(self).cursor_at(selector)
+        else
+          HashMap.from_cursor(self).cursor_at(selector)
+        end
       end
 
       # Collection updates keep child paths live while replacing copied ancestors.
@@ -73,7 +79,7 @@ module XitDB
           child = self
           while child.parent
             parent = child.parent
-            ArrayList.new(parent).replace_child(child.selector, child.local_slot, collection: true, propagate: false)
+            parent.collection.replace_child(child.selector, child.local_slot, collection: true, propagate: false)
             child = parent
           end
         end
@@ -81,6 +87,14 @@ module XitDB
       end
 
       def array_child(index, slot)
+        cached_child(index, slot)
+      end
+
+      def hash_child(hash_bytes, slot)
+        cached_child(hash_bytes, slot)
+      end
+
+      def cached_child(index, slot)
         @children.each_pair do |child, selector|
           next unless selector == index && child.valid
 
@@ -128,6 +142,14 @@ module XitDB
       protected
 
       attr_reader :parent, :selector, :valid
+
+      def collection
+        case slot.tag
+        when :array_list then ArrayList.new(self)
+        when *HashMap::TAGS then HashMap.from_cursor(self)
+        else raise InvalidValueError, "slot does not contain a supported collection"
+        end
+      end
 
       def local_slot
         @slot
