@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction replication].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -42,6 +42,8 @@ module Interop
         sorted_collections(binary, dir)
       elsif options[:case] == "compaction"
         compaction(binary, dir)
+      elsif options[:case] == "replication"
+        replication(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -157,6 +159,49 @@ module Interop
 
   def self.assert_equal(expected, actual)
     raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
+  end
+
+  def self.replication(binary, dir)
+    core = XitDB::Core
+    payload = "opaque\0replication".b * 6000
+    ruby_path = File.join(dir, "ruby-replication")
+    core::Database.open(ruby_path, file_id: 1) do |source|
+      source.transaction { |root| root.replace(core::Slot.uint(7)) }
+      first = source.committed_size
+      source.transaction { |root| root.replace(source.bytes(payload, format_tag: "\xff\0".b)) }
+      File.open(ruby_path + ".base", "wb") { |io| source.read_committed(0, first, io) }
+      File.open(ruby_path + ".delta", "wb") { |io| source.read_committed(first, source.committed_size, io) }
+      result = adapter(binary, "read", "replication", ruby_path)
+      assert_equal first, result.fetch("first_size")
+      assert_equal source.replica_state.checksum.to_s, result.fetch("checksum")
+      assert_equal source.committed_size, result.fetch("size")
+      assert_equal Digest::SHA256.hexdigest(payload), result.fetch("payload_sha256")
+      assert_equal File.binread(ruby_path), File.binread(ruby_path + ".replica")
+    end
+    go_path = File.join(dir, "go-replication")
+    result = adapter(binary, "write", "replication", go_path)
+    File.open(go_path + ".base", "rb") do |io|
+      copy = core::Database.copy_replica(to: go_path + ".replica", source_io: io, length: result.fetch("first_size"))
+      begin
+        assert_equal 7, copy.root_cursor.slot.value
+        snapshot = copy.root_cursor
+        core::Database.open(go_path, readonly: true) do |source|
+          assert_equal result.fetch("first_size"), source.replication_start(copy.replica_state)
+        end
+        File.open(go_path + ".delta", "rb") do |delta|
+          copy.apply_replicated(result.fetch("first_size"), delta, delta.size)
+        end
+        assert_equal 7, snapshot.slot.value
+        assert_equal result.fetch("checksum"), copy.replica_state.checksum.to_s
+        assert_equal result.fetch("size"), copy.committed_size
+        assert_equal payload, copy.root_cursor.read_bytes.bytes
+        assert_equal "\xff\0".b, copy.root_cursor.read_bytes.format_tag
+        assert_equal File.binread(go_path), File.binread(go_path + ".replica")
+      ensure
+        copy.close
+      end
+    end
+    puts "Historical full exports and incremental streams applied in both directions with exact bytes, commit checksums, and opaque payload tags"
   end
 
   def self.compaction(binary, dir)

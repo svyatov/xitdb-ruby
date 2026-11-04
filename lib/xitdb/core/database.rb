@@ -2,10 +2,13 @@
 
 require "securerandom"
 require_relative "compaction"
+require_relative "replication"
 
 module XitDB
   module Core
     class Database
+      include Replication
+
       ROOT_OFFSET = 20
       DATA_OFFSET = 37
       TRAILER_SIZE = 25
@@ -32,6 +35,10 @@ module XitDB
 
       def self.memory(hash_size: 20, hash_id: "sha1", file_id: nil)
         new(store: MemoryStore.new, hash_size: hash_size, hash_id: hash_id, file_id: file_id)
+      end
+
+      def self.copy_replica(to:, source_io:, length:)
+        Replication.copy_replica(to: to, source_io: source_io, length: length)
       end
 
       def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true, require_empty: false)
@@ -307,15 +314,7 @@ module XitDB
         size = @store.read_at(ROOT_OFFSET + Slot::SIZE, 8).unpack1("Q>")
         raise CorruptionError, "invalid committed file size" if size < MINIMUM_SIZE || size > @store.length
 
-        position = size - TRAILER_SIZE
-        trailer = @store.read_at(position, TRAILER_SIZE)
-        slot = Slot.parse(trailer.byteslice(0, Slot::SIZE))
-        raise CorruptionError, "unknown root slot tag" unless Slot::TAGS.include?(slot.tag)
-
-        checksum = trailer.byteslice(17, 8).unpack1("Q>")
-        expected = CRC64.call([header.file_id, position].pack("Q>Q>") + trailer.byteslice(0, 17))
-        raise CorruptionError, "invalid root trailer checksum" unless checksum == expected
-
+        slot, = Replication.trailer(@store, header, size, size)
         [size, slot]
       rescue EOFError => error
         raise CorruptionError, error.message

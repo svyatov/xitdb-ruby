@@ -85,7 +85,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" && req.Case != "sorted-collections" && req.Case != "compaction" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" && req.Case != "sorted-collections" && req.Case != "compaction" && req.Case != "replication" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -136,6 +136,9 @@ func run() error {
 	}
 	if req.Case == "compaction" {
 		return compaction(db, req)
+	}
+	if req.Case == "replication" {
+		return replication(db, req)
 	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
@@ -763,6 +766,101 @@ func arrayList(db *xitdb.Database, req request) error {
 		result = append(result, v)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func replication(db *xitdb.Database, req request) error {
+	payload := bytes.Repeat([]byte("opaque\x00replication"), 6000)
+	var firstSize int64
+	if req.Operation == "write" {
+		if err := db.RootCursor().Write(xitdb.Slot{Tag: xitdb.TagUint, Value: 7}); err != nil {
+			return err
+		}
+		var err error
+		firstSize, err = db.CommittedSize()
+		if err != nil {
+			return err
+		}
+		if err := db.RootCursor().Write(xitdb.NewTaggedBytes(payload, []byte{0xff, 0})); err != nil {
+			return err
+		}
+		finish, err := db.CommittedSize()
+		if err != nil {
+			return err
+		}
+		for _, part := range []struct {
+			name       string
+			start, end int64
+		}{{".base", 0, firstSize}, {".delta", firstSize, finish}} {
+			var stream bytes.Buffer
+			if err := db.ReadCommitted(part.start, part.end, &stream); err != nil {
+				return err
+			}
+			if err := os.WriteFile(req.Path+part.name, stream.Bytes(), 0600); err != nil {
+				return err
+			}
+		}
+	} else {
+		base, err := os.ReadFile(req.Path + ".base")
+		if err != nil {
+			return err
+		}
+		file, err := os.OpenFile(req.Path+".replica", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		replica, err := xitdb.NewDatabase(xitdb.NewCoreFile(file), xitdb.Hasher{
+			Hash: sha1.New, ID: xitdb.BytesToID([4]byte{'s', 'h', 'a', '1'}), FileID: 9,
+		})
+		if err != nil {
+			return err
+		}
+		if err := replica.ApplyReplicated(0, bytes.NewReader(base), int64(len(base))); err != nil {
+			return err
+		}
+		state, err := replica.ReplicaState()
+		if err != nil {
+			return err
+		}
+		firstSize, err = db.ReplicationStart(state)
+		if err != nil {
+			return err
+		}
+		if firstSize != int64(len(base)) {
+			return fmt.Errorf("historical replica is not a source prefix")
+		}
+		root, err := replica.RootCursor().Slot()
+		if err != nil {
+			return err
+		}
+		if root.Tag != xitdb.TagUint || root.Value != 7 {
+			return fmt.Errorf("historical export root changed")
+		}
+		delta, err := os.ReadFile(req.Path + ".delta")
+		if err != nil {
+			return err
+		}
+		if err := replica.ApplyReplicated(firstSize, bytes.NewReader(delta), int64(len(delta))); err != nil {
+			return err
+		}
+		db = replica
+	}
+	state, err := db.ReplicaState()
+	if err != nil {
+		return err
+	}
+	value, err := db.RootCursor().ReadBytesObject(int64(len(payload)))
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(value.Value, payload) || !bytes.Equal(value.FormatTag, []byte{0xff, 0}) {
+		return fmt.Errorf("replicated opaque bytes changed")
+	}
+	digest := sha256.Sum256(payload)
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"first_size": firstSize, "size": state.CommittedSize,
+		"checksum": strconv.FormatUint(state.Checksum, 10), "payload_sha256": hex.EncodeToString(digest[:]),
+	})
 }
 
 func writeValue(v value) (xitdb.WriteableData, error) {
