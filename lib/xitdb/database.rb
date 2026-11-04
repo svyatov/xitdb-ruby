@@ -155,6 +155,21 @@ module XitDB
       core.close
     end
 
+    def compact(to:)
+      compacted = core.compact(to: to)
+      begin
+        copied_profile = if core.header.hash_id == "rb01"
+          Profiles::Ruby.new(codecs: profile.codecs)
+        else
+          Profiles::Portable.new(hasher: profile.hasher)
+        end
+        self.class.new(core: compacted, profile: copied_profile)
+      rescue Exception
+        compacted.close
+        raise
+      end
+    end
+
     def closed?
       core.closed?
     end

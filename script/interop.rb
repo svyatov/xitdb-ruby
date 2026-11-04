@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -40,6 +40,8 @@ module Interop
         linked_array_edit(binary, dir)
       elsif options[:case] == "sorted-collections"
         sorted_collections(binary, dir)
+      elsif options[:case] == "compaction"
+        compaction(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -71,7 +73,7 @@ module Interop
                file_id: MANIFEST.fetch("file_id"), value: value}
     request[:values] = request.delete(:value) if name == "array-list"
     request.merge!(request.delete(:value)) if name == "hash-collections"
-    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit sorted-collections].include?(name)
+    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit sorted-collections compaction].include?(name)
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -155,6 +157,74 @@ module Interop
 
   def self.assert_equal(expected, actual)
     raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
+  end
+
+  def self.compaction(binary, dir)
+    core = XitDB::Core
+    payload = "opaque\0payload".b * 6000
+    %w[history raw].each do |kind|
+      expected = {"history" => kind == "history" ? 1 : 0, "cycle" => true, "shared" => true,
+                  "payload_sha256" => Digest::SHA256.hexdigest(payload), "tag" => "ff00",
+                  "short" => "short", "short_tag" => "ff00"}
+      source_path = File.join(dir, "ruby-#{kind}")
+      ruby_path = source_path + ".compact"
+      core::Database.open(source_path) do |db|
+        db.transaction do |root|
+          tx = root.transaction
+          bytes = db.bytes(payload, format_tag: "\xff\0".b)
+          short = db.bytes("short", format_tag: "\xff\0".b)
+          position = tx.length
+          graph = core::Slot.new(tag: kind == "history" ? :array_list : :index, value: position, full: true)
+          tx.append([4, position + 16].pack("Q>Q>")) if kind == "history"
+          tx.append(graph.to_bytes + bytes.to_bytes + bytes.to_bytes + short.to_bytes + "\0".b * 108)
+          if kind == "history"
+            history = core::ArrayList.new(root)
+            history.append(core::Slot.uint(10)).append(graph)
+          else
+            root.replace(graph)
+          end
+        end
+        original = File.binread(source_path)
+        db.compact(to: ruby_path).close
+        assert_equal original, File.binread(source_path)
+      end
+      assert_equal expected, adapter(binary, "read", "compaction", ruby_path, {"collection" => kind})
+      go_path = File.join(dir, "go-#{kind}")
+      assert_equal expected, adapter(binary, "write", "compaction", go_path, {"collection" => kind})
+      [ruby_path + ".go-compact", go_path + ".go-compact"].each do |path|
+        core::Database.open(path, readonly: true) do |db|
+          assert_compaction_graph(db, kind, payload)
+          original = File.binread(path)
+          compacted = db.compact(to: path + ".ruby-compact")
+          begin
+            assert_compaction_graph(compacted, kind, payload)
+            assert_equal original, File.binread(path)
+          ensure
+            compacted.close
+          end
+        end
+      end
+    end
+    puts "Cyclic history and arbitrary index roots compacted in both implementations with shared, large, and unknown-tagged bytes"
+  end
+
+  def self.assert_compaction_graph(db, kind, payload)
+    core = XitDB::Core
+    graph = db.root_cursor.slot
+    if kind == "history"
+      history = core::ArrayList.new(db.root_cursor)
+      assert_equal 1, history.size
+      graph = history.get(0)
+    end
+    assert_equal true, graph.full
+    pointer = kind == "history" ? db.read_at(graph.value + 8, 8, bound: db.committed_size).unpack1("Q>") : graph.value
+    children = 4.times.map { |i| core::Slot.parse(db.read_at(pointer + i * 9, 9, bound: db.committed_size)) }
+    assert_equal graph, children[0]
+    assert_equal children[1], children[2]
+    assert_equal payload, db.read_bytes(children[1]).bytes
+    assert_equal "\xff\0".b, db.read_bytes(children[1]).format_tag
+    assert_equal "short", db.read_bytes(children[3]).bytes
+    assert_equal "\xff\0".b, db.read_bytes(children[3]).format_tag
   end
 
   def self.hash_collections(binary, dir)

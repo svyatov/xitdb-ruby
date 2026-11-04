@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -82,7 +85,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" && req.Case != "sorted-collections" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" && req.Case != "sorted-collections" && req.Case != "compaction" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -131,6 +134,9 @@ func run() error {
 	if req.Case == "sorted-collections" {
 		return sortedCollections(db, req)
 	}
+	if req.Case == "compaction" {
+		return compaction(db, req)
+	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
 		if err != nil {
@@ -143,6 +149,168 @@ func run() error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func compaction(db *xitdb.Database, req request) error {
+	if req.Collection != "history" && req.Collection != "raw" {
+		return fmt.Errorf("unsupported compaction root: %s", req.Collection)
+	}
+	payload := bytes.Repeat([]byte("opaque\x00payload"), 6000)
+	if req.Operation == "write" {
+		if err := writeCompactionGraph(db, req.Collection, payload); err != nil {
+			return err
+		}
+	}
+	original, err := os.ReadFile(req.Path)
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(req.Path+".go-compact", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	target, err := db.Compact(xitdb.NewCoreFile(file), make(xitdb.MemoryOffsetMap))
+	if err != nil {
+		return err
+	}
+	if target.Header.FileID == db.Header.FileID {
+		return fmt.Errorf("compaction reused source identity")
+	}
+	after, err := os.ReadFile(req.Path)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(original, after) {
+		return fmt.Errorf("compaction changed source bytes")
+	}
+	return readCompactionGraph(target, req.Collection, payload)
+}
+
+func writeCompactionGraph(db *xitdb.Database, kind string, payload []byte) error {
+	return db.RunContext(func(cursor *xitdb.WriteCursor) error {
+		core := db.Core
+		position, err := core.Length()
+		if err != nil {
+			return err
+		}
+		if err := core.SeekTo(position); err != nil {
+			return err
+		}
+		data := binary.BigEndian.AppendUint64(nil, uint64(len(payload)))
+		data = append(data, payload...)
+		data = append(data, 0xff, 0)
+		if err := core.Write(data); err != nil {
+			return err
+		}
+		value := xitdb.Slot{Tag: xitdb.TagBytes, Value: position, Full: true}
+		position += int64(len(data))
+		graph := xitdb.Slot{Tag: xitdb.TagIndex, Value: position, Full: true}
+		if kind == "history" {
+			graph.Tag = xitdb.TagArrayList
+			header := binary.BigEndian.AppendUint64(nil, 4)
+			header = binary.BigEndian.AppendUint64(header, uint64(position+16))
+			if err := core.Write(header); err != nil {
+				return err
+			}
+		}
+		short := xitdb.Slot{Tag: xitdb.TagShortBytes, Full: true,
+			Value: int64(binary.BigEndian.Uint64([]byte{'s', 'h', 'o', 'r', 't', 0, 0xff, 0}))}
+		block := make([]byte, xitdb.IndexBlockSize)
+		for i, slot := range []xitdb.Slot{graph, value, value, short} {
+			encoded := slot.ToBytes()
+			copy(block[i*xitdb.SlotLength:], encoded[:])
+		}
+		if err := core.Write(block); err != nil {
+			return err
+		}
+		if kind == "raw" {
+			return cursor.Write(graph)
+		}
+		history, err := xitdb.NewWriteArrayList(cursor)
+		if err != nil {
+			return err
+		}
+		if err := history.Append(xitdb.NewUint(10)); err != nil {
+			return err
+		}
+		return history.Append(graph)
+	})
+}
+
+func readCompactionGraph(db *xitdb.Database, kind string, payload []byte) error {
+	graph, err := db.RootCursor().Slot()
+	if err != nil {
+		return err
+	}
+	historyCount := int64(0)
+	if kind == "history" {
+		history, err := xitdb.NewReadArrayList(db.RootCursor().ReadCursor)
+		if err != nil {
+			return err
+		}
+		historyCount, err = history.Count()
+		if err != nil {
+			return err
+		}
+		if historyCount != 1 {
+			return fmt.Errorf("compacted history has %d entries", historyCount)
+		}
+		graph, err = history.GetSlot(0)
+		if err != nil {
+			return err
+		}
+	}
+	if !graph.Full || (kind == "history" && graph.Tag != xitdb.TagArrayList) || (kind == "raw" && graph.Tag != xitdb.TagIndex) {
+		return fmt.Errorf("compacted graph tag or full bit changed")
+	}
+	pointer := graph.Value
+	if kind == "history" {
+		if err := db.Core.SeekTo(pointer); err != nil {
+			return err
+		}
+		header := make([]byte, 16)
+		if err := db.Core.Read(header); err != nil {
+			return err
+		}
+		if binary.BigEndian.Uint64(header[:8]) != 4 {
+			return fmt.Errorf("cyclic list size changed")
+		}
+		pointer = int64(binary.BigEndian.Uint64(header[8:]))
+	}
+	if err := db.Core.SeekTo(pointer); err != nil {
+		return err
+	}
+	var children [4]xitdb.Slot
+	for i := range children {
+		var encoded [xitdb.SlotLength]byte
+		if err := db.Core.Read(encoded[:]); err != nil {
+			return err
+		}
+		children[i] = xitdb.SlotFromBytes(encoded)
+	}
+	if children[0] != graph || children[1] != children[2] {
+		return fmt.Errorf("cycle or shared storage changed")
+	}
+	for _, i := range []int{1, 3} {
+		cursor := &xitdb.ReadCursor{DB: db, SlotPtr: xitdb.SlotPointer{Slot: children[i]}}
+		value, err := cursor.ReadBytesObject(int64(len(payload)))
+		if err != nil {
+			return err
+		}
+		expected := payload
+		if i == 3 {
+			expected = []byte("short")
+		}
+		if !bytes.Equal(value.Value, expected) || !bytes.Equal(value.FormatTag, []byte{0xff, 0}) {
+			return fmt.Errorf("tagged byte content changed at %d", i)
+		}
+	}
+	digest := sha256.Sum256(payload)
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"history": historyCount, "cycle": true, "shared": true,
+		"payload_sha256": hex.EncodeToString(digest[:]), "tag": "ff00", "short": "short", "short_tag": "ff00",
+	})
 }
 
 func sortedCollections(db *xitdb.Database, req request) error {

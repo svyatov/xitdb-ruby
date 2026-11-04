@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "securerandom"
+require_relative "compaction"
 
 module XitDB
   module Core
@@ -33,19 +34,33 @@ module XitDB
         new(store: MemoryStore.new, hash_size: hash_size, hash_id: hash_id, file_id: file_id)
       end
 
-      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true)
+      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true, require_empty: false)
         @store = store
         @lock_timeout = lock_timeout
         @needs_reopen = false
         @transaction = nil
         initialize_file = lambda do
+          raise ArgumentError, "compaction target must be empty" if require_empty && !store.length.zero?
+
           if store.length.zero?
             raise CorruptionError, "empty read-only database" if store.readonly?
             raise CorruptionError, "existing empty database" unless initialize_empty
 
             @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id)
-            store.write_at(0, @header.to_bytes + "\0".b * 17)
-            publish(Slot.new, 0)
+            begin
+              store.write_at(0, @header.to_bytes + "\0".b * 17)
+              publish(Slot.new, 0)
+            rescue Exception
+              # The exclusive initialization lock still owns this empty target.
+              if require_empty && !@needs_reopen
+                begin
+                  store.truncate(0)
+                rescue Exception
+                  nil
+                end
+              end
+              raise
+            end
           else
             @header = Header.parse(store.read_at(0, Header::SIZE))
             {hash_size: hash_size, hash_id: hash_id, file_id: file_id}.each do |name, value|
@@ -92,6 +107,59 @@ module XitDB
 
       def committed_size
         committed_state.first
+      end
+
+      def compact(to:)
+        with_operation do
+          source = root_cursor
+          slot = source.slot
+          history = slot.tag == :array_list
+          slot = ArrayList.new(source).get(-1) || Slot.new if history
+          store = FileStore.open(to)
+          begin
+            raise ArgumentError, "compaction target is the source file" if store.storage_identity == storage_identity
+
+            file_id = random_id
+            file_id = random_id while file_id == header.file_id
+            target = Database.new(store: store, hash_id: header.hash_id, hash_size: header.hash_size, file_id: file_id,
+                                  lock_timeout: @lock_timeout, require_empty: true)
+            offsets = OffsetMap.new
+            unless slot.empty?
+              target.transaction do |root|
+                current = Header.parse(store.read_at(0, Header::SIZE))
+                unless current.file_id == file_id && root.bound == MINIMUM_SIZE && root.slot.empty?
+                  raise ArgumentError, "compaction target changed before copying"
+                end
+
+                copier = Compaction.new(self, source, root.transaction, offsets)
+                if history
+                  ArrayList.new(root).append(copier.copy(slot))
+                else
+                  root.replace(copier.copy(slot))
+                end
+              end
+              published = true
+            end
+            offsets.close
+            offsets = nil
+            completed = true
+            target
+          ensure
+            unless completed
+              begin
+                offsets&.close
+              rescue Exception
+                nil
+              end
+              target&.send(:restore_empty_target) unless published
+              begin
+                store.close
+              rescue Exception
+                nil
+              end
+            end
+          end
+        end
       end
 
       def root_cursor
@@ -203,6 +271,22 @@ module XitDB
       end
 
       private
+
+      def restore_empty_target
+        return if needs_reopen?
+
+        @store.with_exclusive_lock(timeout: @lock_timeout) do
+          current = Header.parse(@store.read_at(0, Header::SIZE))
+          next unless current.file_id == header.file_id
+
+          size, slot = committed_state
+          @store.truncate(0) if size == MINIMUM_SIZE && slot.empty?
+        end
+      rescue Exception
+        # Cleanup must preserve the original failure or nonlocal exit. A new
+        # generation or committed root belongs to its writer and is retained.
+        nil
+      end
 
       def active_transaction
         raise TransactionStateError, "allocation requires a transaction" unless @transaction
