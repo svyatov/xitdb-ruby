@@ -14,7 +14,8 @@ module XitDB
 
       def slot
         database.check_open!
-        transaction ? transaction.slot(self) : @slot
+        transaction&.check_cursor!(self)
+        @slot
       end
 
       def bound
@@ -26,7 +27,8 @@ module XitDB
         database.check_open!
         raise ReadOnlyError, "cursor is read-only" unless transaction
 
-        transaction.replace(self, slot)
+        transaction.check_replacement!(self, slot)
+        @slot = slot
         self
       end
 

@@ -14,7 +14,7 @@ module XitDB
         @owner = Thread.current
         @active = true
         @cancelled = false
-        @slots = {}
+        @cursors = ObjectSpace::WeakMap.new
         @checkpoints = []
         @mutable_start = store.length
         @root = cursor(slot: slot)
@@ -30,19 +30,18 @@ module XitDB
         check_active!
         validate_slot(slot)
         cursor = Cursor.new(database: @database, slot: slot, bound: length, transaction: self)
-        @slots[cursor] = slot
+        @cursors[cursor] = true
         cursor
       end
 
-      def slot(cursor)
+      def check_cursor!(cursor)
         check_active!
-        @slots.fetch(cursor) { raise ExpiredViewError, "cursor was discarded by restore" }
+        raise ExpiredViewError, "cursor was discarded by restore" unless @cursors.key?(cursor)
       end
 
-      def replace(cursor, value)
-        slot(cursor)
+      def check_replacement!(cursor, value)
+        check_cursor!(cursor)
         validate_slot(value)
-        @slots[cursor] = value
       end
 
       def length
@@ -76,7 +75,9 @@ module XitDB
 
       def checkpoint
         check_active!
-        checkpoint = Checkpoint.new(owner: self, slots: @slots.dup.freeze, length: freeze, cancelled: @cancelled).freeze
+        slots = {}
+        @cursors.each_key { |cursor| slots[cursor] = cursor.slot }
+        checkpoint = Checkpoint.new(owner: self, slots: slots, length: freeze, cancelled: @cancelled).freeze
         @checkpoints << checkpoint
         checkpoint
       end
@@ -89,10 +90,26 @@ module XitDB
         end
 
         @store.truncate(checkpoint.length)
-        @slots = checkpoint.slots.dup
+        @cursors = ObjectSpace::WeakMap.new
+        checkpoint.slots.each do |cursor, slot|
+          @cursors[cursor] = true
+          cursor.replace(slot)
+        end
         @mutable_start = checkpoint.length
         @cancelled = checkpoint.cancelled
-        @checkpoints = @checkpoints.take(index + 1)
+        @checkpoints.slice!(index..).each { |item| item.slots.clear }
+        nil
+      end
+
+      # Internal operations release rollback state after a successful mutation.
+      def release_checkpoint(checkpoint)
+        check_active!
+        unless checkpoint.is_a?(Checkpoint) && checkpoint.owner.equal?(self)
+          raise TransactionStateError, "checkpoint belongs to another transaction"
+        end
+
+        @checkpoints.delete_if { |item| item.equal?(checkpoint) }
+        checkpoint.slots.clear
         nil
       end
 
@@ -108,6 +125,10 @@ module XitDB
 
       def expire!
         @active = false
+        @checkpoints.each { |checkpoint| checkpoint.slots.clear }
+        @checkpoints.clear
+        @cursors = ObjectSpace::WeakMap.new
+        @root = nil
       end
 
       private

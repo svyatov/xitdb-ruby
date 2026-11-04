@@ -2,6 +2,7 @@
 
 require "test_helper"
 require "tmpdir"
+require "weakref"
 require_relative "../support/fault_store"
 
 class DatabaseTest < Minitest::Test
@@ -371,7 +372,79 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  def test_temporary_cursors_are_reclaimed_during_transaction
+    Core::Database.memory.transaction do |root|
+      references = Array.new(200) { temporary_cursor_reference(root.transaction) }
+      GC.start
+      assert_equal 0, references.count(&:weakref_alive?)
+      assert root.slot.empty?
+    end
+  end
+
+  def test_released_checkpoints_do_not_retain_completed_operations
+    Core::Database.memory.transaction do |root|
+      tx = root.transaction
+      references = Array.new(200) do
+        checkpoint, reference = checkpoint_with_temporary_cursor(tx)
+        tx.release_checkpoint(checkpoint)
+        assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
+        [WeakRef.new(checkpoint), reference]
+      end
+      GC.start
+      assert_equal 0, references.sum { |pair| pair.count(&:weakref_alive?) }
+    end
+  end
+
+  def test_restore_releases_snapshot_ownership_and_preserves_live_cursors
+    Core::Database.memory.transaction do |root|
+      tx = root.transaction
+      live = tx.cursor(slot: Core::Slot.uint(7))
+      checkpoint, reference = checkpoint_with_temporary_cursor(tx)
+      live.replace(Core::Slot.uint(8))
+      GC.start
+      assert reference.weakref_alive?
+      tx.restore(checkpoint)
+      GC.start
+      assert_equal 7, live.slot.value
+      refute reference.weakref_alive?
+      assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
+    end
+  end
+
+  def test_expiration_releases_snapshots_even_when_an_expired_cursor_is_retained
+    expired = checkpoint = reference = nil
+    Core::Database.memory.transaction do |root|
+      expired = root
+      checkpoint, reference = checkpoint_with_temporary_cursor(root.transaction)
+    end
+    GC.start
+    assert_raises(XitDB::ExpiredViewError) { expired.slot }
+    refute reference.weakref_alive?
+    assert checkpoint
+  end
+
+  def test_live_replaced_slots_survive_gc_and_checkpoint_release
+    Core::Database.memory.transaction do |root|
+      tx = root.transaction
+      cursor = tx.cursor(slot: Core::Slot.uint(1))
+      checkpoint = tx.checkpoint
+      cursor.replace(Core::Slot.uint(42))
+      tx.release_checkpoint(checkpoint)
+      GC.start
+      assert_equal 42, cursor.slot.value
+    end
+  end
+
   private
+
+  def temporary_cursor_reference(transaction)
+    WeakRef.new(transaction.cursor(slot: Core::Slot.uint(1)))
+  end
+
+  def checkpoint_with_temporary_cursor(transaction)
+    cursor = transaction.cursor(slot: Core::Slot.uint(2))
+    [transaction.checkpoint, WeakRef.new(cursor)]
+  end
 
   def return_from_transaction(core)
     core.transaction { return :original_exit }
