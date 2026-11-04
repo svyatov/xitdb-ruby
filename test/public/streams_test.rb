@@ -400,4 +400,63 @@ class StreamsTest < Minitest::Test
       assert_equal [nil, nil, nil, nil, "sibling", "stream"], items.to_ruby
     end
   end
+
+  def test_array_reader_bounds_after_negative_index_normalization
+    [[], XitDB.linked_array].each do |declaration|
+      @db.transaction do |root|
+        root["items"] = declaration
+        root["items"].push("left", "middle", "right")
+      end
+      items = @db.snapshot["items"]
+      [[-3, "left"], [-1, "right"], [0, "left"], [2, "right"]].each do |index, expected|
+        assert_equal expected, items.open_bytes(index, &:read)
+      end
+      [-4, -5, -6, -100, 3].each do |index|
+        assert_nil items[index]
+        assert_raises(KeyError) { items.open_bytes(index) { flunk "out-of-range reader was yielded" } }
+      end
+    end
+  end
+
+  def test_slice_reader_bounds_use_the_visible_size
+    [[], XitDB.linked_array].each do |declaration|
+      @db.transaction do |root|
+        root["items"] = declaration
+        root["items"].push("left", "middle", "right")
+      end
+      items = @db.snapshot["items"]
+      [
+        [items[1, 1], [[0, "middle"], [-1, "middle"]], [-2, -100, 1]],
+        [items[0, 2], [[0, "left"], [-2, "left"], [-1, "middle"]], [-3, -100, 2]],
+        [items[1, 0], [], [-1, -100, 0]]
+      ].each do |slice, valid, invalid|
+        valid.each { |index, expected| assert_equal expected, slice.open_bytes(index, &:read) }
+        invalid.each do |index|
+          assert_nil slice[index]
+          assert_raises(KeyError) { slice.open_bytes(index) { flunk "reader escaped visible slice bounds" } }
+        end
+      end
+    end
+  end
+
+  def test_invalid_array_reader_cannot_bypass_stream_overlap_protection
+    [[], XitDB.linked_array].each do |declaration|
+      @db.transaction do |root|
+        root["items"] = declaration
+        items = root["items"]
+        items.push("left", "middle", "right")
+        assert_raises(KeyError) do
+          items.open_bytes(-4) do |reader|
+            items[2] = "changed"
+            reader.read
+          end
+        end
+        assert_equal ["left", "middle", "right"], items.to_ruby
+        items.open_bytes(-1) do |reader|
+          assert_raises(XitDB::ConcurrentModificationError) { items[2] = "changed" }
+          assert_equal "right", reader.read
+        end
+      end
+    end
+  end
 end

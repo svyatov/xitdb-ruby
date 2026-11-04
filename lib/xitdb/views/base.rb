@@ -76,6 +76,9 @@ module XitDB
         reader = registration = nil
         reader = context.read do
           selector = stream_selector(key)
+          if %i[array linked_array].include?(kind) && (selector.negative? || selector >= size)
+            raise KeyError, "byte value not found"
+          end
           registration = context.register_stream(entry_path(selector), write: false)
           stored = adapter.lookup(selector)
           raise KeyError, "byte value not found" unless stored
