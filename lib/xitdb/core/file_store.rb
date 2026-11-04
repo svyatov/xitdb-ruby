@@ -5,6 +5,8 @@ module XitDB
     class FileStore
       include Store
 
+      attr_reader :storage_identity
+
       WRITERS = {}
       WRITERS_MUTEX = Mutex.new
       private_constant :WRITERS, :WRITERS_MUTEX
@@ -33,7 +35,8 @@ module XitDB
         @pending = "".b
         @pending_offset = 0
         stat = @file.stat
-        @identity = [Process.pid, stat.dev, stat.ino]
+        @identity = [Process.pid, stat.dev, stat.ino].freeze
+        @storage_identity = @identity
         writer = WRITERS_MUTEX.synchronize do
           entry = WRITERS[@identity] ||= [Mutex.new, 0]
           entry[1] += 1

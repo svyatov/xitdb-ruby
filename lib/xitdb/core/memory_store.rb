@@ -186,9 +186,12 @@ module XitDB
     class MemoryStore
       include Store
 
+      attr_reader :storage_identity
+
       def initialize(bytes = "".b)
         string(bytes)
         @bytes = bytes.b
+        @storage_identity = Object.new.freeze
         initialize_state
       end
 

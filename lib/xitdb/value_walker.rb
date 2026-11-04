@@ -16,8 +16,8 @@ module XitDB
           current = nil
           if input.is_a?(Views::Base)
             input.check!
-            unless input.context.database.equal?(context.database)
-              raise ForeignValueError.new("view belongs to another database", path: location)
+            unless input.context.reference_compatible?(context)
+              raise ForeignValueError.new("view belongs to another store or file generation", path: location)
             end
             context.transaction.freeze
             result = input.slot_for_assignment(context: context, path: location)

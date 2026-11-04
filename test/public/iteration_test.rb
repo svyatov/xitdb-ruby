@@ -108,6 +108,23 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  def test_byte_equal_map_keys_share_child_lifetime_across_encodings
+    [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map].each do |declaration|
+      @db.transaction do |root|
+        root["items"] = declaration
+        items = root["items"]
+        items["é"] = {"child" => [1]}
+        child = items["é".b]["child"]
+        items["é"] = {"child" => [2]}
+        assert_raises(XitDB::ExpiredViewError) { child.size }
+        child = items["é"]["child"]
+        items.delete("é".b)
+        assert_raises(XitDB::ExpiredViewError) { child.size }
+        assert_empty items
+      end
+    end
+  end
+
   def test_set_membership_invalidates_iterators_but_noops_preserve_them
     [XitDB.set, XitDB.set(counted: true), XitDB.sorted_set].each do |declaration|
       @db.transaction do |root|

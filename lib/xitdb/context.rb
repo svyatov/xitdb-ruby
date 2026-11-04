@@ -6,9 +6,9 @@ module XitDB
     Location = Struct.new(:path, :membership, :expired)
     private_constant :Location
 
-    attr_reader :database, :profile, :transaction, :root
+    attr_reader :database, :profile, :transaction, :root, :reference_proof
 
-    def initialize(database:, root:, bound:, transaction: nil, readonly: false)
+    def initialize(database:, root:, bound:, transaction: nil, readonly: false, reference_proof: nil)
       @database = database
       @profile = database.profile
       @root = root
@@ -17,6 +17,11 @@ module XitDB
       @readonly = readonly
       @changed = false
       @locations = ObjectSpace::WeakMap.new if transaction && !readonly
+      unless transaction
+        @reference_proof = reference_proof || database.core.read_at(
+          bound - Core::Database::TRAILER_SIZE, Core::Database::TRAILER_SIZE, bound: bound
+        ).freeze
+      end
     end
 
     def check!
@@ -32,6 +37,21 @@ module XitDB
     def read_bound
       check!
       transaction ? transaction.length : @bound
+    end
+
+    def reference_compatible?(destination)
+      check!
+      destination.check!
+      target = destination.database.core
+      return false unless database.core.storage_identity == target.storage_identity
+      return false unless profile.class == destination.profile.class && database.core.header.to_bytes == target.header.to_bytes
+      return transaction.equal?(destination.transaction) if transaction
+      return false if @bound > destination.read_bound
+
+      reference_proof == target.read_at(@bound - Core::Database::TRAILER_SIZE,
+                                       Core::Database::TRAILER_SIZE, bound: destination.read_bound)
+    rescue CorruptionError
+      false
     end
 
     def cursor(slot)
@@ -133,7 +153,7 @@ module XitDB
       @locations.each_key do |location|
         next if location.expired
 
-        yield location if location.path.first(key.size) == key
+        yield location if location.path.first(key.size).eql?(key)
         retained[location] = true unless location.expired
       end
       @locations = retained

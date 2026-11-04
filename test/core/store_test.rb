@@ -30,6 +30,27 @@ class StoreTest < Minitest::Test
     assert_equal "kept", File.binread(@path)
   end
 
+  def test_storage_identity_follows_the_open_file_and_distinguishes_copies
+    original = file_store
+    original.write_at(0, "kept")
+    original.sync
+    alias_path = File.join(@directory, "alias.xit")
+    File.link(@path, alias_path)
+    aliased = XitDB::Core::FileStore.open(alias_path)
+    @stores << aliased
+    assert_equal original.storage_identity, aliased.storage_identity
+    assert original.storage_identity.frozen?
+    File.unlink(@path)
+    replacement = file_store
+    replacement.write_at(0, "kept")
+    refute_equal original.storage_identity, replacement.storage_identity
+    assert_equal original.storage_identity, aliased.storage_identity
+    first = XitDB::Core::MemoryStore.new("kept")
+    second = XitDB::Core::MemoryStore.new("kept")
+    @stores.concat([first, second])
+    refute_equal first.storage_identity, second.storage_identity
+  end
+
   # Catches shared-position reads, incorrect append offsets, and oversized buffering.
   def test_positional_reads_and_bounded_pending_writes
     each_store do |store|

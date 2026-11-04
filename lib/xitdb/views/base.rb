@@ -88,7 +88,7 @@ module XitDB
         stored = slot
         context.transaction&.freeze
         Context.new(database: context.database, root: stored, bound: context.read_bound,
-                    transaction: context.transaction, readonly: readonly)
+                    transaction: context.transaction, readonly: readonly, reference_proof: context.reference_proof)
       end
 
       def entry_path(selector)

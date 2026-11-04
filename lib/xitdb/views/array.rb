@@ -141,11 +141,7 @@ module XitDB
         added = false
         edit do |collection|
           inputs = others.map do |other|
-            if other.is_a?(Array)
-              unless other.context.database.equal?(context.database)
-                raise ForeignValueError.new("view belongs to another database", path: path)
-              end
-            else
+            unless other.is_a?(Array)
               other = ::Array.try_convert(other) || raise(TypeError, "concat requires an array")
             end
             stored = context.profile.encode(other, context: context, path: path)
