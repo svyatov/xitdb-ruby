@@ -355,6 +355,73 @@ class StoreTest < Minitest::Test
     assert_equal "cc", store.read_at(2 * 1024 * 1024 - 1, 2)
   end
 
+  def test_unlock_failure_preserves_pending_exit_and_disables_writes
+    store = file_store
+    failure = IOError.new("unlock failed")
+    fault_file(store, :flock) do |original, mode|
+      raise failure if mode == File::LOCK_UN
+
+      original.call(mode)
+    end
+    errors = []
+    result = catch(:abort) do
+      store.with_exclusive_lock(on_release_error: ->(error) { errors << error }) { throw :abort, :original }
+    end
+    assert_equal :original, result
+    assert_equal [failure], errors
+    assert_raises(XitDB::TransactionStateError) { store.append("must not write") }
+    store.close
+    file_store.with_exclusive_lock { assert true }
+  end
+
+  def test_unlock_failure_after_normal_return_remains_an_error
+    store = file_store
+    fault_file(store, :flock) do |original, mode|
+      raise IOError, "unlock failed" if mode == File::LOCK_UN
+
+      original.call(mode)
+    end
+    assert_raises(IOError) { store.with_exclusive_lock { :finished } }
+    assert_raises(XitDB::TransactionStateError) { store.with_exclusive_lock { flunk "must not run" } }
+  end
+
+  def test_waiting_writer_cannot_enter_after_release_failure
+    store = XitDB::Core::MemoryStore.new
+    @stores << store
+    entered = Queue.new
+    waiting = Queue.new
+    finish = Queue.new
+    original_lock = store.method(:lock_writer)
+    original_unlock = store.method(:unlock_writer)
+    store.define_singleton_method(:lock_writer) do |deadline|
+      waiting << true if Thread.current[:waiting_writer]
+      original_lock.call(deadline)
+    end
+    store.define_singleton_method(:unlock_writer) do
+      original_unlock.call
+      raise IOError, "release failed" unless Thread.current[:waiting_writer]
+    end
+    first = Thread.new do
+      store.with_exclusive_lock { entered << true; finish.pop }
+    rescue IOError => error
+      error
+    end
+    entered.pop
+    second = Thread.new do
+      Thread.current[:waiting_writer] = true
+      store.with_exclusive_lock { :incorrectly_entered }
+    rescue XitDB::TransactionStateError => error
+      error
+    end
+    waiting.pop
+    finish << true
+    assert_instance_of IOError, first.value
+    assert_instance_of XitDB::TransactionStateError, second.value
+  ensure
+    first&.join
+    second&.join
+  end
+
   private
 
   def each_store

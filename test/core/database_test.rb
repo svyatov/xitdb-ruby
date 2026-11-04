@@ -205,10 +205,11 @@ class DatabaseTest < Minitest::Test
   def test_failure_after_header_sync_is_committed
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
-    store.after_fault = ->(name, _args) { raise IOError, "unlock failed" if name == :with_exclusive_lock }
+    store.release_fault = -> { raise IOError, "unlock failed" }
     error = assert_raises(XitDB::CommitError) { core.transaction { |cursor| cursor.replace(Core::Slot.uint(9)) } }
     assert_equal :committed, error.outcome
     assert_equal 9, core.root_cursor.slot.value
+    assert core.needs_reopen?
   end
 
   def test_interrupt_during_publication_is_unknown_after_header_attempt
@@ -342,7 +343,39 @@ class DatabaseTest < Minitest::Test
     assert core.needs_reopen?
   end
 
+  def test_release_failure_preserves_throw_break_and_nonlocal_return
+    %i[memory file].each do |kind|
+      %i[throw break return].each do |exit_kind|
+        Dir.mktmpdir do |dir|
+          real = kind == :memory ? Core::MemoryStore.new : Core::FileStore.open(File.join(dir, "test.xit"))
+          store = FaultStore.new(real)
+          core = Core::Database.new(store: store)
+          store.release_fault = -> { raise IOError, "release failed" }
+          result = case exit_kind
+          when :throw
+            catch(:abort) { core.transaction { throw :abort, :original_exit } }
+          when :break
+            core.transaction { break :original_exit }
+          when :return
+            return_from_transaction(core)
+          end
+          assert_equal :original_exit, result
+          assert core.needs_reopen?
+          assert_equal 62, core.committed_size
+          assert_raises(XitDB::TransactionStateError) { core.transaction { flunk "must not run" } }
+        ensure
+          store.release_fault = nil if store
+          core&.close
+        end
+      end
+    end
+  end
+
   private
+
+  def return_from_transaction(core)
+    core.transaction { return :original_exit }
+  end
 
   def nonlocal_return(core)
     core.transaction { |cursor| cursor.replace(Core::Slot.uint(3)); return }

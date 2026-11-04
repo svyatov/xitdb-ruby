@@ -59,7 +59,7 @@ module XitDB
         end
       end
 
-      def with_exclusive_lock(timeout: 5)
+      def with_exclusive_lock(timeout: 5, on_release_error: nil)
         raise TypeError, "timeout must be a real Numeric" unless timeout.is_a?(Numeric) && timeout.real?
         raise ArgumentError, "timeout must be finite and nonnegative" unless timeout.finite? && timeout >= 0
 
@@ -71,15 +71,30 @@ module XitDB
           @lock_users += 1
         end
         locked = false
+        completed = false
         begin
           lock_writer(deadline)
           locked = true
-          @state.synchronize { @lock_owner = Thread.current }
-          yield
+          @state.synchronize do
+            writable!
+            @lock_owner = Thread.current
+          end
+          result = yield
+          completed = true
+          result
         ensure
           begin
-            @state.synchronize { @lock_owner = nil } if locked
-            unlock_writer if locked
+            @state.synchronize do
+              @lock_owner = nil if locked
+              begin
+                unlock_writer if locked
+              rescue Exception => error
+                @release_failed = true
+                on_release_error&.call(error)
+                # Raising here would replace a pending exception or nonlocal exit.
+                raise if completed
+              end
+            end
           ensure
             @state.synchronize do
               @lock_users -= 1
@@ -122,6 +137,7 @@ module XitDB
         @lock_owner = nil
         @closed = false
         @closing = false
+        @release_failed = false
       end
 
       def synchronize
@@ -134,6 +150,7 @@ module XitDB
 
       def writable!
         raise ReadOnlyError, "store is read-only" if readonly?
+        raise TransactionStateError, "writer lock release failed; reopen the store" if @release_failed
       end
 
       def position(value)

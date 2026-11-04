@@ -96,7 +96,7 @@ module XitDB
         callback_completed = false
         callback_error = nil
         outcome = :not_committed
-        @store.with_exclusive_lock(timeout: @lock_timeout) do
+        @store.with_exclusive_lock(timeout: @lock_timeout, on_release_error: ->(_error) { @needs_reopen = true }) do
           raise TransactionStateError, "database requires reopening" if @needs_reopen
 
           size, slot = committed_state
