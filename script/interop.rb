@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -34,6 +34,8 @@ module Interop
         array_list(binary, dir)
       elsif options[:case] == "hash-collections"
         hash_collections(binary, dir)
+      elsif options[:case] == "linked-array-insert"
+        linked_array_insert(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -65,6 +67,7 @@ module Interop
                file_id: MANIFEST.fetch("file_id"), value: value}
     request[:values] = request.delete(:value) if name == "array-list"
     request.merge!(request.delete(:value)) if name == "hash-collections"
+    request.merge!(request.delete(:value)) if name == "linked-array-insert"
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -214,6 +217,42 @@ module Interop
     else
       XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")), full: value.fetch("full"))
     end
+  end
+
+  def self.linked_array_insert(binary, dir)
+    [0, 17, 257, 4097].each do |length|
+      random = Random.new(61)
+      oracle = []
+      positions = Array.new(length) do |index|
+        position = random.rand(0..index)
+        oracle.insert(position, index.to_s)
+        position
+      end
+      request = {"positions" => positions}
+      ruby_path = File.join(dir, "ruby-linked-#{length}.xit")
+      XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+        db.transaction do |root|
+          tree = XitDB::Core::BTree.new(root)
+          positions.each_with_index do |position, index|
+            tree.insert(position, XitDB::Core::Slot.uint(index))
+            assert_equal index + 1, tree.size
+          end
+        end
+      end
+      assert_equal oracle, adapter(binary, "read", "linked-array-insert", ruby_path, request)
+      go_path = File.join(dir, "go-linked-#{length}.xit")
+      assert_equal oracle, adapter(binary, "write", "linked-array-insert", go_path, request)
+      [ruby_path, go_path].each do |path|
+        XitDB::Core::Database.open(path, readonly: true) do |db|
+          list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
+          assert_equal :linked_array_list, db.root_cursor.slot.tag
+          assert_equal length, list.size
+          assert_equal oracle, length.times.map { |index| list.get(index).value.to_s }
+          assert_equal oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s }
+        end
+      end
+    end
+    puts "4 linked-array lengths checked with seeded insertion, per-insert counts, rank reads, and suffix iteration"
   end
 
   def self.hash_value(db, slot)

@@ -58,13 +58,15 @@ module XitDB
       end
 
       def child(kind:, selector:)
-        unless kind == :array_list || HashMap::TAGS.include?(kind)
+        unless %i[array_list linked_array_list].include?(kind) || HashMap::TAGS.include?(kind)
           raise ArgumentError, "unsupported child kind: #{kind.inspect}"
         end
         return nil if slot.tag == :none
 
         if kind == :array_list
           ArrayList.new(self).cursor_at(selector)
+        elsif kind == :linked_array_list
+          LinkedArrayList.new(self).cursor_at(selector)
         else
           HashMap.from_cursor(self).cursor_at(selector)
         end
@@ -146,6 +148,7 @@ module XitDB
       def collection
         case slot.tag
         when :array_list then ArrayList.new(self)
+        when :linked_array_list then LinkedArrayList.new(self)
         when *HashMap::TAGS then HashMap.from_cursor(self)
         else raise InvalidValueError, "slot does not contain a supported collection"
         end

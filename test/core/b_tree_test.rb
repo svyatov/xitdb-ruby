@@ -1,0 +1,230 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require "tmpdir"
+require_relative "../support/fault_store"
+
+class BTreeTest < Minitest::Test
+  Core = XitDB::Core
+
+  def test_leaf_and_branch_splits_preserve_rank
+    Core::Database.memory.transaction do |root|
+      tree = Core::BTree.new(root)
+      4097.times { |i| tree.insert(i, Core::Slot.uint(i)) }
+      assert_equal 4097, tree.size
+      assert_equal 2048, tree.at(2048).value
+      assert_equal [4095, 4096], tree.each_from_index(4095).map(&:value)
+    end
+  end
+
+  def test_seeded_insertion_preserves_all_counts_and_file_ranks
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "tree.xit")
+      oracle = []
+      random = Random.new(61)
+      Core::Database.open(path) do |db|
+        db.transaction do |root|
+          tree = Core::BTree.new(root)
+          513.times do |i|
+            rank = random.rand(0..oracle.size)
+            oracle.insert(rank, i)
+            tree.insert(rank, Core::Slot.uint(i))
+            assert_equal oracle.size, tree.size
+            assert_equal oracle.size, subtree_count(root, tree_root(root))
+            assert_equal i, tree.at(rank).value
+          end
+          assert_equal oracle, tree.each_from_index(0).map(&:value)
+          tree.replace(256, Core::Slot.uint(9999))
+          oracle[256] = 9999
+        end
+      end
+      Core::Database.open(path, readonly: true) do |db|
+        tree = Core::BTree.new(db.root_cursor)
+        assert_equal oracle, oracle.each_index.map { |i| tree.at(i).value }
+        assert_equal oracle[500..], tree.each_from_index(500).map(&:value)
+      end
+    end
+  end
+
+  def test_linked_array_empty_type_indexes_and_null_slots
+    db = Core::Database.memory
+    assert_equal 0, Core::LinkedArrayList.new(db.root_cursor).size
+    assert db.root_cursor.slot.empty?
+    db.transaction do |root|
+      list = Core::LinkedArrayList.new(root)
+      assert_equal :linked_array_list, root.slot.tag
+      assert_equal 0, list.size
+      list.append(Core::Slot.new).append(Core::Slot.null).append(Core::Slot.uint(2))
+      assert list.get(0).empty?
+      assert list.get(-2).full
+      assert_equal 2, list.get(-1).value
+      assert_nil list.get(3)
+      assert_nil list.get(-4)
+      assert_equal [:none, :none, :uint], list.map(&:tag)
+      assert_equal [], list.each_from_index(3).to_a
+      assert_raises(TypeError) { list.get(1.5) }
+      assert_raises(IndexError) { Core::BTree.new(root).insert(4, Core::Slot.null) }
+      assert_raises(IndexError) { Core::BTree.new(root).replace(3, Core::Slot.null) }
+      assert_raises(XitDB::InvalidValueError) { list.append(Core::Slot.new(tag: :index)) }
+    end
+    assert_raises(XitDB::ReadOnlyError) { Core::LinkedArrayList.new(db.root_cursor).append(Core::Slot.null) }
+  end
+
+  def test_nested_children_freeze_replacement_and_restore
+    db = Core::Database.memory
+    db.transaction do |root|
+      list = Core::LinkedArrayList.new(root)
+      list.append(Core::Slot.new)
+      child = list.cursor_at(0)
+      nested = Core::LinkedArrayList.new(child)
+      nested.append(Core::Slot.uint(1))
+      root.transaction.freeze
+      captured = root.transaction.cursor(slot: root.slot)
+      nested.append(Core::Slot.uint(2))
+      assert_equal 1, Core::LinkedArrayList.new(Core::LinkedArrayList.new(captured).cursor_at(0)).size
+      assert_equal 2, nested.size
+      checkpoint = root.transaction.checkpoint
+      list.put(0, Core::Slot.uint(3))
+      assert_raises(XitDB::ExpiredViewError) { child.slot }
+      root.transaction.restore(checkpoint)
+      assert_equal 2, nested.size
+      child.replace(Core::Slot.uint(4))
+      assert_equal 4, list.get(0).value
+      assert_empty root.transaction.instance_variable_get(:@checkpoints)
+    end
+  end
+
+  def test_failed_insert_restores_root_and_operation_checkpoint
+    store = FaultStore.new(Core::MemoryStore.new)
+    Core::Database.new(store: store).transaction do |root|
+      tree = Core::BTree.new(root)
+      tree.insert(0, Core::Slot.uint(7))
+      before = root.slot
+      length = root.transaction.length
+      store.fault = ->(name, _) { raise IOError, "allocation failed" if name == :append }
+      assert_raises(IOError) { tree.insert(0, Core::Slot.uint(8)) }
+      store.fault = nil
+      assert_equal before, root.slot
+      assert_equal length, root.transaction.length
+      assert_equal [7], tree.each_from_index(0).map(&:value)
+      assert_empty root.transaction.instance_variable_get(:@checkpoints)
+    end
+  ensure
+    store.fault = nil if store
+  end
+
+  def test_mixed_array_hash_and_linked_children_keep_their_paths
+    db = Core::Database.memory
+    hash = "\x01".b * 20
+    db.transaction do |root|
+      length = root.transaction.length
+      assert_nil root.child(kind: :linked_array_list, selector: 0)
+      assert root.slot.empty?
+      assert_equal length, root.transaction.length
+      outer = Core::ArrayList.new(root)
+      outer.append(Core::Slot.new)
+      map = Core::HashMap.new(outer.cursor_at(0), counted: true)
+      map.put(hash, key: Core::Slot.uint(1), value: Core::Slot.null)
+      linked_cursor = map.cursor_at(hash)
+      linked = Core::LinkedArrayList.new(linked_cursor)
+      linked.append(Core::Slot.new)
+      array_cursor = linked_cursor.child(kind: :linked_array_list, selector: 0)
+      inner = Core::ArrayList.new(array_cursor)
+      inner.append(Core::Slot.uint(7))
+      root.transaction.freeze
+      captured = root.transaction.cursor(slot: root.slot)
+      inner.put(0, Core::Slot.uint(8))
+      old_map = Core::HashMap.from_cursor(Core::ArrayList.new(captured).cursor_at(0))
+      old_inner = Core::ArrayList.new(Core::LinkedArrayList.new(old_map.cursor_at(hash)).cursor_at(0))
+      assert_equal 7, old_inner.get(0).value
+      assert_equal 8, inner.get(0).value
+      outer.put(0, Core::Slot.uint(9))
+      assert_raises(XitDB::ExpiredViewError) { array_cursor.slot }
+    end
+  end
+
+  def test_corrupt_nodes_and_captured_bounds_are_rejected
+    Core::Database.memory.transaction do |root|
+      tx = root.transaction
+      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + "\0" * 135)
+      header = tx.append([2, leaf].pack("Q>Q>"))
+      root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
+      assert_raises(XitDB::CorruptionError) { Core::BTree.new(root).at(0) }
+      branch = tx.append([1, 1].pack("CC") + Core::Slot.new(tag: :index, value: tx.length).to_bytes + "\0" * 135 + [1].pack("Q>") + "\0" * 120)
+      header = tx.append([1, branch].pack("Q>Q>"))
+      root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
+      assert_raises(XitDB::CorruptionError) { Core::BTree.new(root).at(0) }
+      header = tx.append([1, (1 << 64) - 1].pack("Q>Q>"))
+      root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
+      assert_raises(XitDB::CorruptionError) { Core::BTree.new(root).at(0) }
+    end
+  end
+
+  def test_empty_file_type_and_committed_child_bounds_survive_reopening
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "linked.xit")
+      Core::Database.open(path) { |db| db.transaction { |root| Core::LinkedArrayList.new(root) } }
+      Core::Database.open(path) do |db|
+        assert_equal :linked_array_list, db.root_cursor.slot.tag
+        db.transaction do |root|
+          list = Core::LinkedArrayList.new(root)
+          list.append(db.bytes("original bytes"))
+        end
+        old = Core::LinkedArrayList.new(db.root_cursor)
+        child = old.cursor_at(0)
+        limit = child.bound
+        db.transaction do |root|
+          list = Core::LinkedArrayList.new(root)
+          list.put(0, db.bytes("replacement bytes"))
+          list.append(Core::Slot.uint(2))
+        end
+        assert_equal 1, old.size
+        assert_equal "original bytes", child.read_bytes.bytes
+        assert_equal limit, child.bound
+        assert_raises(XitDB::ReadOnlyError) { child.replace(Core::Slot.null) }
+      end
+      Core::Database.open(path, readonly: true) do |db|
+        list = Core::LinkedArrayList.new(db.root_cursor)
+        assert_equal 2, list.size
+        assert_equal "replacement bytes", list.cursor_at(0).read_bytes.bytes
+      end
+    end
+  end
+
+  def test_tail_iteration_seeks_by_count_instead_of_reading_the_prefix
+    store = FaultStore.new(Core::MemoryStore.new)
+    db = Core::Database.new(store: store)
+    db.transaction do |root|
+      list = Core::LinkedArrayList.new(root)
+      4097.times { |i| list.append(Core::Slot.uint(i)) }
+    end
+    tree = Core::BTree.new(db.root_cursor)
+    reads = 0
+    store.fault = ->(name, _) { reads += 1 if name == :read_at }
+    assert_equal [4095, 4096], tree.each_from_index(4095).map(&:value)
+    assert_operator reads, :<, 100
+  ensure
+    store.fault = nil if store
+  end
+
+  private
+
+  def tree_root(cursor)
+    cursor.database.read_at(cursor.slot.value, 16, bound: cursor.bound).unpack("Q>Q>").last
+  end
+
+  def subtree_count(cursor, pointer)
+    db = cursor.database
+    kind, count = db.read_at(pointer, 2, bound: cursor.bound).unpack("CC")
+    return count if kind.zero?
+
+    children = db.read_at(pointer + 2, 144, bound: cursor.bound)
+    counts = db.read_at(pointer + 146, 128, bound: cursor.bound).unpack("Q>*")
+    count.times.sum do |i|
+      child = Core::Slot.parse(children.byteslice(i * 9, 9))
+      actual = subtree_count(cursor, child.value)
+      assert_equal actual, counts[i]
+      actual
+    end
+  end
+end

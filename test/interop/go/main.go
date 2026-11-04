@@ -35,6 +35,7 @@ type request struct {
 	Collection string      `json:"collection"`
 	Entries    []hashEntry `json:"entries"`
 	Removals   []string    `json:"removals"`
+	Positions  []int64     `json:"positions"`
 }
 
 type hashEntry struct {
@@ -68,7 +69,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -108,6 +109,9 @@ func run() error {
 	if req.Case == "hash-collections" {
 		return hashCollections(db, req)
 	}
+	if req.Case == "linked-array-insert" {
+		return linkedArrayInsert(db, req)
+	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
 		if err != nil {
@@ -118,6 +122,76 @@ func run() error {
 	result, err := readValue(db.RootCursor().ReadCursor)
 	if err != nil {
 		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func linkedArrayInsert(db *xitdb.Database, req request) error {
+	if req.Operation == "write" {
+		list, err := xitdb.NewWriteLinkedArrayList(db.RootCursor())
+		if err != nil {
+			return err
+		}
+		for index, position := range req.Positions {
+			data := xitdb.Slot{Tag: xitdb.TagUint, Value: int64(index)}
+			var err error
+			if position == int64(index) {
+				err = list.Append(data)
+			} else {
+				err = list.Insert(position, data)
+			}
+			if err != nil {
+				return err
+			}
+			count, err := list.Count()
+			if err != nil {
+				return err
+			}
+			if count != int64(index+1) {
+				return fmt.Errorf("linked count %d after insertion %d", count, index)
+			}
+		}
+	}
+	list, err := xitdb.NewReadLinkedArrayList(db.RootCursor().ReadCursor)
+	if err != nil {
+		return err
+	}
+	slot, err := list.Slot()
+	if err != nil {
+		return err
+	}
+	if slot.Tag != xitdb.TagLinkedArrayList {
+		return fmt.Errorf("expected linked-array tag, got %d", slot.Tag)
+	}
+	count, err := list.Count()
+	if err != nil {
+		return err
+	}
+	result := make([]string, 0, count)
+	for index := range count {
+		slot, err := list.GetSlot(index)
+		if err != nil {
+			return err
+		}
+		result = append(result, strconv.FormatUint(uint64(slot.Value), 10))
+	}
+	start := max(count-2, 0)
+	index := start
+	for cursor, err := range list.AllFrom(start) {
+		if err != nil {
+			return err
+		}
+		slot, err := cursor.Slot()
+		if err != nil {
+			return err
+		}
+		if index >= count || result[index] != strconv.FormatUint(uint64(slot.Value), 10) {
+			return fmt.Errorf("linked suffix differs at %d", index)
+		}
+		index++
+	}
+	if index != count {
+		return fmt.Errorf("linked suffix ended at %d, expected %d", index, count)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }
