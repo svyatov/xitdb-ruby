@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "date"
+require "bigdecimal"
 require_relative "../core"
 require_relative "../input_guard"
 require_relative "wire"
@@ -36,6 +38,18 @@ module XitDB
           "\x02".b + Wire.t(name.encoding.name) + Wire.b(name)
         when false then "\x03\x00".b
         when true then "\x03\x01".b
+        when Time
+          offset = value.utc_offset
+          unless offset == offset.to_i
+            raise UnsupportedValueError, "Ruby profile Time offsets require whole seconds"
+          end
+
+          "\x05".b + Wire.q(value.to_r) + Wire.z(offset.to_i) + (value.utc? ? "\x01".b : "\x00".b)
+        when DateTime
+          "\x07".b + Wire.q(value.ajd) + Wire.q(value.offset) + Wire.f64(value.start)
+        when Date then "\x06".b + Wire.z(value.jd) + Wire.f64(value.start)
+        when BigDecimal then "\x08".b + decimal_bytes(value)
+        when Rational then "\x09".b + Wire.q(value)
         when EncodedValue, Core::ByteValue
           return core.bytes(value.bytes, format_tag: value.format_tag)
         else
@@ -86,6 +100,11 @@ module XitDB
 
           flag == 1
         when 4 then reader.z
+        when 5 then read_time(reader)
+        when 6 then Date.jd(reader.z, read_start(reader))
+        when 7 then read_datetime(reader)
+        when 8 then read_decimal(reader)
+        when 9 then reader.q
         when 10
           codec_id = reader.t
           reader.b
@@ -94,6 +113,79 @@ module XitDB
           raise UnsupportedEncodingError, "unsupported Ruby builtin type #{type}"
         end
         reader.finish!
+        value
+      rescue ArgumentError, RangeError => error
+        raise InvalidValueError, error.message
+      end
+
+      def self.decimal_bytes(value)
+        return "\x03".b if value.nan?
+        return value.positive? ? "\x01".b : "\x02".b if value.infinite?
+
+        sign, digits, base, exponent = value.split
+        raise InvalidValueError, "decimal base must be ten" unless base == 10
+
+        "\x00".b + (sign.negative? ? "\x01".b : "\x00".b) + Wire.t(digits) + Wire.z(exponent)
+      end
+
+      def self.read_time(reader)
+        instant = reader.q
+        offset = reader.z
+        utc = reader.byte
+        unless utc <= 1 && offset.abs < 86_400 && (utc.zero? || offset.zero?)
+          raise InvalidValueError, "invalid Time offset or UTC flag"
+        end
+
+        time = Time.at(instant)
+        utc == 1 ? time.utc : time.getlocal(offset)
+      end
+
+      def self.read_start(reader)
+        start = reader.f64
+        unless start.infinite? || (2_298_874..2_426_355).cover?(start)
+          raise InvalidValueError, "invalid calendar start"
+        end
+
+        start
+      end
+
+      def self.read_datetime(reader)
+        instant = reader.q
+        offset = reader.q
+        start = read_start(reader)
+        unless offset.abs <= 1 && (offset * 86_400).denominator == 1
+          raise InvalidValueError, "invalid DateTime offset"
+        end
+
+        day, fraction = (instant + Rational(1, 2) + offset).divmod(1)
+        DateTime.jd(day, 0, 0, 0, offset, start) + fraction
+      end
+
+      def self.read_decimal(reader)
+        kind = reader.byte
+        case kind
+        when 0
+          sign = reader.byte
+          digits = reader.t
+          exponent = reader.z
+          unless sign <= 1 && /\A(?:0|[1-9](?:[0-9]*[1-9])?)\z/.match?(digits) && (digits != "0" || exponent.zero?)
+            raise InvalidValueError, "invalid finite decimal fields"
+          end
+
+          text = "#{sign == 1 ? '-' : ''}0.#{digits}e#{exponent}"
+        when 1 then text = "Infinity"
+        when 2 then text = "-Infinity"
+        when 3 then text = "NaN"
+        else raise InvalidValueError, "invalid decimal kind"
+        end
+        value = BigDecimal.save_exception_mode do
+          BigDecimal.mode(BigDecimal::EXCEPTION_ALL, false)
+          BigDecimal(text)
+        end
+        if kind.zero? && value.split != [sign == 1 ? -1 : 1, digits, 10, exponent]
+          raise InvalidValueError, "decimal is outside the supported exponent range"
+        end
+
         value
       end
 
@@ -107,7 +199,8 @@ module XitDB
         end
         bytes.force_encoding(encoding)
       end
-      private_class_method :decode_payload, :read_string
+      private_class_method :decode_payload, :read_string, :decimal_bytes, :read_time, :read_start,
+        :read_datetime, :read_decimal
     end
   end
 end

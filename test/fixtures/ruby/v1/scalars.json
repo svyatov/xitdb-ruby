@@ -21,5 +21,19 @@
     {"name": "empty", "payload": "0101055554462d3800"},
     {"name": "symbol", "payload": "01020855532d4153434949046e616d65"},
     {"name": "custom", "payload": "010a0461636d650300ff01"}
+  ],
+  "standard_values": [
+    {"name": "utc_epoch", "payload": "0105000001000001"},
+    {"name": "fixed_epoch", "payload": "0105000001000000"},
+    {"name": "negative_half_time", "payload": "01050101010200020e1000"},
+    {"name": "julian_day_zero", "payload": "010600007ff0000000000000"},
+    {"name": "gregorian_datetime", "payload": "010701010d1800010118fff0000000000000"},
+    {"name": "decimal_positive_zero", "payload": "0108000001300000"},
+    {"name": "decimal_negative_zero", "payload": "0108000101300000"},
+    {"name": "decimal_fraction", "payload": "0108000103313233000101"},
+    {"name": "decimal_infinity", "payload": "010801"},
+    {"name": "decimal_negative_infinity", "payload": "010802"},
+    {"name": "decimal_nan", "payload": "010803"},
+    {"name": "rational", "payload": "010901010203"}
   ]
 }
