@@ -373,6 +373,7 @@ class StoreTest < Minitest::Test
   def fault_file(store, method, &fault)
     file = store.instance_variable_get(:@file)
     original = file.method(method)
+    file.singleton_class.remove_method(method) if file.singleton_methods.include?(method)
     file.define_singleton_method(method) { |*args| fault.call(original, *args) }
   end
 end
