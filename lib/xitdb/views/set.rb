@@ -36,16 +36,6 @@ module XitDB
         context.change_membership(path)
         self
       end
-
-      private
-
-      def edit
-        context.mutate(path) do |cursor|
-          collection = context.profile.container(cursor.slot, context: context, path: path)
-          yield collection
-          cursor.replace(collection.slot)
-        end
-      end
     end
   end
 end

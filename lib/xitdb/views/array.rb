@@ -205,14 +205,6 @@ module XitDB
         0
       end
 
-      def edit
-        context.mutate(path) do |cursor|
-          collection = context.profile.container(cursor.slot, context: context, path: path)
-          yield collection
-          cursor.replace(collection.slot)
-        end
-      end
-
       def invalidate_positions(start, previous_size)
         (start...previous_size).each { |index| context.replace_location(path + [index]) }
         context.change_membership(path)

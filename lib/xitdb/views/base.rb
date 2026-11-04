@@ -68,6 +68,14 @@ module XitDB
 
       protected
 
+      def edit
+        context.mutate(path) do |cursor|
+          collection = context.profile.container(cursor.slot, context: context, path: path)
+          yield collection
+          cursor.replace(collection.slot)
+        end
+      end
+
       def integer_argument(value)
         result = ::Integer.try_convert(value) || raise(TypeError, "no implicit conversion of #{value.class} into Integer")
         unless result >= -LONG_MAX - 1 && result <= LONG_MAX
