@@ -186,6 +186,74 @@ module XitDB
           end
         end
 
+        # Radix insertion moves the suffix and performs one radix write per slot.
+        # Linked insertion follows one count-guided tree path.
+        def insert(index, stored)
+          if kind == :linked_array
+            Core::BTree.new(cursor).insert(index, stored)
+          else
+            count = size
+            @collection.append(stored)
+            (count - 1).downto(index) { |position| @collection.put(position + 1, @collection.get(position)) }
+            @collection.put(index, stored)
+          end
+          self
+        end
+
+        def truncate(count)
+          if kind == :linked_array
+            cursor.replace(@collection.slice(0, count).cursor.slot)
+          else
+            @collection.truncate(count)
+          end
+          self
+        end
+
+        def slice(start, count)
+          return @collection.slice(start, count).cursor.slot if kind == :linked_array
+
+          output = @profile.empty_container(:array_list, context: @context, path: @path)
+          count.times { |index| output.assign(index, lookup(start + index)) }
+          output.slot
+        end
+
+        def concat(other)
+          if kind == :linked_array && other.kind == :linked_array
+            cursor.replace(@collection.concat(Core::LinkedArrayList.new(other.cursor)).cursor.slot)
+          else
+            other.each_entry { |_index, stored| assign(size, stored) }
+          end
+          self
+        end
+
+        def rank(key)
+          @collection.rank(@profile.key_bytes(key))
+        end
+
+        def each_from(key)
+          return enum_for(__method__, key) unless block_given?
+
+          @collection.each_from(@profile.key_bytes(key)) { |bytes, stored| yield decode_key(bytes), stored }
+          self
+        end
+
+        def each_from_index(index)
+          return enum_for(__method__, index) unless block_given?
+
+          index += size if index.negative?
+          return self unless index >= 0 && index < size
+
+          case kind
+          when :array
+            (index...size).each { |position| yield position, lookup(position) }
+          when :linked_array
+            @collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
+          else
+            @collection.each_from_index(index) { |bytes, stored| yield decode_key(bytes), stored }
+          end
+          self
+        end
+
         def each_entry
           return enum_for(__method__) unless block_given?
 

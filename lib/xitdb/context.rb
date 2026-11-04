@@ -5,12 +5,13 @@ module XitDB
   class Context
     attr_reader :database, :profile, :transaction, :root
 
-    def initialize(database:, root:, bound:, transaction: nil)
+    def initialize(database:, root:, bound:, transaction: nil, readonly: false)
       @database = database
       @profile = database.profile
       @root = root
       @bound = bound
       @transaction = transaction
+      @readonly = readonly
       @changed = false
       @replacements = Hash.new(0)
       @children = Hash.new(0)
@@ -24,7 +25,7 @@ module XitDB
 
     def writable!
       check!
-      raise ReadOnlyError, "snapshot is read-only" unless transaction
+      raise ReadOnlyError, "view is read-only" if @readonly || !transaction
     end
 
     def read_bound
@@ -52,7 +53,8 @@ module XitDB
     end
 
     def view(slot, path:, kind:)
-      klass = %i[map sorted_map].include?(kind) ? Views::Map : Views::Base
+      klass = {map: Views::Map, sorted_map: Views::SortedMap, array: Views::Array,
+               linked_array: Views::LinkedArray, set: Views::Set, sorted_set: Views::SortedSet}.fetch(kind)
       klass.new(context: self, path: path, kind: kind)
     end
 

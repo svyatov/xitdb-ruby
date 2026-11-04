@@ -5,6 +5,9 @@ module XitDB
     class Base
       include Enumerable
 
+      LONG_MAX = (1 << ([0].pack("l!").bytesize * 8 - 1)) - 1
+      private_constant :LONG_MAX
+
       attr_reader :context, :path, :kind
 
       def initialize(context:, path:, kind:)
@@ -41,23 +44,11 @@ module XitDB
       def each
         return enum_for(__method__) unless block_given?
 
-        check!
-        generation = context.membership(path)
-        adapter.each_entry do |selector, stored|
-          check!
-          if context.membership(path) != generation
-            raise ConcurrentModificationError, "collection membership changed during iteration"
-          end
-          if %i[set sorted_set].include?(kind)
-            yield selector
-          else
-            # Transaction entries resolve again so replacement values stay live.
-            stored = adapter.lookup(selector) if context.transaction
-            value = context.profile.decode(stored, context: context, path: path + [selector])
-            %i[map sorted_map].include?(kind) ? yield(selector, value) : yield(value)
-          end
-        end
-        self
+        each_entries(adapter.each_entry) { |*entry| yield(*entry) }
+      end
+
+      def slot_for_assignment(context:, path:)
+        slot
       end
 
       def to_ruby
@@ -73,6 +64,47 @@ module XitDB
         location = path.first(4).map { |selector| selector.is_a?(String) ? selector.byteslice(0, 32) : selector }
         suffix = path.size > 4 ? "..." : ""
         "#<#{self.class} profile=#{context.profile.class.name} path=#{location.inspect}#{suffix}>"
+      end
+
+      protected
+
+      def integer_argument(value)
+        result = ::Integer.try_convert(value) || raise(TypeError, "no implicit conversion of #{value.class} into Integer")
+        unless result >= -LONG_MAX - 1 && result <= LONG_MAX
+          raise RangeError, "integer too big to convert into long"
+        end
+        result
+      end
+
+      def captured_context(readonly: false)
+        stored = slot
+        context.transaction&.freeze
+        Context.new(database: context.database, root: stored, bound: context.read_bound,
+                    transaction: context.transaction, readonly: readonly)
+      end
+
+      def entry_path(selector)
+        path + [selector]
+      end
+
+      def each_entries(entries)
+        check!
+        generation = context.membership(path)
+        entries.each do |selector, stored|
+          check!
+          if context.membership(path) != generation
+            raise ConcurrentModificationError, "collection membership changed during iteration"
+          end
+          if %i[set sorted_set].include?(kind)
+            yield selector
+          else
+            # Transaction entries resolve again so replacement values stay live.
+            stored = adapter.lookup(selector) if context.transaction
+            value = context.profile.decode(stored, context: context, path: entry_path(selector))
+            %i[map sorted_map].include?(kind) ? yield(selector, value) : yield(value)
+          end
+        end
+        self
       end
     end
   end

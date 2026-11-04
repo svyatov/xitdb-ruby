@@ -20,7 +20,7 @@ module XitDB
               raise ForeignValueError.new("view belongs to another database", path: location)
             end
             context.transaction.freeze
-            result = input.slot
+            result = input.slot_for_assignment(context: context, path: location)
             if result.empty?
               current = [{}, location]
               next
@@ -71,12 +71,14 @@ module XitDB
       active = {}
       stack = []
       current = [view.slot, view.path]
+      selected = view.adapter
       result = nil
       while true
         if current
           slot, path = current
           current = nil
-          adapter = profile.container(slot, context: context, path: path)
+          adapter = selected || profile.container(slot, context: context, path: path)
+          selected = nil
           if adapter
             identity = [slot.tag, slot.value]
             raise CyclicValueError.new("cyclic stored value", path: path) if active[identity]
