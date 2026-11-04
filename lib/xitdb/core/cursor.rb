@@ -10,12 +10,32 @@ module XitDB
         @slot = slot
         @bound = bound
         @transaction = transaction
+        @valid = true
+        @children = ObjectSpace::WeakMap.new
       end
 
       def slot
         database.check_open!
-        transaction&.check_cursor!(self)
-        @slot
+        path = []
+        ancestor = self
+        loop do
+          transaction&.check_cursor!(ancestor)
+          raise ExpiredViewError, "cursor ancestor was replaced" unless ancestor.valid
+          break unless ancestor.parent
+
+          path << ancestor
+          ancestor = ancestor.parent
+        end
+        value = ancestor.local_slot
+        limit = transaction ? transaction.length : @bound
+        path.reverse_each do |child|
+          reader = self.class.new(database: database, slot: value, bound: limit)
+          value = ArrayList.new(reader).get(child.selector)
+          raise ExpiredViewError, "cursor element was removed" unless value
+
+          child.instance_variable_set(:@slot, value)
+        end
+        value
       end
 
       def bound
@@ -28,12 +48,89 @@ module XitDB
         raise ReadOnlyError, "cursor is read-only" unless transaction
 
         transaction.check_replacement!(self, slot)
+        self.slot
+        if @parent
+          ArrayList.new(@parent).replace_child(@selector, slot, owner: self)
+        end
         @slot = slot
+        invalidate_children
         self
+      end
+
+      def child(kind:, selector:)
+        raise ArgumentError, "unsupported child kind: #{kind.inspect}" unless kind == :array_list
+        return nil if slot.tag == :none
+
+        ArrayList.new(self).cursor_at(selector)
+      end
+
+      # Collection updates keep child paths live while replacing copied ancestors.
+      def update_collection(slot, propagate: true)
+        transaction.check_replacement!(self, slot)
+        self.slot
+        @slot = slot
+        if propagate
+          child = self
+          while child.parent
+            parent = child.parent
+            ArrayList.new(parent).replace_child(child.selector, child.local_slot, collection: true, propagate: false)
+            child = parent
+          end
+        end
+        self
+      end
+
+      def array_child(index, slot)
+        @children.each_pair do |child, selector|
+          next unless selector == index && child.valid
+
+          begin
+            child.slot
+          rescue ExpiredViewError
+            next
+          end
+          return child
+        end
+        child = if transaction
+          transaction.cursor(slot: slot)
+        else
+          self.class.new(database: database, slot: slot, bound: bound)
+        end
+        child.instance_variable_set(:@parent, self)
+        child.instance_variable_set(:@selector, index)
+        @children[child] = index
+        child
+      end
+
+      def invalidate_children(index: nil, from: nil, except: nil)
+        @children.each_pair do |child, selector|
+          next if child.equal?(except)
+          next if index && selector != index
+          next if from && selector < from
+
+          child.instance_variable_set(:@valid, false)
+        end
+      end
+
+      # These states are internal transaction snapshots, including invalid views.
+      def checkpoint_state
+        [@slot, @valid]
+      end
+
+      def restore_checkpoint_state(state)
+        @slot, @valid = state
       end
 
       def read_bytes
         database.read_bytes(slot, bound: bound)
+      end
+
+      protected
+
+      attr_reader :parent, :selector, :valid
+
+      def local_slot
+        @slot
       end
     end
   end

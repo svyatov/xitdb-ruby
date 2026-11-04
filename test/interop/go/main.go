@@ -27,8 +27,9 @@ type request struct {
 		ID   string `json:"id"`
 		Size int    `json:"size"`
 	} `json:"hash"`
-	FileID string `json:"file_id"`
-	Value  value  `json:"value"`
+	FileID string  `json:"file_id"`
+	Value  value   `json:"value"`
+	Values []value `json:"values"`
 }
 
 var tags = map[string]xitdb.Tag{
@@ -51,7 +52,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -85,6 +86,9 @@ func run() error {
 			return err
 		}
 	}
+	if req.Case == "array-list" {
+		return arrayList(db, req)
+	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
 		if err != nil {
@@ -95,6 +99,55 @@ func run() error {
 	result, err := readValue(db.RootCursor().ReadCursor)
 	if err != nil {
 		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func arrayList(db *xitdb.Database, req request) error {
+	if req.Operation == "write" {
+		list, err := xitdb.NewWriteArrayList(db.RootCursor())
+		if err != nil {
+			return err
+		}
+		for _, v := range req.Values {
+			if v.Tag == "none" && !v.Full {
+				if _, err := list.AppendCursor(); err != nil {
+					return err
+				}
+				continue
+			}
+			data, err := writeValue(v)
+			if err != nil {
+				return err
+			}
+			if err := list.Append(data); err != nil {
+				return err
+			}
+		}
+	}
+	list, err := xitdb.NewReadArrayList(db.RootCursor().ReadCursor)
+	if err != nil {
+		return err
+	}
+	count, err := list.Count()
+	if err != nil {
+		return err
+	}
+	result := make([]map[string]any, 0, count)
+	for i := range count {
+		cursor, err := list.GetCursor(i)
+		if err != nil {
+			return err
+		}
+		if cursor == nil {
+			result = append(result, map[string]any{"tag": "none", "full": false, "bits": "0"})
+			continue
+		}
+		v, err := readValue(cursor)
+		if err != nil {
+			return err
+		}
+		result = append(result, v)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

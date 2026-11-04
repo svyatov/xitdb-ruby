@@ -76,7 +76,7 @@ module XitDB
       def checkpoint
         check_active!
         slots = {}
-        @cursors.each_key { |cursor| slots[cursor] = cursor.slot }
+        @cursors.each_key { |cursor| slots[cursor] = cursor.checkpoint_state }
         checkpoint = Checkpoint.new(owner: self, slots: slots, length: freeze, cancelled: @cancelled).freeze
         @checkpoints << checkpoint
         checkpoint
@@ -91,9 +91,9 @@ module XitDB
 
         @store.truncate(checkpoint.length)
         @cursors = ObjectSpace::WeakMap.new
-        checkpoint.slots.each do |cursor, slot|
+        checkpoint.slots.each do |cursor, state|
           @cursors[cursor] = true
-          cursor.replace(slot)
+          cursor.restore_checkpoint_state(state)
         end
         @mutable_start = checkpoint.length
         @cancelled = checkpoint.cancelled
