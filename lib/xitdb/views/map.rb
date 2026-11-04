@@ -70,7 +70,7 @@ module XitDB
         check!
         context.writable!
         present = key?(key)
-        context.mutate(path) do |cursor|
+        context.mutate(path, targets: [path + [key]]) do |cursor|
           encoded = context.profile.encode(value, context: context, path: path + [key])
           collection = context.profile.container(cursor.slot, context: context, path: path)
           collection.assign(key, encoded)
@@ -86,13 +86,15 @@ module XitDB
         context.writable!
         return block_given? ? yield(key) : nil unless key?(key)
 
+        context.check_stream_mutation!(path, targets: [path + [key]])
+
         # The removed value must remain readable after its old location expires.
         stored = adapter.lookup(key)
         context.transaction.freeze
         captured = Context.new(database: context.database, root: stored, bound: context.read_bound,
                                transaction: context.transaction)
         value = context.profile.decode(stored, context: captured, path: [])
-        context.mutate(path) do |cursor|
+        context.mutate(path, targets: [path + [key]]) do |cursor|
           collection = context.profile.container(cursor.slot, context: context, path: path)
           collection.delete(key)
           cursor.replace(collection.slot)
@@ -125,7 +127,8 @@ module XitDB
         end
         replaced = []
         added = false
-        context.mutate(path) do |cursor|
+        targets = Hash.instance_method(:keys).bind_call(hash).map { |key| path + [key] }
+        context.mutate(path, targets: targets) do |cursor|
           encoded = context.profile.encode(hash, context: context, path: path)
           input = context.profile.container(encoded, context: context, path: path)
           next if input.size.zero?

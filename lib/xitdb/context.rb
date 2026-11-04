@@ -91,8 +91,9 @@ module XitDB
     end
 
     # Publish the logical root only after the complete operation succeeds.
-    def mutate(path)
+    def mutate(path, targets: nil, positions: nil)
       writable!
+      check_stream_mutation!(path, targets: targets, positions: positions)
       checkpoint = transaction.checkpoint
       completed = false
       begin
@@ -124,6 +125,23 @@ module XitDB
       end
     end
 
+    def register_stream(path, write:)
+      check!
+      key = path_key(path)
+      @streams ||= []
+      if @streams.any? { |other, writing| (write || writing) && overlapping_paths?(key, other) }
+        raise ConcurrentModificationError, "value has an active byte stream"
+      end
+
+      registration = [key, write]
+      @streams << registration
+      registration
+    end
+
+    def release_stream(registration)
+      @streams&.delete_if { |item| item.equal?(registration) }
+    end
+
     def observe(path)
       check!
       return unless @locations
@@ -152,7 +170,24 @@ module XitDB
       each_location(path) { |location| location.expired = true if location.path.size > path.size }
     end
 
+    def check_stream_mutation!(path, targets: nil, positions: nil)
+      return if !@streams || @streams.empty?
+
+      keys = (targets || (positions ? [] : [path])).map { |target| path_key(target) }
+      parent = path_key(path) if positions
+      conflict = @streams.any? do |active, _writing|
+        keys.any? { |key| overlapping_paths?(key, active) } ||
+          (parent && overlapping_paths?(parent, active) &&
+            (active.size <= parent.size || positions.cover?(active[parent.size])))
+      end
+      raise ConcurrentModificationError, "value has an active byte stream" if conflict
+    end
+
     private
+
+    def overlapping_paths?(left, right)
+      left.first(right.size).eql?(right) || right.first(left.size).eql?(left)
+    end
 
     def each_location(path)
       key = path_key(path)

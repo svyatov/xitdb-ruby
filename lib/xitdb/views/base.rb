@@ -70,13 +70,87 @@ module XitDB
         "#<#{self.class} profile=#{context.profile.class.name} path=#{location.inspect}#{suffix}>"
       end
 
+      def open_bytes(key)
+        raise ArgumentError, "open_bytes requires a block" unless block_given?
+
+        reader = registration = nil
+        reader = context.read do
+          selector = stream_selector(key)
+          registration = context.register_stream(entry_path(selector), write: false)
+          stored = adapter.lookup(selector)
+          raise KeyError, "byte value not found" unless stored
+
+          Streams::Reader.new(context, stored)
+        end
+        yield reader
+      ensure
+        reader&.expire!
+        context.release_stream(registration) if registration
+      end
+
+      def write_bytes(key)
+        raise ArgumentError, "write_bytes requires a block" unless block_given?
+
+        check!
+        context.writable!
+        selector = stream_selector(key)
+        if %i[array linked_array].include?(kind)
+          raise IndexError, "array index outside list" if selector.negative?
+
+          validate_growth(selector + 1)
+        end
+        context.check_stream_mutation!(path, **stream_mutation(selector))
+        Tempfile.create("xitdb-bytes", binmode: true) do |spool|
+          writer = Streams::Writer.new(context, spool)
+          registration = context.register_stream(entry_path(selector), write: true)
+          begin
+            result = yield writer
+          ensure
+            writer.expire!
+            context.release_stream(registration)
+          end
+          present = !adapter.lookup(selector).nil?
+          edit(**stream_mutation(selector)) do |collection|
+            spool.rewind
+            stored = Core::Bytes.copy(spool, size: spool.size, database: context.database.core,
+                                      transaction: context.transaction)
+            if %i[array linked_array].include?(kind)
+              collection.assign(collection.size, Core::Slot.null) while collection.size < selector
+            end
+            collection.assign(selector, stored)
+          end
+          context.replace_location(entry_path(selector))
+          context.change_membership(path) unless present
+          result
+        end
+      end
+
       protected
 
-      def edit
-        context.mutate(path) do |cursor|
+      def edit(**options)
+        context.mutate(path, **options) do |cursor|
           collection = context.profile.container(cursor.slot, context: context, path: path)
           yield collection
           cursor.replace(collection.slot)
+        end
+      end
+
+      def stream_selector(key)
+        check!
+        case kind
+        when :map, :sorted_map
+          context.profile.key_bytes(key)
+          key.is_a?(String) ? key.dup.freeze : key
+        when :array, :linked_array then normalize_index(key)
+        else raise TypeError, "byte streams require a map or array view"
+        end
+      end
+
+      def stream_mutation(selector)
+        if %i[array linked_array].include?(kind)
+          {positions: [size, selector].min..selector}
+        else
+          {targets: [entry_path(selector)]}
         end
       end
 

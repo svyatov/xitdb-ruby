@@ -73,7 +73,7 @@ module XitDB
         validate_growth(index + 1)
 
         previous_size = size
-        edit do |collection|
+        edit(positions: [previous_size, index].min..index) do |collection|
           stored = context.profile.encode(value, context: context, path: path + [index])
           collection.assign(collection.size, Core::Slot.null) while collection.size < index
           collection.assign(index, stored)
@@ -104,7 +104,7 @@ module XitDB
         raise IndexError, "array index outside list" if index.negative?
 
         validate_growth([previous_size, index].max + values.size)
-        edit do |collection|
+        edit(positions: [previous_size, index].min..) do |collection|
           encoded = values.each_with_index.map do |value, offset|
             context.profile.encode(value, context: context, path: path + [index + offset])
           end
@@ -122,10 +122,12 @@ module XitDB
         previous_size = size
         return nil unless index >= 0 && index < previous_size
 
+        context.check_stream_mutation!(path, positions: index..)
+
         captured = captured_context
         stored = adapter.lookup(index)
         value = context.profile.decode(stored, context: captured, path: [index])
-        edit { |collection| collection.delete(index) }
+        edit(positions: index..) { |collection| collection.delete(index) }
         invalidate_positions(index)
         value
       end
@@ -139,11 +141,12 @@ module XitDB
         return [] if count.zero?
 
         previous_size = size
+        context.check_stream_mutation!(path, positions: (previous_size - count)..)
         captured = captured_context
         values = ((previous_size - count)...previous_size).map do |index|
           context.profile.decode(adapter.lookup(index), context: captured, path: [index])
         end
-        edit { |collection| collection.truncate(previous_size - count) }
+        edit(positions: (previous_size - count)..) { |collection| collection.truncate(previous_size - count) }
         invalidate_positions(previous_size - count)
         values
       end
@@ -152,7 +155,7 @@ module XitDB
         check!
         context.writable!
         added = false
-        edit do |collection|
+        edit(positions: size..) do |collection|
           inputs = others.map do |other|
             unless other.is_a?(Array)
               other = ::Array.try_convert(other) || raise(TypeError, "concat requires an array")
