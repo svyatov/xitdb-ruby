@@ -84,8 +84,9 @@ module XitDB
 
       def input_kind(value, path:)
         InputGuard.check!(value, path: path)
-        if value.is_a?(Hash) || value.is_a?(Array) || value.is_a?(Set)
-          unless [Hash, Array, Set].include?(value.class)
+        klass = Object.instance_method(:class).bind_call(value)
+        if Hash === value || Array === value || Set === value
+          unless [Hash, Array, Set].include?(klass)
             raise UnsupportedValueError.new("container subclasses and singleton behavior are unsupported", path: path)
           end
           if value.is_a?(Hash) && (value.default_proc || !value.default.nil? || value.compare_by_identity?)
@@ -94,9 +95,9 @@ module XitDB
           if value.is_a?(Set) && value.compare_by_identity?
             raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
           end
-          return {Hash => :hash_map, Array => :array_list, Set => :hash_set}.fetch(value.class)
+          return {Hash => :hash_map, Array => :array_list, Set => :hash_set}.fetch(klass)
         end
-        value.kind if value.is_a?(CollectionDeclaration)
+        value.kind if CollectionDeclaration === value
       end
 
       def input_entries(value, path:)

@@ -39,6 +39,8 @@ module XitDB
     def writable!
       check!
       raise ReadOnlyError, "view is read-only" if @readonly || !transaction
+
+      transaction.check_logical_mutation!
     end
 
     def read_bound
@@ -93,35 +95,37 @@ module XitDB
     # Publish the logical root only after the complete operation succeeds.
     def mutate(path, targets: nil, positions: nil)
       writable!
-      check_stream_mutation!(path, targets: targets, positions: positions)
-      checkpoint = transaction.checkpoint
-      completed = false
-      begin
-        ancestors = []
-        slot = root
-        path.each_with_index do |selector, index|
-          adapter = profile.container(slot, context: self, path: path.first(index))
-          ancestors << [adapter, selector]
-          slot = adapter.lookup(selector)
-          raise ExpiredViewError, "view location no longer exists" unless slot
-        end
-        target = cursor(slot)
-        result = yield target
-        if target.slot == slot
+      transaction.with_logical_mutation do
+        check_stream_mutation!(path, targets: targets, positions: positions)
+        checkpoint = transaction.checkpoint
+        completed = false
+        begin
+          ancestors = []
+          slot = root
+          path.each_with_index do |selector, index|
+            adapter = profile.container(slot, context: self, path: path.first(index))
+            ancestors << [adapter, selector]
+            slot = adapter.lookup(selector)
+            raise ExpiredViewError, "view location no longer exists" unless slot
+          end
+          target = cursor(slot)
+          result = yield target
+          if target.slot == slot
+            completed = true
+            return result
+          end
+          slot = target.slot
+          ancestors.reverse_each do |adapter, selector|
+            adapter.assign(selector, slot)
+            slot = adapter.slot
+          end
+          @root = slot
+          @changed = true
           completed = true
-          return result
+          result
+        ensure
+          completed ? transaction.release_checkpoint(checkpoint) : transaction.restore(checkpoint)
         end
-        slot = target.slot
-        ancestors.reverse_each do |adapter, selector|
-          adapter.assign(selector, slot)
-          slot = adapter.slot
-        end
-        @root = slot
-        @changed = true
-        completed = true
-        result
-      ensure
-        completed ? transaction.release_checkpoint(checkpoint) : transaction.restore(checkpoint)
       end
     end
 
@@ -202,7 +206,7 @@ module XitDB
     end
 
     def path_key(path)
-      path.map { |selector| selector.is_a?(Integer) ? selector : profile.key_bytes(selector) }
+      path.map { |selector| Integer === selector ? selector : profile.key_bytes(selector) }
     end
   end
 end

@@ -157,7 +157,7 @@ module XitDB
         added = false
         edit(positions: size..) do |collection|
           inputs = others.map do |other|
-            unless other.is_a?(Array)
+            unless Array === other
               other = ::Array.try_convert(other) || raise(TypeError, "concat requires an array")
             end
             stored = context.profile.encode(other, context: context, path: path)

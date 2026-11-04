@@ -536,6 +536,123 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  def test_bulk_subclass_predicates_cannot_mutate_the_transaction
+    @db.transaction do |root|
+      root[:kept] = "value"
+      root[:array] = [[1], [2]]
+      calls = []
+      hash_class = Class.new(Hash)
+      hash_class.define_method(:instance_of?) { |*| calls << :hash; root.clear; raise "hash hook ran" }
+      array_class = Class.new(Array)
+      array_class.define_method(:is_a?) { |*| calls << :array; root.clear; raise "array hook ran" }
+      array = root[:array]
+      child = array[0]
+      iterator = array.each
+      assert_equal [1], iterator.next.to_ruby
+      before = root.to_ruby
+      assert_raises(TypeError) { root.merge!(hash_class.new) }
+      assert_raises(XitDB::UnsupportedValueError) { array.concat(array_class.new) }
+      assert_empty calls
+      assert_equal before, root.to_ruby
+      assert_equal [2], iterator.next.to_ruby
+      child << 3
+      root[:rescued] = "yes"
+    end
+    assert_equal({kept: "value", array: [[1, 3], [2]], rescued: "yes"}, @db.snapshot.to_ruby)
+  end
+
+  def test_bulk_merge_stream_targets_reject_key_type_hooks
+    @db.transaction do |root|
+      root[:kept] = "value"
+      calls = []
+      klass = Class.new(String)
+      klass.define_method(:is_a?) { |*| calls << :key; root.clear; raise "key hook ran" }
+      input = {klass.new("key") => 1}
+      root.write_bytes(:stream) do |writer|
+        assert_raises(XitDB::UnsupportedValueError) { root.merge!(input) }
+        assert_empty calls
+        assert_equal({kept: "value"}, root.to_ruby)
+        writer.write("data")
+      end
+      assert_equal "data", root.open_bytes(:stream, &:read)
+    end
+  end
+
+  def test_coercion_reentrant_writes_reject_without_expiring_prior_views
+    [[], XitDB.linked_array].each do |declaration|
+      @db.transaction do |root|
+        root[:kept] = "value"
+        root[:array] = declaration
+        array = root[:array].push([1], [2])
+        child = array[0]
+        iterator = array.each
+        assert_equal [1], iterator.next.to_ruby
+        before = root.to_ruby
+        bound = root.context.read_bound
+        [-> { root.clear; raise "callback failed" }, -> { root[:sibling] = "nested write"; [3] }].each do |callback|
+          coercer = Object.new
+          coercer.define_singleton_method(:to_ary, &callback)
+          assert_raises(XitDB::TransactionStateError) { array.concat(coercer) }
+          assert_equal bound, root.context.read_bound
+          assert_equal before, root.to_ruby
+          assert_equal [1], child.to_ruby
+        end
+        assert_equal [2], iterator.next.to_ruby
+        child << 3
+        array.concat([4])
+        assert_equal [[1, 3], [2], 4], array.to_ruby
+      end
+    end
+  end
+
+  def test_coercion_reads_and_handled_cross_context_rejection_can_complete
+    @db.transaction do |root|
+      root[:array] = [1]
+      root[:detached] = {value: 2}
+      detached = root.delete(:detached)
+      refute_same root.context, detached.context
+      readonly = root[:array][0, 1]
+      snapshot = @db.snapshot
+      coercer = Object.new
+      test = self
+      coercer.define_singleton_method(:to_ary) do
+        test.assert_equal [1], root[:array].to_ruby
+        test.assert_equal 2, detached[:value]
+        test.assert_raises(XitDB::ReadOnlyError) { readonly.clear }
+        test.assert_raises(XitDB::ReadOnlyError) { snapshot[:bad] = 1 }
+        test.assert_raises(XitDB::TransactionStateError) { detached[:value] = 3 }
+        test.assert_raises(XitDB::TransactionStateError) { root[:sibling] = 4 }
+        [2]
+      end
+      root[:array].concat(coercer)
+      assert_equal [1, 2], root[:array].to_ruby
+      assert_equal 2, detached[:value]
+      detached[:value] = 5
+      root[:copy] = detached
+      assert_equal({value: 5}, root[:copy].to_ruby)
+      root.write_bytes(:stream) do |writer|
+        root[:sibling] = 6
+        writer.write("stream")
+      end
+      assert_equal 6, root[:sibling]
+    end
+  end
+
+  def test_coercion_nonlocal_exit_restores_context_and_allows_later_mutation
+    @db.transaction do |root|
+      root[:items] = [1]
+      items = root[:items]
+      before = root.context.read_bound
+      coercer = Object.new
+      coercer.define_singleton_method(:to_ary) { throw :stop, :stopped }
+      assert_equal :stopped, catch(:stop) { items.concat([2], coercer) }
+      assert_equal before, root.context.read_bound
+      assert_equal [1], items.to_ruby
+      items.concat([3])
+      assert_equal [1, 3], items.to_ruby
+    end
+  end
+
   private
 
   def physical_envelope(view)

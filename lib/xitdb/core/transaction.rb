@@ -26,6 +26,21 @@ module XitDB
         raise TransactionStateError, "transaction belongs to another thread" unless @owner == Thread.current
       end
 
+      def check_logical_mutation!
+        check_active!
+        raise TransactionStateError, "a logical mutation is already active" if @logical_mutation
+      end
+
+      def with_logical_mutation
+        check_logical_mutation!
+        @logical_mutation = true
+        begin
+          yield
+        ensure
+          @logical_mutation = false
+        end
+      end
+
       def cursor(slot:)
         check_active!
         validate_slot(slot)

@@ -366,6 +366,51 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { items.page(offset: 0, limit: 0).to_a }
   end
 
+  def test_bulk_predicates_reject_subclasses_without_running_hooks
+    @db.transaction do |root|
+      root["items"] = [1]
+      calls = []
+      hash_class = Class.new(Hash)
+      hash_class.define_method(:instance_of?) { |*| calls << :hash; root.clear; raise "hash hook ran" }
+      array_class = Class.new(Array)
+      array_class.define_method(:is_a?) { |*| calls << :array; root.clear; raise "array hook ran" }
+      array_class.define_method(:class) { calls << :class; raise "class hook ran" }
+      assert_raises(TypeError) { root.merge!(hash_class.new) }
+      assert_raises(XitDB::UnsupportedValueError) { root["items"].concat(array_class.new) }
+      assert_empty calls
+      assert_equal({"items" => [1]}, root.to_ruby)
+      root.merge!({"other" => [2]})
+      root["items"].concat(root["other"], [3])
+    end
+    assert_equal({"items" => [1, 2, 3], "other" => [2]}, @db.snapshot.to_ruby)
+  end
+
+  def test_coercion_callbacks_can_read_but_cannot_start_logical_writes
+    [[], XitDB.linked_array].each do |declaration|
+      @db.transaction do |root|
+        root["items"] = declaration
+        items = root["items"].push([1], [2])
+        child = items[0]
+        iterator = items.each
+        assert_equal [1], iterator.next.to_ruby
+        before = root.to_ruby
+        coercer = Object.new
+        coercer.define_singleton_method(:to_ary) { root.clear; raise "callback failed" }
+        assert_raises(XitDB::TransactionStateError) { items.concat(coercer) }
+        assert_equal before, root.to_ruby
+        assert_equal [2], iterator.next.to_ruby
+        assert_equal [1], child.to_ruby
+        callback_reads = []
+        coercer = Object.new
+        coercer.define_singleton_method(:to_ary) { callback_reads << root["items"].size; [3] }
+        items.concat(coercer)
+        assert_equal [2], callback_reads
+        assert_equal [[1], [2], 3], items.to_ruby
+        root["rescued"] = "yes"
+      end
+    end
+  end
+
   private
 
   def assert_ruby_value(expected, actual)

@@ -117,7 +117,7 @@ module XitDB
       def merge!(hash)
         check!
         context.writable!
-        unless hash.instance_of?(Hash)
+        unless Object.instance_method(:instance_of?).bind_call(hash, Hash)
           raise TypeError, "merge! requires a Hash"
         end
         replaced = []
