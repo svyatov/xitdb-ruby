@@ -6,11 +6,12 @@ module XitDB
       attr_reader :hasher, :codecs
 
       def initialize(codecs: [])
-        unless codecs.instance_of?(::Array) && codecs.empty?
+        unless Object.instance_method(:instance_of?).bind_call(codecs, ::Array) &&
+               ::Array.instance_method(:empty?).bind_call(codecs)
           raise CodecConfigurationError, "custom codecs are not available"
         end
 
-        @codecs = codecs.dup.freeze
+        @codecs = ::Array.new.freeze
         @hasher = Core::Hasher.new(id: "rb01", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end

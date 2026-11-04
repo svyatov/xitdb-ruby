@@ -270,6 +270,64 @@ class RubyDatabaseTest < Minitest::Test
     other&.close
   end
 
+  def test_nonempty_codec_configuration_cannot_override_emptiness
+    calls = []
+    codecs = [Object.new]
+    codecs.define_singleton_method(:empty?) { calls << :empty; true }
+    assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.memory(codecs: codecs, &:close) }
+    assert_empty calls
+  end
+
+  def test_invalid_codec_configuration_rejects_without_input_hooks_or_file_creation
+    configurations = [Class.new(Array).new([Object.new]), [Object.new], Object.new, BasicObject.new]
+    Dir.mktmpdir do |directory|
+      configurations.each_with_index do |codecs, index|
+        calls = []
+        if Object === codecs
+          %i[instance_of? class empty? dup initialize_dup].each do |method|
+            codecs.define_singleton_method(method) { |*| calls << method; raise "configuration hook ran" }
+          end
+        end
+        path = File.join(directory, "invalid-#{index}.xit")
+        assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.memory(codecs: codecs, &:close) }
+        assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.open(path, codecs: codecs, &:close) }
+        assert_empty calls
+        refute File.exist?(path)
+      end
+    end
+  end
+
+  def test_empty_codec_configuration_is_owned_without_copy_or_reflection_hooks
+    calls = []
+    codecs = []
+    %i[instance_of? class empty? dup initialize_dup].each do |method|
+      codecs.define_singleton_method(method) { |*| calls << method; raise "configuration hook ran" }
+    end
+    first = XitDB::Ruby.memory(codecs: codecs)
+    second = XitDB::Ruby.memory(codecs: codecs)
+    assert_empty first.profile.codecs
+    assert_empty second.profile.codecs
+    assert first.profile.codecs.frozen?
+    assert second.profile.codecs.frozen?
+    refute_same codecs, first.profile.codecs
+    refute_same codecs, second.profile.codecs
+    refute_same first.profile.codecs, second.profile.codecs
+    Dir.mktmpdir do |directory|
+      path = File.join(directory, "empty.xit")
+      accepted = nil
+      assert_equal :done, XitDB::Ruby.open(path, codecs: codecs) { |db| accepted = db; :done }
+      assert accepted.closed?
+      assert File.exist?(path)
+    end
+    codecs << Object.new
+    assert_empty first.profile.codecs
+    assert_empty second.profile.codecs
+    assert_empty calls
+  ensure
+    first&.close
+    second&.close
+  end
+
   def test_clear_is_atomic_and_invalidates_children_and_iterators
     @db.transaction do |root|
       root[:items] = {first: [], second: 2}
