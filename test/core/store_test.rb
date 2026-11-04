@@ -232,6 +232,30 @@ class StoreTest < Minitest::Test
     assert_equal "abcdefg", File.binread(@path)
   end
 
+  # Disposable scratch files can close even when pending writes cannot flush.
+  def test_discard_close_releases_file_after_buffered_flush_failure
+    store = file_store
+    store.append("kept")
+    store.sync
+    store.append("disposable")
+    failing = true
+    fault_file(store, :pwrite) do |original, bytes, offset|
+      raise Errno::ENOSPC if failing
+
+      original.call(bytes, offset)
+    end
+    assert_raises(Errno::ENOSPC) { store.close }
+    refute store.closed?
+    refute store.instance_variable_get(:@file).closed?
+    store.close(discard: true)
+    assert store.closed?
+    assert store.instance_variable_get(:@file).closed?
+    assert_equal "kept", File.binread(@path)
+    store.close(discard: true)
+  ensure
+    failing = false
+  end
+
   # Catches a raised close error that nevertheless loses the writable handle.
   def test_failed_close_preserves_the_store_for_recovery
     store = file_store

@@ -119,7 +119,7 @@ module XitDB
         end
       end
 
-      def close
+      def close(discard: false)
         @state.synchronize do
           return if @closed
           raise TransactionStateError, "cannot close inside the writer block" if @lock_owner == Thread.current
@@ -132,7 +132,7 @@ module XitDB
             @idle.wait until @lock_users.zero? && @operation_users.empty?
             return if @closed
 
-            flush_bytes
+            flush_bytes unless discard
             close_bytes
             @closed = true
           ensure

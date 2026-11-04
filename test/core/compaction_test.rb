@@ -169,6 +169,60 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  def test_offset_map_close_discards_pending_bytes_after_flush_failure
+    offsets = Core::OffsetMap.new
+    16_385.times { |i| offsets.store(i, i + 50) }
+    store = offsets.instance_variable_get(:@store)
+    file = store.instance_variable_get(:@file)
+    path = offsets.instance_variable_get(:@temporary).path
+    assert_operator store.instance_variable_get(:@pending).bytesize, :>, 0
+    file.define_singleton_method(:pwrite) { |*| raise Errno::ENOSPC }
+    assert_raises(Errno::ENOSPC) { store.flush }
+    offsets.close
+    assert store.closed?
+    assert file.closed?
+    refute File.exist?(path)
+    assert_raises(XitDB::ClosedError) { offsets.fetch(0) }
+    assert_raises(XitDB::ClosedError) { offsets.store(0, 1) }
+    offsets.close
+  ensure
+    file&.singleton_class&.remove_method(:pwrite)
+    store&.close unless store&.closed?
+    offsets&.close
+  end
+
+  def test_offset_map_cleanup_retry_after_descriptor_close_failure
+    offsets = Core::OffsetMap.new
+    16_385.times { |i| offsets.store(i, i + 50) }
+    store = offsets.instance_variable_get(:@store)
+    file = store.instance_variable_get(:@file)
+    path = offsets.instance_variable_get(:@temporary).path
+    original = file.method(:close)
+    failure = IOError.new("descriptor close failed")
+    failing = true
+    file.define_singleton_method(:close) do
+      if failing
+        failing = false
+        raise failure
+      end
+      original.call
+    end
+    assert_same failure, assert_raises(IOError) { offsets.close }
+    refute store.closed?
+    refute file.closed?
+    refute File.exist?(path)
+    assert_raises(XitDB::ClosedError) { offsets.fetch(0) }
+    assert_raises(XitDB::ClosedError) { offsets.store(0, 1) }
+    offsets.close
+    assert store.closed?
+    assert file.closed?
+    offsets.close
+  ensure
+    file&.singleton_class&.remove_method(:close)
+    store&.close unless store&.closed?
+    offsets&.close
+  end
+
   def test_ruby_codecs_are_opaque_and_copied_configuration_is_independent
     type = Struct.new(:bytes)
     calls = []
@@ -330,11 +384,21 @@ class CompactionTest < Minitest::Test
       assert_equal 16_384, maps.first.peak_cache_size
       assert_raises(XitDB::ClosedError) { maps.first.fetch(first) }
       scratch_paths = []
+      scratch_flush_errors = []
+      scratch_failure = IOError.new("scratch write failed")
       interrupted = Interrupt.new("copy interrupted")
       original_read = source.method(:read_at)
       source.define_singleton_method(:read_at) do |offset, size, bound:|
         if offset == first + (count - 1) * 144
           scratch_paths << maps.last.instance_variable_get(:@temporary).path
+          scratch_store = maps.last.instance_variable_get(:@store)
+          scratch_file = scratch_store.instance_variable_get(:@file)
+          scratch_file.define_singleton_method(:pwrite) { |*| raise scratch_failure }
+          begin
+            scratch_store.flush
+          rescue IOError => error
+            scratch_flush_errors << error
+          end
           raise interrupted
         end
         original_read.call(offset, size, bound: bound)
@@ -345,9 +409,19 @@ class CompactionTest < Minitest::Test
       assert_equal 16_384, maps.last.peak_cache_size
       assert_equal 1, scratch_paths.size
       refute File.exist?(scratch_paths.first)
+      assert_same scratch_failure, scratch_flush_errors.fetch(0)
+      assert maps.last.instance_variable_get(:@store).closed?
+      assert maps.last.instance_variable_get(:@store).instance_variable_get(:@file).closed?
       assert_raises(XitDB::ClosedError) { maps.last.fetch(first) }
       assert_equal original, File.binread(source_path)
     ensure
+      maps&.each do |map|
+        scratch_store = map.instance_variable_get(:@store)
+        next unless scratch_store && !scratch_store.closed?
+
+        scratch_store.instance_variable_get(:@file).singleton_class.remove_method(:pwrite)
+        scratch_store.close
+      end
       Core::OffsetMap.singleton_class.remove_method(:new) if original_new
       compacted&.close
       source&.close

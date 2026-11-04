@@ -34,16 +34,17 @@ module XitDB
       end
 
       def close
-        return if @closed
+        return if @cleanup_complete
 
         @closed = true
         @cache.clear
         @transaction&.expire!
         begin
-          @store&.close
+          @store&.close(discard: true)
         ensure
           @temporary&.close!
         end
+        @cleanup_complete = true
         nil
       end
 
