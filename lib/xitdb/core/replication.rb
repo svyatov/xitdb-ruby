@@ -156,7 +156,13 @@ module XitDB
             begin
               store.close
             rescue Exception
-              nil
+              # This unreturned staging store has no caller that can retry close.
+              # Retain physical output while releasing its private descriptor.
+              begin
+                store.close(discard: true)
+              rescue Exception
+                nil
+              end
             end
           end
         end

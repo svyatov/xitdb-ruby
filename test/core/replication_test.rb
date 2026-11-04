@@ -337,6 +337,93 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  def test_staging_persistent_write_failure_closes_descriptor_and_retains_physical_bytes
+    [false, true].product([0, 3]).each do |existing, prefix_length|
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "stage")
+        File.binwrite(path, "") if existing
+        storage_error = Errno::ENOSPC.new("persistent staging write failure")
+        captured = nil
+        original_error = nil
+        retained_bytes = nil
+        configure = lambda do |store|
+          captured = store
+          file = store.instance_variable_get(:@file)
+          write = file.method(:pwrite)
+          attempts = 0
+          file.define_singleton_method(:pwrite) do |bytes, offset|
+            attempts += 1
+            if attempts == 1 && prefix_length.positive?
+              write.call(bytes.byteslice(0, prefix_length), offset)
+            else
+              raise storage_error
+            end
+          end
+          lock = store.method(:with_exclusive_lock)
+          store.define_singleton_method(:with_exclusive_lock) do |**options, &block|
+            lock.call(**options, &block)
+          rescue XitDB::CommitError => error
+            original_error = error
+            retained_bytes = File.binread(path)
+            raise
+          end
+        end
+        input = StringIO.new(EMPTY)
+        with_target_store(path, configure) do
+          error = assert_raises(XitDB::CommitError) do
+            Core::Database.copy_replica(to: path, source_io: input, length: 62)
+          end
+          assert_same original_error, error
+          assert_same storage_error, error.cause
+          assert_equal :unknown, error.outcome
+        end
+        assert captured.instance_variable_get(:@file).closed?
+        assert captured.closed?
+        assert_equal EMPTY.byteslice(0, prefix_length), retained_bytes
+        assert_equal retained_bytes, File.binread(path)
+        assert_equal 62, input.pos
+        refute input.closed?
+      ensure
+        captured&.close(discard: true)
+      end
+    end
+  end
+
+  def test_staging_transient_write_failure_uses_ordinary_close_to_finish_flushing
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "stage")
+      captured = nil
+      storage_error = Errno::ENOSPC.new("transient staging write failure")
+      configure = lambda do |store|
+        captured = store
+        file = store.instance_variable_get(:@file)
+        write = file.method(:pwrite)
+        attempts = 0
+        file.define_singleton_method(:pwrite) do |bytes, offset|
+          attempts += 1
+          raise storage_error if attempts == 2
+
+          write.call(attempts == 1 ? bytes.byteslice(0, 3) : bytes, offset)
+        end
+      end
+      input = StringIO.new(EMPTY)
+      with_target_store(path, configure) do
+        error = assert_raises(XitDB::CommitError) do
+          Core::Database.copy_replica(to: path, source_io: input, length: 62)
+        end
+        assert_same storage_error, error.cause
+        assert_equal :unknown, error.outcome
+      end
+      assert captured.instance_variable_get(:@file).closed?
+      assert captured.closed?
+      assert_equal EMPTY, File.binread(path)
+      Core::Database.open(path, readonly: true) { |db| assert_equal 62, db.committed_size }
+      refute input.closed?
+    ensure
+      captured&.close(discard: true)
+    end
+  end
+
   def test_export_is_fixed_during_concurrent_append_and_close_waits
     Dir.mktmpdir do |dir|
       path = File.join(dir, "source")
