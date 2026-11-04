@@ -2,10 +2,74 @@
 
 require "test_helper"
 require "tmpdir"
+require "timeout"
 require_relative "../support/fault_store"
 
 class BTreeTest < Minitest::Test
   Core = XitDB::Core
+
+  def test_root_collapse_rejects_a_cyclic_surviving_child
+    Core::Database.memory.transaction do |root|
+      tx = root.transaction
+      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + "\0" * 135)
+      cyclic = tx.length
+      child = Core::Slot.new(tag: :index, value: cyclic)
+      tx.append([1, 1].pack("CC") + child.to_bytes + "\0" * 135 + [1].pack("Q>") + "\0" * 120)
+      branch = tx.append([1, 2].pack("CC") + Core::Slot.new(tag: :index, value: leaf).to_bytes + child.to_bytes + "\0" * 126 + [1, 1].pack("Q>Q>") + "\0" * 112)
+      header = tx.append([2, branch].pack("Q>Q>"))
+      root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
+      assert_raises(XitDB::CorruptionError) { Timeout.timeout(1) { Core::BTree.new(root).delete_at(0) } }
+      assert_equal 2, Core::BTree.new(root).size
+      assert_empty tx.instance_variable_get(:@checkpoints)
+    end
+  end
+
+  def test_first_middle_and_final_deletions_collapse_all_tree_heights
+    Core::Database.memory.transaction do |root|
+      tree = Core::BTree.new(root)
+      oracle = (0...4097).to_a
+      oracle.each { |value| tree.insert(tree.size, Core::Slot.uint(value)) }
+      captured = root.transaction.cursor(slot: root.slot)
+      child = Core::LinkedArrayList.new(root).cursor_at(10)
+      assert_equal 0, tree.delete_at(0).value
+      oracle.shift
+      assert_raises(XitDB::ExpiredViewError) { child.slot }
+      turn = 0
+      until oracle.empty?
+        index = [0, oracle.size / 2, -1][turn % 3]
+        assert_equal oracle.delete_at(index), tree.delete_at(index).value
+        assert_equal oracle.size, tree.size
+        assert_equal oracle.size, subtree_count(root, tree_root(root)) if turn % 128 == 0 || oracle.size <= 17
+        turn += 1
+      end
+      assert_equal [0, 0], root.database.read_at(tree_root(root), 2, bound: root.bound).unpack("CC")
+      assert_nil tree.delete_at(0)
+      assert_nil tree.delete_at(-1)
+      assert_raises(TypeError) { tree.delete_at(nil) }
+      assert_equal (0...4097).to_a, Core::BTree.new(captured).each_from_index(0).map(&:value)
+    end
+  end
+
+  def test_failed_deletion_restores_live_children_and_allocation
+    store = FaultStore.new(Core::MemoryStore.new)
+    Core::Database.new(store: store).transaction do |root|
+      list = Core::LinkedArrayList.new(root)
+      17.times { |i| list.append(Core::Slot.uint(i)) }
+      child = list.cursor_at(8)
+      before = root.slot
+      length = root.transaction.length
+      store.fault = ->(name, _) { raise IOError, "allocation failed" if name == :append }
+      assert_raises(IOError) { Core::BTree.new(root).delete_at(0) }
+      store.fault = nil
+      assert_equal before, root.slot
+      assert_equal length, root.transaction.length
+      assert_equal 8, child.slot.value
+      assert_equal (0...17).to_a, list.map(&:value)
+      assert_empty root.transaction.instance_variable_get(:@checkpoints)
+    end
+  ensure
+    store.fault = nil if store
+  end
 
   def test_leaf_and_branch_splits_preserve_rank
     Core::Database.memory.transaction do |root|

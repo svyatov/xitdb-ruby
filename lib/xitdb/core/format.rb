@@ -98,6 +98,10 @@ module XitDB
         tag == :none && !full
       end
 
+      def ==(other)
+        other.is_a?(Slot) && tag == other.tag && full == other.full && value == other.value
+      end
+
       def to_bytes
         code = tag.is_a?(Symbol) ? TAGS.index(tag) : tag
         [code | (full ? 0x80 : 0), value].pack("CQ>")

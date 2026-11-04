@@ -90,6 +90,104 @@ module XitDB
         self
       end
 
+      def delete_at(index)
+        count, pointer = header
+        rank = resolve_index(index, count)
+        return nil unless rank
+
+        mutate do |tx|
+          path, node, offset = descend(pointer, rank, count)
+          removed = node.slots.delete_at(offset)
+          old_pointer = pointer_for(path, pointer)
+          path.reverse_each do |parent_pointer, parent, child_index|
+            if node.slots.empty?
+              parent.slots.delete_at(child_index)
+              parent.counts.delete_at(child_index)
+            else
+              if node.slots.size < SPLIT_COUNT && parent.slots.size > 1
+                first = child_index + 1 < parent.slots.size ? child_index : child_index - 1
+                neighbor_index = first == child_index ? first + 1 : first
+                neighbor = read_node(parent.slots[neighbor_index].value, parent.counts[neighbor_index])
+                raise CorruptionError, "unequal B-tree child heights" unless neighbor.kind == node.kind
+
+                if node.slots.size + neighbor.slots.size <= CAPACITY
+                  node = first == child_index ? merge_nodes(node, neighbor) : merge_nodes(neighbor, node)
+                  parent.slots.delete_at(first + 1)
+                  parent.counts.delete_at(first + 1)
+                  child_index = first
+                end
+              end
+              parent.slots[child_index] = Slot.new(tag: :index, value: write_node(tx, node, old_pointer))
+              parent.counts[child_index] = node.size
+            end
+            node = parent
+            old_pointer = parent_pointer
+          end
+          if node.kind == 1 && node.slots.size == 1
+            root_pointer = node.slots.first.value
+            seen = {}
+            loop do
+              raise CorruptionError, "cyclic B-tree branch" if seen[root_pointer]
+
+              seen[root_pointer] = true
+              child = read_node(root_pointer, count - 1)
+              break unless child.kind == 1 && child.slots.size == 1
+
+              root_pointer = child.slots.first.value
+            end
+          else
+            node = Node.new(0, [], []) if node.slots.empty?
+            root_pointer = write_node(tx, node, old_pointer)
+          end
+          publish(tx, count - 1, root_pointer)
+          cursor.invalidate_children(from: rank)
+          removed
+        end
+      end
+
+      def split(index)
+        count, pointer = header
+        integer_index(index)
+        index += count if index.negative?
+        raise IndexError, "array split outside list" unless index >= 0 && index <= count
+
+        mutate do |tx|
+          split_root(tx, [pointer, count, cursor.bound], index).map { |ref| detached(tx, ref) }
+        end
+      end
+
+      def slice(start, length)
+        count, pointer = header
+        integer_index(start)
+        integer_index(length)
+        start += count if start.negative?
+        unless start >= 0 && start <= count && length >= 0 && length <= count - start
+          raise IndexError, "array slice outside list"
+        end
+
+        mutate do |tx|
+          _left, tail = split_root(tx, [pointer, count, cursor.bound], start)
+          selected, _right = split_root(tx, tail, length)
+          detached(tx, selected)
+        end
+      end
+
+      def concat(other)
+        raise TypeError, "expected BTree" unless other.is_a?(BTree)
+        unless cursor.database.equal?(other.cursor.database)
+          raise ForeignValueError, "cannot share linked arrays across databases"
+        end
+
+        count, pointer = header
+        other_count, other_pointer = other.send(:header)
+        raise RangeError, "array size exceeds unsigned 64-bit range" if count + other_count > Format::UINT64_MAX
+
+        mutate do |tx|
+          ref = join_roots(tx, [pointer, count, cursor.bound], [other_pointer, other_count, other.cursor.bound])
+          detached(tx, ref)
+        end
+      end
+
       def each_from_index(index)
         return enum_for(__method__, index) unless block_given?
 
@@ -132,8 +230,8 @@ module XitDB
         index if index >= 0 && index < count
       end
 
-      def read(offset, length)
-        cursor.database.read_at(offset, length, bound: cursor.bound)
+      def read(offset, length, bound: cursor.bound)
+        cursor.database.read_at(offset, length, bound: bound)
       end
 
       def header
@@ -144,12 +242,12 @@ module XitDB
         read(slot.value, HEADER_SIZE).unpack("Q>Q>")
       end
 
-      def read_node(pointer, expected)
-        kind, num = read(pointer, 2).unpack("CC")
+      def read_node(pointer, expected, bound: cursor.bound)
+        kind, num = read(pointer, 2, bound: bound).unpack("CC")
         unless [0, 1].include?(kind) && num <= CAPACITY && (kind.zero? || num.positive?)
           raise CorruptionError, "invalid B-tree node header"
         end
-        bytes = read(pointer, kind.zero? ? LEAF_SIZE : BRANCH_SIZE)
+        bytes = read(pointer, kind.zero? ? LEAF_SIZE : BRANCH_SIZE, bound: bound)
         slots = CAPACITY.times.map do |i|
           slot = Slot.parse(bytes.byteslice(2 + i * Slot::SIZE, Slot::SIZE))
           raise CorruptionError, "unknown B-tree slot tag" unless Slot::TAGS.include?(slot.tag)
@@ -209,13 +307,134 @@ module XitDB
 
         checkpoint = tx.checkpoint
         begin
-          yield tx
+          result = yield tx
         rescue Exception
           tx.restore(checkpoint)
           raise
         else
           tx.release_checkpoint(checkpoint)
+          result
         end
+      end
+
+      # References retain each source cursor's read boundary while nodes are shared.
+      def node_for(ref)
+        read_node(ref[0], ref[1], bound: ref[2] || cursor.bound)
+      end
+
+      def child_ref(ref, node, index)
+        [node.slots[index].value, node.counts[index], ref[2]]
+      end
+
+      def merge_nodes(left, right)
+        raise CorruptionError, "unequal B-tree node kinds" unless left.kind == right.kind
+
+        Node.new(left.kind, left.slots + right.slots, left.counts + right.counts)
+      end
+
+      def assemble(tx, node)
+        if node.slots.size <= CAPACITY
+          [[write_node(tx, node), node.size, nil]]
+        else
+          middle = node.slots.size / 2
+          [Node.new(node.kind, node.slots.first(middle), node.counts.first(middle)),
+           Node.new(node.kind, node.slots.drop(middle), node.counts.drop(middle))].map do |half|
+            [write_node(tx, half), half.size, nil]
+          end
+        end
+      end
+
+      def branch(refs)
+        Node.new(1, refs.map { |ref| Slot.new(tag: :index, value: ref[0]) }, refs.map { |ref| ref[1] })
+      end
+
+      def height(ref)
+        levels = 0
+        seen = {}
+        loop do
+          raise CorruptionError, "cyclic B-tree branch" if seen[ref[0]]
+
+          seen[ref[0]] = true
+          node = node_for(ref)
+          return levels if node.kind.zero?
+
+          ref = child_ref(ref, node, 0)
+          levels += 1
+        end
+      end
+
+      def join_roots(tx, left, right)
+        return right if left[1].zero?
+        return left if right[1].zero?
+
+        left_height = height(left)
+        right_height = height(right)
+        path = []
+        while left_height > right_height
+          node = node_for(left)
+          index = node.slots.size - 1
+          path << [left, node, index]
+          left = child_ref(left, node, index)
+          left_height -= 1
+        end
+        while right_height > left_height
+          node = node_for(right)
+          path << [right, node, 0]
+          right = child_ref(right, node, 0)
+          right_height -= 1
+        end
+        result = assemble(tx, merge_nodes(node_for(left), node_for(right)))
+        path.reverse_each do |_ref, node, index|
+          node.slots[index, 1] = result.map { |ref| Slot.new(tag: :index, value: ref[0]) }
+          node.counts[index, 1] = result.map { |ref| ref[1] }
+          result = assemble(tx, node)
+        end
+        result.size == 1 ? result.first : assemble(tx, branch(result)).first
+      end
+
+      def sibling_root(tx, ref, node, range)
+        refs = node.slots.each_index.to_a[range].map { |index| child_ref(ref, node, index) }
+        return [nil, 0, nil] if refs.empty?
+        return refs.first if refs.size == 1
+
+        assemble(tx, branch(refs)).first
+      end
+
+      def split_root(tx, ref, rank)
+        return [[nil, 0, nil], ref] if rank.zero?
+        return [ref, [nil, 0, nil]] if rank == ref[1]
+
+        path = []
+        seen = {}
+        node = nil
+        loop do
+          raise CorruptionError, "cyclic B-tree branch" if seen[ref[0]]
+
+          seen[ref[0]] = true
+          node = node_for(ref)
+          break if node.kind.zero?
+
+          index = 0
+          while index + 1 < node.slots.size && rank > node.counts[index]
+            rank -= node.counts[index]
+            index += 1
+          end
+          path << [ref, node, index]
+          ref = child_ref(ref, node, index)
+        end
+        left = assemble(tx, Node.new(0, node.slots.first(rank), [])).first
+        right = assemble(tx, Node.new(0, node.slots.drop(rank), [])).first
+        path.reverse_each do |parent_ref, parent, index|
+          left = join_roots(tx, sibling_root(tx, parent_ref, parent, 0...index), left)
+          right = join_roots(tx, right, sibling_root(tx, parent_ref, parent, (index + 1)...parent.slots.size))
+        end
+        [left, right]
+      end
+
+      def detached(tx, ref)
+        pointer = ref[0] || write_node(tx, Node.new(0, [], []))
+        position = tx.append([ref[1], pointer].pack("Q>Q>"))
+        self.class.new(tx.cursor(slot: Slot.new(tag: :linked_array_list, value: position)))
       end
 
       def write_node(tx, node, old_pointer = nil)

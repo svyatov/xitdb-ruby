@@ -36,6 +36,11 @@ type request struct {
 	Entries    []hashEntry `json:"entries"`
 	Removals   []string    `json:"removals"`
 	Positions  []int64     `json:"positions"`
+	Length     int64       `json:"length"`
+	Deletions  []int64     `json:"deletions"`
+	SplitIndex int64       `json:"split_index"`
+	Offset     int64       `json:"offset"`
+	Size       int64       `json:"size"`
 }
 
 type hashEntry struct {
@@ -69,7 +74,7 @@ func run() error {
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
-	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" {
+	if req.Case != "empty" && req.Case != "scalars" && req.Case != "array-list" && req.Case != "hash-collections" && req.Case != "linked-array-insert" && req.Case != "linked-array-edit" {
 		return fmt.Errorf("unsupported case: %s", req.Case)
 	}
 	if req.Hash.ID != "sha1" || req.Hash.Size != 20 {
@@ -112,6 +117,9 @@ func run() error {
 	if req.Case == "linked-array-insert" {
 		return linkedArrayInsert(db, req)
 	}
+	if req.Case == "linked-array-edit" {
+		return linkedArrayEdit(db, req)
+	}
 	if req.Case == "empty" {
 		data, err := os.ReadFile(req.Path)
 		if err != nil {
@@ -124,6 +132,84 @@ func run() error {
 		return err
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+func linkedArrayEdit(db *xitdb.Database, req request) error {
+	if req.Operation == "write" {
+		list, err := xitdb.NewWriteLinkedArrayList(db.RootCursor())
+		if err != nil {
+			return err
+		}
+		for index := range req.Length {
+			if err := list.Append(xitdb.Slot{Tag: xitdb.TagUint, Value: index}); err != nil {
+				return err
+			}
+		}
+		for turn, index := range req.Deletions {
+			if err := list.Remove(index); err != nil {
+				return err
+			}
+			count, err := list.Count()
+			if err != nil {
+				return err
+			}
+			if count != req.Length-int64(turn)-1 {
+				return fmt.Errorf("linked count %d after deletion %d", count, turn)
+			}
+		}
+		count, err := list.Count()
+		if err != nil {
+			return err
+		}
+		source, err := list.Slot()
+		if err != nil {
+			return err
+		}
+		if err := list.Slice(0, req.SplitIndex); err != nil {
+			return err
+		}
+		left, err := list.Slot()
+		if err != nil {
+			return err
+		}
+		if err := db.RootCursor().Write(source); err != nil {
+			return err
+		}
+		if err := list.Slice(req.SplitIndex, count-req.SplitIndex); err != nil {
+			return err
+		}
+		right, err := list.Slot()
+		if err != nil {
+			return err
+		}
+		if err := db.RootCursor().Write(left); err != nil {
+			return err
+		}
+		if err := list.Concat(right); err != nil {
+			return err
+		}
+		if err := list.Slice(req.Offset, req.Size); err != nil {
+			return err
+		}
+		selected, err := list.Slot()
+		if err != nil {
+			return err
+		}
+		if err := list.Slice(0, 0); err != nil {
+			return err
+		}
+		empty, err := list.Slot()
+		if err != nil {
+			return err
+		}
+		if err := list.Concat(selected); err != nil {
+			return err
+		}
+		if err := list.Concat(empty); err != nil {
+			return err
+		}
+	}
+	return linkedArrayInsert(db, request{Operation: "read"})
 }
 
 func linkedArrayInsert(db *xitdb.Database, req request) error {

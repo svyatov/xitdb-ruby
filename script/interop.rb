@@ -20,7 +20,7 @@ module Interop
     end.parse!
     raise "--all requires all four adapters; only Go is implemented" if options[:all]
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert].include?(options[:case])
+    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit].include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
@@ -36,6 +36,8 @@ module Interop
         hash_collections(binary, dir)
       elsif options[:case] == "linked-array-insert"
         linked_array_insert(binary, dir)
+      elsif options[:case] == "linked-array-edit"
+        linked_array_edit(binary, dir)
       else
         scalars(binary, dir)
       end
@@ -67,7 +69,7 @@ module Interop
                file_id: MANIFEST.fetch("file_id"), value: value}
     request[:values] = request.delete(:value) if name == "array-list"
     request.merge!(request.delete(:value)) if name == "hash-collections"
-    request.merge!(request.delete(:value)) if name == "linked-array-insert"
+    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit].include?(name)
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -257,6 +259,47 @@ module Interop
 
   def self.hash_value(db, slot)
     read_cursor_value(XitDB::Core::Cursor.new(database: db, slot: slot, bound: db.committed_size))
+  end
+
+  def self.linked_array_edit(binary, dir)
+    [0, 1, 17, 257, 4097].each do |length|
+      oracle = (0...length).to_a
+      deletions = []
+      remove_count = length == 4097 ? 3 : length
+      remove_count.times do |turn|
+        index = [0, oracle.size / 2, -1][turn % 3]
+        deletions << index
+        oracle.delete_at(index)
+      end
+      split = [17, oracle.size].min
+      offset = [16, oracle.size].min
+      size = [257, oracle.size - offset].min
+      request = {"length" => length, "deletions" => deletions, "split_index" => split, "offset" => offset, "size" => size}
+      expected = oracle.slice(offset, size).map(&:to_s)
+      ruby_path = File.join(dir, "ruby-edit-#{length}.xit")
+      XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+        db.transaction do |root|
+          list = XitDB::Core::LinkedArrayList.new(root)
+          length.times { |index| list.append(XitDB::Core::Slot.uint(index)) }
+          deletions.each { |index| list.delete_at(index) }
+          left, right = list.split(split)
+          joined = left.concat(right)
+          selected = joined.slice(offset, size)
+          empty = selected.slice(0, 0)
+          root.replace(empty.concat(selected).concat(empty).cursor.slot)
+        end
+      end
+      assert_equal expected, adapter(binary, "read", "linked-array-edit", ruby_path, request)
+      go_path = File.join(dir, "go-edit-#{length}.xit")
+      assert_equal expected, adapter(binary, "write", "linked-array-edit", go_path, request)
+      XitDB::Core::Database.open(go_path, readonly: true) do |db|
+        list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
+        assert_equal :linked_array_list, db.root_cursor.slot.tag
+        assert_equal expected.size, list.size
+        assert_equal expected, list.map { |slot| slot.value.to_s }
+      end
+    end
+    puts "5 linked-array edit lengths checked with first/middle/final removals, root collapse, split/rejoin, slices, and empty operands"
   end
 end
 

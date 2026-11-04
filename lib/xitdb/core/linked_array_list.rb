@@ -29,6 +29,24 @@ module XitDB
         replace_child(index, slot)
       end
 
+      def delete_at(index)
+        @tree.delete_at(index)
+      end
+
+      def slice(start, length)
+        self.class.new(@tree.slice(start, length).cursor)
+      end
+
+      def split(index)
+        @tree.split(index).map { |tree| self.class.new(tree.cursor) }
+      end
+
+      def concat(other)
+        raise TypeError, "expected LinkedArrayList" unless other.is_a?(LinkedArrayList)
+
+        self.class.new(@tree.concat(BTree.new(other.cursor)).cursor)
+      end
+
       def replace_child(index, slot, **options)
         @tree.replace(index, slot, **options)
         self
