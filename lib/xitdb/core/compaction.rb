@@ -70,18 +70,10 @@ module XitDB
         mapped = @offsets.fetch(slot.value)
         return mapped if mapped
 
-        length = read(slot.value, 8).unpack1("Q>")
-        total = 8 + length + (slot.full ? 2 : 0)
-        unless slot.value >= Database::DATA_OFFSET && slot.value + total <= @bound
-          raise CorruptionError, "byte value exceeds its read boundary"
-        end
-        target = @transaction.length
-        position = 0
-        while position < total
-          chunk = read(slot.value + position, [total - position, 64 * 1024].min)
-          @transaction.append(chunk)
-          position += chunk.bytesize
-        end
+        source = Bytes.open(@source, slot, bound: @bound)
+        copied = Bytes.append(@transaction, size: source.size, format_tag: source.format_tag,
+          representation: :external) { |position, length| source.read(position, length) }
+        target = copied.value
         @offsets.store(slot.value, target)
         target
       end
