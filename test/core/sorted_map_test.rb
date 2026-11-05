@@ -179,7 +179,8 @@ class SortedMapTest < Minitest::Test
       assert_equal 1, map.size
       assert_same nested.cursor, map.cursor_at("hash").child(kind: :hash_map, selector: key)
       nested.add("c")
-      transient = WeakRef.new(nested.cursor_at("c"))
+      # Discard the creation stack before testing weak ownership.
+      transient = Fiber.new { WeakRef.new(nested.cursor_at("c")) }.resume
       3.times { GC.start }
 
       refute_predicate transient, :weakref_alive?

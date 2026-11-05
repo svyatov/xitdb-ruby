@@ -298,7 +298,8 @@ class ArrayListTest < Minitest::Test
     Core::Database.memory.transaction do |root|
       list = Core::ArrayList.new(root)
       200.times { |index| list.append(Core::Slot.uint(index)) }
-      references = Array.new(200) { |index| WeakRef.new(list.cursor_at(index)) }
+      # Discard the creation stack before testing weak ownership.
+      references = Fiber.new { Array.new(200) { |index| WeakRef.new(list.cursor_at(index)) } }.resume
       3.times { GC.start }
 
       assert_equal 0, references.count(&:weakref_alive?)

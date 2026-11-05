@@ -281,7 +281,8 @@ class HashMapTest < Minitest::Test
     Core::Database.memory.transaction do |root|
       map = Core::HashMap.new(root)
       100.times { |i| map.add(hash(i), key: Core::Slot.uint(i)) }
-      references = Array.new(100) { |i| WeakRef.new(map.cursor_at(hash(i))) }
+      # Discard the creation stack before testing weak ownership.
+      references = Fiber.new { Array.new(100) { |i| WeakRef.new(map.cursor_at(hash(i))) } }.resume
       3.times { GC.start }
 
       assert_equal 0, references.count(&:weakref_alive?)
