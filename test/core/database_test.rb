@@ -427,6 +427,7 @@ class DatabaseTest < Minitest::Test
         assert reference.weakref_alive?
         tx.restore(checkpoint)
         assert_equal 7, live.slot.value
+        assert_equal 0, checkpoint.slots.size, "consumed checkpoint still owns cursor states during the transaction"
         assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
         retained = [checkpoint, reference]
       end
