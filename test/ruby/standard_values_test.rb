@@ -10,21 +10,24 @@ class RubyStandardValuesTest < RubyProfileTest
 
   def test_exact_time_offset_and_decimal_zero
     time = Time.at(Rational(1, 10**12)).getlocal(3600)
+
     assert_equal time.to_r, round_trip(time).to_r
     assert_equal 3600, round_trip(time).utc_offset
     assert_equal BigDecimal("-0").sign, round_trip(BigDecimal("-0")).sign
   end
 
   def test_time_exact_instants_and_presentation
+    offsets = [-86_399, 0, 86_399]
     [Rational(-1, 10**12), Rational(1, 3), 2**80].each do |instant|
-      [-86_399, 0, 86_399].each do |offset|
+      offsets.each do |offset|
         value = round_trip(Time.at(instant).getlocal(offset))
+
         assert_equal instant, value.to_r
         assert_equal offset, value.utc_offset
-        refute value.utc?
-        assert value.frozen?
+        refute_predicate value, :utc?
+        assert_predicate value, :frozen?
       end
-      assert round_trip(Time.at(instant).utc).utc?
+      assert_predicate round_trip(Time.at(instant).utc), :utc?
     end
   end
 
@@ -39,7 +42,8 @@ class RubyStandardValuesTest < RubyProfileTest
         BigDecimal.mode(BigDecimal::EXCEPTION_ALL, true)
         BigDecimal.limit(2)
         mode = BigDecimal.mode(BigDecimal::EXCEPTION_ALL)
-        assert decode_payload("010803").nan?
+
+        assert_predicate decode_payload("010803"), :nan?
         assert_equal 1, decode_payload("010801").infinite?
         assert_equal [-1, "123", 10, 1], decode_payload("0108000103313233000101").split
         assert_equal mode, BigDecimal.mode(BigDecimal::EXCEPTION_ALL)
@@ -52,6 +56,7 @@ class RubyStandardValuesTest < RubyProfileTest
     [Date::GREGORIAN, Date::JULIAN, Date::ITALY, Date::ENGLAND, 2_298_874, 2_426_355, 2_299_161.5].each do |start|
       [-2**70, 0, 2_299_161, 2**70].each do |jd|
         date = round_trip(Date.jd(jd, start))
+
         assert_instance_of Date, date
         assert_equal jd, date.jd
         assert_equal start, date.start
@@ -64,6 +69,7 @@ class RubyStandardValuesTest < RubyProfileTest
       [Rational(-1, 1), Rational(1, 24), Rational(1, 1)].each do |offset|
         original = DateTime.jd(-123, 23, 59, Rational(59_000_000_000_001, 10**12), offset, start)
         value = round_trip(original)
+
         assert_instance_of DateTime, value
         assert_equal original.ajd, value.ajd
         assert_equal offset, value.offset
@@ -76,9 +82,10 @@ class RubyStandardValuesTest < RubyProfileTest
     %w[0 -0 1.2300 -123000 1e100000 1e-100000 Infinity -Infinity NaN].each do |text|
       original = BigDecimal(text)
       value = round_trip(original)
+
       assert_instance_of BigDecimal, value
       assert_equal original.split, value.split
-      assert value.frozen?
+      assert_predicate value, :frozen?
     end
     assert_equal @core.read_bytes(store(BigDecimal("1.2300"))).bytes,
                  @core.read_bytes(store(BigDecimal("1.23"))).bytes
@@ -96,15 +103,18 @@ class RubyStandardValuesTest < RubyProfileTest
     original.utc
     first = Scalars.decode(slot, core: @core, immutable: false)
     second = Scalars.decode(slot, core: @core, immutable: false)
-    refute first.frozen?
+
+    refute_predicate first, :frozen?
     refute_same first, second
     first.localtime(-3600)
+
     assert_equal 3600, second.utc_offset
     assert_equal 3600, Scalars.decode(slot, core: @core).utc_offset
     [Date.today, DateTime.now, BigDecimal("1.23"), Rational(2, 3)].each do |value|
       slot = store(value)
       first = Scalars.decode(slot, core: @core, immutable: false)
       second = Scalars.decode(slot, core: @core, immutable: false)
+
       refute_same first, second
       assert_equal value, first
     end
@@ -130,10 +140,12 @@ class RubyStandardValuesTest < RubyProfileTest
     fixtures = JSON.parse(File.read(File.expand_path("../fixtures/ruby/v1/scalars.json", __dir__)))
     fixtures.fetch("standard_values").each do |fixture|
       original = values.fetch(fixture.fetch("name"))
+
       assert_equal fixture.fetch("payload"), @core.read_bytes(store(original)).bytes.unpack1("H*")
       value = decode_payload(fixture.fetch("payload"))
       original.is_a?(BigDecimal) ? assert_equal(original.split, value.split) : assert_equal(original, value)
       payload = fixture.fetch("payload")
+
       (0...(payload.size / 2)).each do |length|
         assert_raises(XitDB::InvalidValueError) { decode_payload(payload[0, length * 2]) }
       end

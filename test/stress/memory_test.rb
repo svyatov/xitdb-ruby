@@ -14,6 +14,7 @@ class MemoryStressTest < Minitest::Test
       database = BoundedWorkload.open_database(profile)
       begin
         digest = BoundedWorkload.fixture(database, bytes: 3, rows: 3)
+
         assert_equal 2, database.history.size
         assert_equal 1, database.snapshot["rows"]["row-00000001"]
         assert_equal "012", database.snapshot.open_bytes("blob", &:read)
@@ -34,6 +35,7 @@ class MemoryStressTest < Minitest::Test
           target = source.convert(to: File.join(directory, profile), profile: profile == "ruby" ? :portable : :ruby)
           BoundedWorkload.bound_reads(target)
           digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
           assert_nil BoundedWorkload.check_stream(target, 3, digest, converted: true)
           assert_raises(RuntimeError) { BoundedWorkload.check_stream(target, 4, "invalid", converted: true) }
         ensure
@@ -51,12 +53,14 @@ class MemoryStressTest < Minitest::Test
                stdout, error, status = Open3.capture3(
                  "ruby", "script/stress.rb", "--limit-mib", "256", "--data-mib", "768", chdir: ROOT
                )
-               assert status.success?, error
+
+               assert_predicate status, :success?, error
                stdout
              end
     FileUtils.mkdir_p(File.join(ROOT, "pkg"))
     File.write(File.join(ROOT, "pkg/stress.json"), output)
     report = JSON.parse(output)
+
     assert_equal "cgroup_v2", report.fetch("hard_limit_mechanism")
     assert_equal 268_435_456, report.fetch("memory_limit_bytes")
     assert_equal 0, report.fetch("swap_limit_bytes")
@@ -79,8 +83,10 @@ class MemoryStressTest < Minitest::Test
     Dir.mktmpdir("xitdb-benchmark-test-") do |directory|
       path = File.join(directory, "benchmark.json")
       _output, error, status = Open3.capture3("ruby", "script/benchmark.rb", "--output", path, chdir: ROOT)
-      assert status.success?, error
+
+      assert_predicate status, :success?, error
       report = JSON.parse(File.read(path))
+
       assert_match(/ruby/, report.fetch("ruby_description"))
       assert_equal "unavailable", report.fetch("os_cache_control")
       assert_equal 8, report.fetch("workloads").size
@@ -95,6 +101,7 @@ class MemoryStressTest < Minitest::Test
           assert_operator measurement.fetch("median_seconds"), :>=, 0
         end
       end
+
       assert_equal 4, report.fetch("shared_histories").size
       report.fetch("shared_histories").each do |entry|
         assert_includes %w[completed timeout], entry.fetch("status")

@@ -20,6 +20,7 @@ class ConversionTest < Minitest::Test
     native.transaction { |root| root[:name] = "Ada" }
     transform = ->(value:, path:, role:) { value.is_a?(Symbol) ? value.to_s : value } # rubocop:disable Lint/UnusedBlockArgument -- Keep the callback's public keyword contract.
     target = track(native.convert(to: path("target"), profile: :portable, transform: transform))
+
     assert_equal "Ada", target.snapshot["name"]
     native.transaction { |root| root["name"] = "Other" }
     assert_raises(XitDB::KeyCollisionError) do
@@ -37,10 +38,12 @@ class ConversionTest < Minitest::Test
       raise "whole-root materialization" if event.method_id == :to_ruby
     end
     target = guard.enable { track(source.convert(to: path("ruby"), profile: :ruby)) }
+
     assert_equal 2, target.history.size
     assert_nil target.history[0]["number"]
     assert_equal [1, { "name" => "Ada" }, Set["a", "b"]], target.snapshot["data"].to_ruby
     latest = track(target.convert(to: path("latest"), profile: :portable, history: :latest))
+
     assert_equal 1, latest.history.size
     assert_equal 2, latest.snapshot["number"]
     assert_equal "sha1", latest.core.header.hash_id
@@ -52,10 +55,11 @@ class ConversionTest < Minitest::Test
   def test_empty_history_and_invalid_history_selection
     source = track(XitDB.memory)
     target = track(source.convert(to: path("empty"), profile: :ruby))
+
     assert_equal 0, target.history.size
     assert_empty target.snapshot
     assert_raises(ArgumentError) { source.convert(to: path("invalid"), profile: :portable, history: :first) }
-    refute File.exist?(path("invalid"))
+    refute_path_exists path("invalid")
   end
 
   def test_path_dependent_transform_and_captured_source_history
@@ -69,7 +73,8 @@ class ConversionTest < Minitest::Test
     appended = false
     transform = lambda do |value:, path:, role:|
       calls << [path, role]
-      assert path.frozen?
+
+      assert_predicate path, :frozen?
       unless appended
         appended = true
         Thread.new { source.transaction { |root| root["version"] = 3 } }.value
@@ -77,6 +82,7 @@ class ConversionTest < Minitest::Test
       role == :value && path.last == "n" ? path.first : value
     end
     target = track(source.convert(to: path("captured"), profile: :ruby, transform: transform))
+
     assert_equal 2, target.history.size
     assert_equal 3, source.history.size
     assert_equal "left", target.snapshot.dig("left", "n")
@@ -91,6 +97,7 @@ class ConversionTest < Minitest::Test
     source.transaction { |root| root["n"] = 1 }
     original = File.binread(path("source"))
     File.link(path("source"), path("alias"))
+
     [path("source"), path("alias")].each do |target|
       assert_raises(ArgumentError) { source.convert(to: target, profile: :ruby) }
     end
@@ -111,18 +118,22 @@ class ConversionTest < Minitest::Test
     source = track(XitDB.memory(hash: :sha256))
     source.transaction { |root| root["opaque"] = XitDB::Core::ByteValue.new("payload", format_tag: "zz") }
     portable = track(source.convert(to: path("same"), profile: :portable))
+
     assert_equal 32, portable.core.header.hash_size
     configured = XitDB::Profiles::Portable.new(hasher: XitDB::Core::Hasher.sha512)
     custom = track(source.convert(to: path("configured"), profile: configured))
+
     assert_equal 64, custom.core.header.hash_size
     refute_same configured, custom.profile
     native = track(source.convert(to: path("opaque"), profile: :ruby))
+
     assert_equal "zz", native.snapshot["opaque"].format_tag
     assert_equal "payload", native.snapshot["opaque"].bytes
     payload = "\x01\x0a\x09vendor/v1\x03abc".b
     unknown = XitDB::Ruby::EncodedValue.new(codec_id: "vendor/v1", bytes: payload)
     native.transaction { |root| root["custom"] = unknown }
     clone = track(native.convert(to: path("unknown"), profile: :ruby))
+
     refute_same native.profile.codecs, clone.profile.codecs
     assert_equal payload, clone.snapshot["custom"].bytes
     assert_raises(XitDB::UnsupportedValueError) { native.convert(to: path("unsupported"), profile: :portable) }
@@ -130,6 +141,7 @@ class ConversionTest < Minitest::Test
                                        transform: lambda { |value:, **|
                                          value.is_a?(XitDB::Ruby::EncodedValue) ? "unknown" : value
                                        }))
+
     assert_equal "unknown", transformed.snapshot["custom"]
     source.transaction { |root| root["reserved"] = XitDB::Core::ByteValue.new("\x01\x03\x01", format_tag: "rb") }
     assert_raises(XitDB::UnsupportedValueError) { source.convert(to: path("reserved"), profile: :ruby) }
@@ -147,16 +159,19 @@ class ConversionTest < Minitest::Test
     restored = track(native.convert(to: path("short-restored"), profile: :portable))
     clone = track(native.convert(to: path("short-clone"), profile: :ruby))
 
+    byte_keys = %w[empty short opaque]
+    string_keys = %w[empty short]
     [portable, native, restored, clone].each do |database|
       snapshot = database.snapshot
+
       assert_equal "", snapshot["empty"]
       assert_equal "abc", snapshot["short"]
       assert_equal "x", snapshot["opaque"].bytes
       assert_equal "zz", snapshot["opaque"].format_tag
-      %w[empty short opaque].each do |key|
+      byte_keys.each do |key|
         assert_equal :bytes, snapshot.adapter.lookup(key).tag
       end
-      %w[empty short].each do |key|
+      string_keys.each do |key|
         assert_equal database.profile.instance_of?(XitDB::Profiles::Ruby), snapshot.adapter.lookup(key).full
       end
       assert snapshot.adapter.lookup("opaque").full
@@ -177,6 +192,7 @@ class ConversionTest < Minitest::Test
                                                                 transform: lambda { |value:, **|
                                                                   value.is_a?(Symbol) ? value.to_s : value
                                                                 })
+
       assert_equal "Ada", copied["name"]
       assert_raises(XitDB::ExpiredViewError) { old.size }
       assert_raises(XitDB::UnsupportedValueError) { root.context.copy_from(source.snapshot, at: ["bad"]) }
@@ -184,6 +200,7 @@ class ConversionTest < Minitest::Test
       assert_raises(XitDB::ExpiredViewError) { root.context.copy_from(source.snapshot, at: %w[absent child]) }
     end
     source.close
+
     assert_equal "Ada", snapshot["people"][0]["name"]
     assert_equal [1, 2], snapshot["people"][0]["scores"].to_ruby
     assert_raises(XitDB::ReadOnlyError) { snapshot.context.copy_from(snapshot, at: ["x"]) }
@@ -201,6 +218,7 @@ class ConversionTest < Minitest::Test
     end
     enforce_bounded_reads(source.core)
     native = track(source.convert(to: path("streamed"), profile: :ruby))
+
     assert_equal utf8, native.snapshot["utf8"]
     assert_equal Encoding::UTF_8, native.snapshot["utf8"].encoding
     assert_equal binary, native.snapshot["binary"]
@@ -209,9 +227,11 @@ class ConversionTest < Minitest::Test
     native.transaction { |root| root["encoded"] = "é".encode(Encoding::UTF_16LE) * 100_000 }
     enforce_bounded_reads(native.core)
     portable = track(native.convert(to: path("streamed-back"), profile: :portable))
+
     assert_equal binary, portable.snapshot["binary"]
     assert_equal "é".encode(Encoding::UTF_16LE).b * 100_000, portable.snapshot["encoded"].b
     clone = track(native.convert(to: path("streamed-native"), profile: :ruby))
+
     assert_equal Encoding::UTF_16LE, clone.snapshot["encoded"].encoding
   end
 
@@ -226,11 +246,13 @@ class ConversionTest < Minitest::Test
                                                                  calls << path
                                                                  value + 1
                                                                })
+
       assert_equal [21, 31], root[:slice].to_ruby
       assert_equal [[0], [1]], calls
       assert_raises(XitDB::ProfileMismatchError) { root.context.copy_from(source.snapshot["numbers"], at: []) }
       child = root[:slice]
       root.context.copy_from(source.snapshot, at: [])
+
       assert_equal [10, 20, 30, 40], root["numbers"].to_ruby
       assert_raises(XitDB::ExpiredViewError) { child.size }
       refute root.key?(:slice)
@@ -268,6 +290,7 @@ class ConversionTest < Minitest::Test
         root.context.copy_from(source_root, at: ["copy"], transform: lambda { |value:, role:, **|
           role == :value ? [value, 2] : value
         })
+
         assert_equal [1, 2], root["copy"]["n"].to_ruby
       end
     end
@@ -289,6 +312,7 @@ class ConversionTest < Minitest::Test
     native.transaction { |root| root.delete("set") }
     target = track(native.convert(to: path("sorted"), profile: :portable, history: :latest,
                                   transform: ->(value:, role:, **) { role == :key ? value.to_s : value }))
+
     assert_equal :sorted_map, target.snapshot["sorted"].kind
     assert_equal %w[1 2], target.snapshot["sorted"].keys
     target.transaction do |root|
@@ -310,6 +334,7 @@ class ConversionTest < Minitest::Test
                                       value
                                     end
                                   }))
+
     assert_equal 1, target.snapshot["name"]
     refute target.snapshot.key?("changed")
   end
@@ -332,6 +357,7 @@ class ConversionTest < Minitest::Test
           lock.call(**options, &block)
         end
       end
+
       with_target_store(target_path, configure) do
         assert_raises(ArgumentError) { source.convert(to: target_path, profile: :portable) }
       end
@@ -363,8 +389,8 @@ class ConversionTest < Minitest::Test
         assert_equal(failed_sync.odd? ? :not_committed : :unknown, error.outcome)
         assert_same failure, error.cause
       end
-      assert captured.closed?
-      assert captured.instance_variable_get(:@file).closed?
+      assert_predicate captured, :closed?
+      assert_predicate captured.instance_variable_get(:@file), :closed?
       if failed_sync.odd?
         assert_equal 0, File.size(target_path)
       else
@@ -415,8 +441,8 @@ class ConversionTest < Minitest::Test
         assert_same failure, error.cause
         assert_equal :unknown, error.outcome
       end
-      assert captured.closed?
-      assert captured.instance_variable_get(:@file).closed?
+      assert_predicate captured, :closed?
+      assert_predicate captured.instance_variable_get(:@file), :closed?
       assert_equal retained, File.binread(target_path)
     end
   end
@@ -432,6 +458,7 @@ class ConversionTest < Minitest::Test
         lock.call(**options, &block)
       end
     end
+
     with_target_store(target_path, configure) do
       assert_raises(ArgumentError) { source.convert(to: target_path, profile: :portable) }
     end
@@ -447,6 +474,7 @@ class ConversionTest < Minitest::Test
         lock.call(**options, &block)
       end
     end
+
     with_target_store(target_path, configure) do
       assert_same failure, assert_raises(RuntimeError) {
         source.convert(to: target_path, profile: :portable, transform: ->(**) { raise failure })
@@ -462,6 +490,7 @@ class ConversionTest < Minitest::Test
     destination.transaction do |root|
       root["bytes"] = "old"
       calls = 0
+
       root.open_bytes("bytes") do |_reader|
         assert_raises(XitDB::ConcurrentModificationError) do
           root.context.copy_from(source.snapshot, at: ["bytes"], transform: lambda { |value:, **|
@@ -474,12 +503,14 @@ class ConversionTest < Minitest::Test
       result = catch(:cancel) do
         root.context.copy_from(source.snapshot, at: ["copy"], transform: ->(**) { throw :cancel, :cancelled })
       end
+
       assert_equal :cancelled, result
       assert_equal({ "bytes" => "old" }, root.to_ruby)
     end
     result = catch(:cancel) do
       source.convert(to: path("nonlocal"), profile: :portable, transform: ->(**) { throw :cancel, :cancelled })
     end
+
     assert_equal :cancelled, result
     assert_equal 0, File.size(path("nonlocal"))
   end
@@ -525,6 +556,7 @@ class ConversionTest < Minitest::Test
     end
     calls.clear
     target = track(source.convert(to: path("codec"), profile: :ruby))
+
     assert_equal %i[load dump], calls
     refute_same source.profile.codecs, target.profile.codecs
     refute_same source.profile.instance_variable_get(:@registry), target.profile.instance_variable_get(:@registry)
@@ -593,12 +625,14 @@ class ConversionTest < Minitest::Test
       end
     end
     target = track(source.convert(to: path("deep-histories"), profile: :ruby))
+
     assert_equal 25, target.history.size
     assert_nil target.history[0]["revision"]
     assert_equal 23, target.snapshot["revision"]
     assert_equal 63, target.history[12]["shared"][63]
     value = target.history[0]["deep"].to_ruby
     600.times { value = value[0] }
+
     assert_equal "leaf", value
   end
 

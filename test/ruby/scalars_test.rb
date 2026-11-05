@@ -25,10 +25,12 @@ class RubyScalarsTest < RubyProfileTest
       value = values.fetch(fixture.fetch("name"))
       slot = store(value)
       bytes = fixture.key?("slot") ? slot.to_bytes : @core.read_bytes(slot).bytes
+
       assert_equal fixture["slot"] || fixture["payload"], bytes.unpack1("H*"), fixture.fetch("name")
       decoded = Scalars.decode(slot, core: @core)
       value.nil? ? assert_nil(decoded) : assert_equal(value, decoded)
-      assert decoded.frozen?
+
+      assert_predicate decoded, :frozen?
       if value.is_a?(String)
         assert_equal value.encoding, decoded.encoding
         assert_equal value.bytes, decoded.bytes
@@ -40,6 +42,7 @@ class RubyScalarsTest < RubyProfileTest
     Encoding.list.each do |encoding|
       value = "".dup.force_encoding(encoding)
       decoded = round_trip(value)
+
       assert_equal encoding, decoded.encoding
       assert_empty decoded
     end
@@ -48,8 +51,10 @@ class RubyScalarsTest < RubyProfileTest
     original.replace("changed")
     first = Scalars.decode(slot, core: @core, immutable: false)
     second = Scalars.decode(slot, core: @core, immutable: false)
-    refute first.frozen?
+
+    refute_predicate first, :frozen?
     first.replace("different")
+
     assert_equal "value", second
     assert_equal "value", Scalars.decode(slot, core: @core)
     assert_equal :é, round_trip(:é)
@@ -60,26 +65,29 @@ class RubyScalarsTest < RubyProfileTest
     [-(2**4096), 2**4096].each { |value| assert_equal value, round_trip(value) }
     %w[0000000000000000 8000000000000000 7ff8000000000001 fff8000000000042 7ff0000000000001].each do |hex|
       value = [hex].pack("H*").unpack1("G")
+
       assert_equal hex, [round_trip(value)].pack("G").unpack1("H*")
     end
   end
 
   def test_binary_tagged_and_unknown_custom_payloads
     assert_equal Encoding::BINARY, decode_payload("6162", format_tag: nil).encoding
-    assert decode_payload("", format_tag: nil).frozen?
-    refute decode_payload("6162", format_tag: nil, immutable: false).frozen?
+    assert_predicate decode_payload("", format_tag: nil), :frozen?
+    refute_predicate decode_payload("6162", format_tag: nil, immutable: false), :frozen?
     opaque = decode_payload("00ff01", format_tag: "xy")
+
     assert_instance_of XitDB::Core::ByteValue, opaque
     assert_equal "xy", opaque.format_tag
     assert_equal "00ff01", opaque.bytes.unpack1("H*")
     custom = decode_payload("010a0461636d650300ff01")
+
     assert_instance_of XitDB::Ruby::EncodedValue, custom
     assert_equal "acme", custom.codec_id
     assert_equal "rb", custom.format_tag
     assert_equal "010a0461636d650300ff01", custom.bytes.unpack1("H*")
-    assert custom.frozen?
-    assert custom.codec_id.frozen?
-    assert custom.bytes.frozen?
+    assert_predicate custom, :frozen?
+    assert_predicate custom.codec_id, :frozen?
+    assert_predicate custom.bytes, :frozen?
     assert_equal custom.bytes, @core.read_bytes(store(custom)).bytes
     assert_equal opaque.bytes, @core.read_bytes(store(opaque)).bytes
   end
@@ -104,6 +112,7 @@ class RubyScalarsTest < RubyProfileTest
 
   def test_truncation_and_captured_core_bound
     hex = "0101055554462d3802c3a9"
+
     (0...(hex.size / 2)).each do |length|
       assert_raises(XitDB::InvalidValueError) { decode_payload(hex[0, length * 2]) }
     end
@@ -166,14 +175,16 @@ class RubyScalarsTest < RubyProfileTest
       end
     RUBY
     output, errors, status = Open3.capture3(RbConfig.ruby, "-w", "-Ilib", "-e", program)
-    assert status.success?, errors
+
+    assert_predicate status, :success?, errors
     assert_empty output
     assert_empty errors
   end
 
   def test_rejects_private_overrides_of_existing_methods_without_calling_them
+    prepend_modes = [false, true]
     %i[initialize_copy puts].each do |name|
-      [false, true].each do |prepend|
+      prepend_modes.each do |prepend|
         value = +"text"
         behavior = Module.new do
           define_method(name) { |*| raise "private override ran" }

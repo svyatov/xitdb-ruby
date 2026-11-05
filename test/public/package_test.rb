@@ -9,7 +9,7 @@ class PackageTest < Minitest::Test
   def test_built_gem_loads_both_profiles_in_a_clean_bundle
     with_built_package do |spec|
       assert_equal "Ada", packaged_example("portable").fetch("name")
-      assert_equal true, packaged_example("ruby").fetch("enabled")
+      assert_same true, packaged_example("ruby").fetch("enabled")
       assert_equal %w[Ada Grace], packaged_example("indexed_users").fetch("names")
       %w[README.md CHANGELOG.md LICENSE docs/core.md docs/portable.md docs/ruby.md
          docs/ruby-profile-v1.md sig/base.rbs sig/core.rbs sig/native.rbs sig/public.rbs

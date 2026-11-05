@@ -9,6 +9,7 @@ class LinkedArrayListTest < Minitest::Test
 
   def test_slot_equality_compares_tag_occupancy_and_raw_payload
     slot = Core::Slot.float(-0.0)
+
     assert_equal slot, Core::Slot.parse(slot.to_bytes)
     refute_equal slot, Core::Slot.float(0.0)
     refute_equal Core::Slot.uint(0), Core::Slot.int(0)
@@ -21,6 +22,7 @@ class LinkedArrayListTest < Minitest::Test
       list = Core::LinkedArrayList.new(root)
       257.times { |i| list.append(Core::Slot.uint(i)) }
       left, right = list.split(17)
+
       assert_equal (0...17).to_a, left.each.map(&:value)
       assert_equal (17...257).to_a, right.each.map(&:value)
       assert_equal list.each.to_a, left.concat(right).each.to_a
@@ -29,9 +31,11 @@ class LinkedArrayListTest < Minitest::Test
       tree = Core::BTree.new(root)
       until oracle.empty?
         rank = random.rand(oracle.size)
+
         assert_equal oracle.delete_at(rank), tree.delete_at(rank).value
         assert_equal oracle, tree.each_from_index(0).map(&:value)
       end
+
       assert_equal 0, list.size
       assert_equal :linked_array_list, root.slot.tag
       assert_equal [], list.split(0).first.to_a
@@ -49,24 +53,30 @@ class LinkedArrayListTest < Minitest::Test
           original = root.slot
           length = root.transaction.length
           left, right = list.split(2049)
+
           assert_equal original, root.slot
           assert_operator root.transaction.length - length, :<, 20_000
           slice = list.slice(16, 257)
+
           assert_equal (16...273).to_a, slice.map(&:value)
           joined = left.concat(right)
           length = root.transaction.length
           doubled = list.concat(list)
+
           assert_operator root.transaction.length - length, :<, 10_000
           assert_equal 8194, doubled.size
           left.put(0, Core::Slot.uint(9999))
           right.append(Core::Slot.uint(8888))
           list.put(2049, Core::Slot.uint(7777))
+
           assert_equal (0...4097).to_a, joined.map(&:value)
           assert_equal (16...273).to_a, slice.map(&:value)
           root.replace(joined.cursor.slot)
+
           assert_empty root.transaction.instance_variable_get(:@checkpoints)
         end
       end
+
       Core::Database.open(path, readonly: true) do |db|
         assert_equal (0...4097).to_a, Core::LinkedArrayList.new(db.root_cursor).map(&:value)
       end
@@ -79,6 +89,7 @@ class LinkedArrayListTest < Minitest::Test
       257.times { |i| list.append(Core::Slot.uint(i)) }
       empty = list.slice(0, 0)
       small = list.slice(-1, 1)
+
       assert_equal (0...257).to_a, empty.concat(list).map(&:value)
       assert_equal (0...257).to_a, list.concat(empty).map(&:value)
       assert_equal [], empty.concat(empty).map(&:value)
@@ -86,8 +97,10 @@ class LinkedArrayListTest < Minitest::Test
       assert_equal [256] + (0...257).to_a, small.concat(list).map(&:value)
       doubled = list.concat(list)
       list.put(0, Core::Slot.uint(999))
+
       assert_equal (0...257).to_a * 2, doubled.map(&:value)
       doubled.put(0, Core::Slot.uint(888))
+
       assert_equal 0, doubled.get(257).value
       assert_equal 999, list.get(0).value
       assert_equal [], list.split(0).first.map(&:value)
@@ -108,10 +121,12 @@ class LinkedArrayListTest < Minitest::Test
       random = Random.new(79)
       [0, 1, 8, 16, 17, 256, 512, 513, *Array.new(20) { random.rand(0..513) }].each do |rank|
         left, right = tree.split(rank)
+
         assert_equal oracle.first(rank), left.each_from_index(0).map(&:value)
         assert_equal oracle.drop(rank), right.each_from_index(0).map(&:value)
         assert_equal oracle, left.concat(right).each_from_index(0).map(&:value)
         length = random.rand(0..(513 - rank))
+
         assert_equal oracle.slice(rank, length), tree.slice(rank, length).each_from_index(0).map(&:value)
       end
       assert_equal oracle.last(17), tree.split(-17).last.each_from_index(0).map(&:value)
@@ -127,6 +142,7 @@ class LinkedArrayListTest < Minitest::Test
       list = Core::LinkedArrayList.new(root)
       list.append(Core::Slot.uint(2))
       result = list.concat(old)
+
       assert_equal [1, 2, 1], result.map(&:value)
       assert_equal [1], old.map(&:value)
     end
@@ -151,6 +167,7 @@ class LinkedArrayListTest < Minitest::Test
       assert_raises(IOError) { list.split(8) }
       assert_raises(IOError) { list.concat(list) }
       store.fault = nil
+
       assert_equal before, root.slot
       assert_equal length, root.transaction.length
       assert_equal (0...17).to_a, list.map(&:value)

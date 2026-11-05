@@ -7,8 +7,10 @@ require "tmpdir"
 class RubySortedTest < RubyProfileTest
   def test_ordered_bytes_match_exact_numeric_and_time_order
     numbers = [-(2**200), -1, 0, 1, 2**200]
+
     assert_equal(numbers, numbers.shuffle.sort_by { |n| ordered(n, :integer) })
     times = [Rational(-1, 3), 0, Rational(1, 10**12), Rational(1, 3)]
+
     assert_equal(times, times.shuffle.sort_by { |t| ordered(Time.at(t), :time) })
   end
 
@@ -28,6 +30,7 @@ class RubySortedTest < RubyProfileTest
       assert_equal hex, ordered(Time.at(number), :time).unpack1("H*")
     end
     strings = ["", "a", "a\0", "aa", "b", "é"]
+
     assert_equal(strings, strings.reverse.sort_by { |s| ordered(s, :string) })
     assert_equal "c3a9", ordered("é".encode("ISO-8859-1"), :string).unpack1("H*")
     assert_equal Encoding::BINARY, ordered("é", :string).encoding
@@ -38,6 +41,7 @@ class RubySortedTest < RubyProfileTest
     b = 1
     2500.times { a, b = b, a + b }
     values = [-Rational(b, a), -Rational(1, 10**100), 0, Rational(1, 10**100), Rational(a, b), Rational(b, a)]
+
     assert_equal(values, values.reverse.sort_by { |r| ordered(Time.at(r), :time) })
     assert_operator ordered(Time.at(Rational(1, 10**100)), :time).bytesize, :<, 100
   end
@@ -67,16 +71,19 @@ class RubySortedTest < RubyProfileTest
   end
 
   def test_typed_declarations_and_portable_isolation
+    key_kinds = %i[string integer float time]
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
         %i[sorted_map sorted_set].each do |type|
           error = assert_raises(XitDB::UnsupportedValueError) { root[:bad] = XitDB.public_send(type) }
           assert_match(/key:/, error.message)
-          %i[string integer float time].each do |kind|
+          key_kinds.each do |kind|
             root[:value] = XitDB.public_send(type, key: kind)
+
             assert_empty root[:value]
           end
         end
+
         refute root.key?(:bad)
       end
     end
@@ -85,10 +92,12 @@ class RubySortedTest < RubyProfileTest
         %i[sorted_map sorted_set].each do |type|
           assert_raises(XitDB::UnsupportedValueError) { root["bad"] = XitDB.public_send(type, key: :string) }
           root["value"] = XitDB.public_send(type)
+
           assert_empty root["value"]
         end
       end
     end
+
     [:object, false, 1, "integer"].each do |kind|
       assert_raises(ArgumentError) { XitDB.sorted_map(key: kind) }
     end
@@ -114,6 +123,7 @@ class RubySortedTest < RubyProfileTest
             root[:map][key] = [key]
             root[:set].add(key)
           end
+
           assert_equal keys, root[:map].keys
           assert_equal keys, root[:set].to_a
           keys.each_with_index do |key, index|
@@ -137,6 +147,7 @@ class RubySortedTest < RubyProfileTest
           assert_equal [:changed], removed.to_ruby
           assert_raises(XitDB::ConcurrentModificationError) { iterator.next }
           root[:set].delete(keys[2])
+
           assert_equal 4, root[:map].size
           assert_equal 4, root[:set].size
         end
@@ -161,6 +172,7 @@ class RubySortedTest < RubyProfileTest
           set.add(original).add(other)
           child = map[other][:child]
           child.push(2)
+
           assert_equal [1, 2], map[original][:child].to_ruby
           map[other] = { child: [3] }
           assert_raises(XitDB::ExpiredViewError) { child.size }
@@ -295,7 +307,8 @@ class RubySortedTest < RubyProfileTest
         assert_equal [1], child.to_ruby
         assert_raises(StopIteration) { iterator.next }
         assert_equal [first], map.keys
-        map.merge!(second => [2], first => [3])
+        valid_updates = { second => [2], first => [3] }
+        map.merge!(valid_updates)
         assert_raises(XitDB::ExpiredViewError) { child.size }
         assert_equal({ first => [3], second => [2] }, map.to_ruby)
         [Hash.new(0), {}.compare_by_identity].each do |input|
@@ -311,19 +324,23 @@ class RubySortedTest < RubyProfileTest
         root[:map] = XitDB.sorted_map(key: :string)
         map = root[:map]
         latin = "é".encode("ISO-8859-1")
-        map.merge!(latin => [1], "é" => [2])
+        alias_updates = { latin => [1], "é" => [2] }
+        map.merge!(alias_updates)
+
         assert_equal 1, map.size
         assert_equal [2], map[latin].to_ruby
         assert_equal Encoding::ISO_8859_1, map.keys.first.encoding
         child = map["é"]
         iterator = map.each
         iterator.next
-        map.merge!("é" => [3])
+        replacement_update = { "é" => [3] }
+        map.merge!(replacement_update)
         assert_raises(XitDB::ExpiredViewError) { child.size }
         assert_raises(StopIteration) { iterator.next }
         assert_equal [3], map[latin].to_ruby
         root[latin] = 1
         root["é"] = 2
+
         assert_equal 1, root[latin]
         assert_equal 2, root["é"]
       end
@@ -342,6 +359,7 @@ class RubySortedTest < RubyProfileTest
       set = db.snapshot[:set]
       [[map, 0x52420105, 2], [set, 0x52420106, 1]].each do |view, marker, key_kind|
         envelope = XitDB::Core::ArrayList.new(view.context.cursor(view.slot))
+
         assert_equal 3, envelope.size
         assert_equal XitDB::Core::Slot.uint(marker), envelope.get(0)
         assert_equal XitDB::Core::Slot.uint(key_kind), envelope.get(1)
@@ -350,6 +368,7 @@ class RubySortedTest < RubyProfileTest
         if view.equal?(map)
           assert_equal "02000000000000000101", bytes.unpack1("H*")
           record = XitDB::Core::ArrayList.new(view.context.cursor(stored))
+
           assert_equal 2, record.size
           assert_equal XitDB::Core::Slot.int(1), record.get(0)
           assert_equal XitDB::Core::Slot.null, record.get(1)
@@ -367,6 +386,7 @@ class RubySortedTest < RubyProfileTest
         root[:map] = XitDB.sorted_map(key: :integer)
         root[:map][1] = [1]
         context = root.context
+
         [[0, XitDB::Core::Slot.uint(0)], [1, XitDB::Core::Slot.uint(9)],
          [1, XitDB::Core::Slot.int(2)], [2, XitDB::Core::Slot.null], [3, XitDB::Core::Slot.null]].each do |index, value|
           assert_raises(XitDB::InvalidValueError) do
@@ -414,12 +434,15 @@ class RubySortedTest < RubyProfileTest
         reads += 1
         original.call(*args, **options)
       end
+
       assert_equal 512, view.size
       assert_operator reads, :<, 10
       reads = 0
+
       assert_equal 400, view.rank(400)
       assert_operator reads, :<, 40
       reads = 0
+
       assert_equal [[400, 400], [401, 401]], view.page(offset: 400, limit: 2).to_a
       assert_operator reads, :<, 40
       assert_empty view.from_index(512).to_a
@@ -460,6 +483,7 @@ class RubySortedTest < RubyProfileTest
         assert_raises(XitDB::ExpiredViewError) { child.size }
         assert_empty map
         map[4] = [4]
+
         assert_equal [4], map.keys
       end
     end
@@ -491,6 +515,7 @@ class RubySortedTest < RubyProfileTest
         end
         failing = false
         map[3] = nil
+
         assert_equal [1, 2, 3], map.keys
       end
     end
@@ -510,9 +535,10 @@ class RubySortedTest < RubyProfileTest
       XitDB::Ruby.open(path, readonly: true) do |db|
         map = db.snapshot[:map]
         key = map.keys.first
+
         assert_equal Rational(1, 10**12), key.to_r
         assert_equal 3600, key.utc_offset
-        assert key.frozen?
+        assert_predicate key, :frozen?
         assert_equal ["new"], map[key].to_ruby
         assert_equal ["old"], db.snapshot(revision: first)[:map][key].to_ruby
         assert_raises(XitDB::ReadOnlyError) { map[key] = 1 }

@@ -17,8 +17,10 @@ class PublicOwnershipTest < Minitest::Test
       root["a"] = [1]
       root["b"] = root["a"]
       root["b"] << 2
+
       assert_equal [1], root["a"].to_ruby
       root["a"] << 3
+
       assert_equal [1, 2], root["b"].to_ruby
 
       source = [+"leaf"]
@@ -28,9 +30,10 @@ class PublicOwnershipTest < Minitest::Test
       value = root["shared"].to_ruby
       value[0][0] << " edited"
       value[0] << 5
+
       assert_equal ["leaf"], value[1]
       assert_equal [["leaf"], ["leaf"]], root["shared"].to_ruby
-      assert root["shared"][0][0].frozen?
+      assert_predicate root["shared"][0][0], :frozen?
     end
   end
 
@@ -53,8 +56,8 @@ class PublicOwnershipTest < Minitest::Test
       bound = root.context.read_bound
       key_error = assert_raises(XitDB::UnsupportedValueError) { root[input] = 2 }
       assert_equal ["text"], key_error.path
-      assert key_error.path.frozen?
-      assert key_error.path.first.frozen?
+      assert_predicate key_error.path, :frozen?
+      assert_predicate key_error.path.first, :frozen?
       assert_instance_of XitDB::UnsupportedValueError, key_error.cause
       value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = input }
       assert_equal ["value"], value_error.path
@@ -71,8 +74,8 @@ class PublicOwnershipTest < Minitest::Test
       bound = root.context.read_bound
       key_error = assert_raises(XitDB::UnsupportedValueError) { root[BasicObject.new] = 2 }
       assert_equal ["#<unsupported BasicObject>"], key_error.path
-      assert key_error.path.frozen?
-      assert key_error.path.first.frozen?
+      assert_predicate key_error.path, :frozen?
+      assert_predicate key_error.path.first, :frozen?
       assert_instance_of XitDB::UnsupportedValueError, key_error.cause
       value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = BasicObject.new }
       assert_equal ["value"], value_error.path
@@ -107,6 +110,7 @@ class PublicOwnershipTest < Minitest::Test
       end
     end
     @db.transaction { |root| root["frozen"] = [nil, 1, 1.0, "text"] }
+
     assert_equal [nil, 1, 1.0, "text"], @db.snapshot["frozen"].to_ruby
   end
 
@@ -148,6 +152,7 @@ class PublicOwnershipTest < Minitest::Test
       assert_raises(XitDB::UnsupportedValueError) { root["rejected"] = input }
       assert_empty root.to_ruby
       root["valid"] = [1]
+
       assert_equal({ "valid" => [1] }, root.to_ruby)
     end
     assert_equal({ "valid" => [1] }, @db.snapshot.to_ruby)
@@ -159,6 +164,7 @@ class PublicOwnershipTest < Minitest::Test
       items = root["items"]
       child = items[0]
       iterator = items.each
+
       assert_equal [1], iterator.next.to_ruby
       bound = items.context.read_bound
       error = assert_raises(XitDB::UnsupportedValueError) { items[0] = ["allocated" * 30, Object.new] }
@@ -167,6 +173,7 @@ class PublicOwnershipTest < Minitest::Test
       assert_equal [[1], [2]], items.to_ruby
       assert_equal [2], iterator.next.to_ruby
       child << 3
+
       assert_equal [[1, 3], [2]], items.to_ruby
     end
   end
@@ -190,6 +197,7 @@ class PublicOwnershipTest < Minitest::Test
             root["copy"].concat(captured[2, 1])
             root["copy"][0] << 4
             root["items"][1] << 5
+
             assert_equal [[1], [2], [3]], captured.to_ruby
             assert_equal [[2]], root["slice"].to_ruby
           end
@@ -232,6 +240,7 @@ class PublicOwnershipTest < Minitest::Test
         File.binwrite(path, original)
         XitDB.open(path) do |destination|
           destination.transaction { |root| root["items"] = [[3]] }
+
           assert_equal source.core.header.to_bytes, destination.core.header.to_bytes
           assert_equal captured.context.read_bound, destination.snapshot.context.read_bound
           destination.transaction do |root|
@@ -270,17 +279,20 @@ class PublicOwnershipTest < Minitest::Test
       root["shared"] = [root[key][0], root[key][0]]
     end
     view = snapshot[key]
+
     assert_equal view, snapshot["shared"]
-    assert view == [["leaf"], ["leaf"]]
-    refute view == [["other"]]
+    assert_equal view, [["leaf"], ["leaf"]] # rubocop:disable Minitest/LiteralAsActualArgument -- Exercise the view's equality implementation.
+    refute_equal view, [["other"]]
     ruby = snapshot["shared"].to_ruby
     ruby[0][0] << " changed"
+
     assert_equal [["leaf changed"], ["leaf"]], ruby
     reads = 0
     trace = TracePoint.new(:call) do |event|
       reads += 1 if event.defined_class == XitDB::Core::Database && event.method_id == :read_at
     end
     description = trace.enable { view.inspect }
+
     assert_operator description.bytesize, :<, 300
     assert_equal 0, reads
   end

@@ -20,10 +20,12 @@ class CoreLogicalMutationTest < Minitest::Test
         assert_raises(XitDB::TransactionStateError) { transaction.check_logical_mutation! }
         array = XitDB::Core::ArrayList.new(cursor)
         array.append(XitDB::Core::Slot.int(1))
+
         assert_equal 1, array.get(0).value
       end
       transaction.with_logical_mutation { XitDB::Core::ArrayList.new(cursor).append(XitDB::Core::Slot.int(2)) }
     end
+
     assert_equal [1, 2], XitDB::Core::ArrayList.new(@database.root_cursor).map(&:value)
   end
 
@@ -48,6 +50,7 @@ class CoreLogicalMutationTest < Minitest::Test
         rescue StandardError
           $ERROR_INFO
         end.value
+
         assert_instance_of XitDB::TransactionStateError, error
         assert_raises(XitDB::TransactionStateError) { transaction.check_logical_mutation! }
       end

@@ -305,10 +305,12 @@ module XitDB
 
         def valid_node?(node)
           if node.kind.zero?
-            node.slots.all? { |slot| %i[bytes short_bytes kv_pair sorted_kv_pair].include?(slot.tag) }
+            tags = %i[bytes short_bytes kv_pair sorted_kv_pair]
+            node.slots.all? { |slot| tags.include?(slot.tag) }
           else
+            tags = %i[bytes short_bytes]
             node.slots.all? { |slot| slot.tag == :index } && node.separators.drop(1).all? do |slot|
-              %i[bytes short_bytes].include?(slot.tag)
+              tags.include?(slot.tag)
             end
           end
         end

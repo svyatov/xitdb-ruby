@@ -23,8 +23,9 @@ class RubyKeyEncodingTest < RubyProfileTest
       2**64 => "030009010000000000000000"
     }.each do |value, hex|
       bytes = key_bytes(value)
+
       assert_equal hex, bytes.unpack1("H*")
-      assert bytes.frozen?
+      assert_predicate bytes, :frozen?
       assert_equal Encoding::BINARY, bytes.encoding
     end
   end
@@ -61,7 +62,8 @@ class RubyKeyEncodingTest < RubyProfileTest
     expected = "00\n01\n02\n03000101\n0500046e616d65\n0600046e616d65\n040000000000000000\n030009010000000000000000\n"
     2.times do
       output, errors, status = Open3.capture3(RbConfig.ruby, "-Ilib", "-e", script)
-      assert status.success?, errors
+
+      assert_predicate status, :success?, errors
       assert_equal "", errors
       assert_equal expected, output
     end

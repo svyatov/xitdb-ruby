@@ -20,15 +20,18 @@ class ReplicationTest < Minitest::Test
     replica = database(EMPTY)
     diverged = database(image(DIVERGED))
     state = replica.replica_state
-    assert state.frozen?
+
+    assert_predicate state, :frozen?
     assert_equal 62, state.committed_size
     assert_equal 0xd95e2cd540a1ea38, state.checksum
     assert_equal 62, source.replication_start(state)
     assert_equal 0, source.replication_start(diverged.replica_state)
     stream = StringIO.new("".b)
     source.read_committed(62, 112, stream)
+
     assert_equal FIRST + SECOND, stream.string
     replica.apply_replicated(62, StringIO.new(stream.string), 50)
+
     assert_equal source.committed_size, replica.committed_size
     assert_equal 0x2f0a1a87b732917d, replica.replica_state.checksum
     assert_equal 8, replica.root_cursor.slot.value
@@ -42,16 +45,19 @@ class ReplicationTest < Minitest::Test
     output = StringIO.new("".b)
     output.define_singleton_method(:write) { |bytes| super(bytes.byteslice(0, 3)) }
     source.read_committed(0, 87, output)
+
     assert_equal image(FIRST), output.string
     assert_equal 7, database(output.string).root_cursor.slot.value
     empty = StringIO.new("".b)
     source.read_committed(0, 62, empty)
+
     assert_equal EMPTY, empty.string
   end
 
   def test_invalid_ranges_and_in_place_replacement_leave_committed_bytes_unchanged
     store = Core::MemoryStore.new(image(FIRST))
     db = Core::Database.new(store: store)
+
     [[-1, 87], [1, 87], [88, 87], [0, 88], [0, 86]].each do |start, finish|
       assert_raises(ArgumentError, XitDB::CorruptionError) { db.read_committed(start, finish, StringIO.new) }
     end
@@ -60,6 +66,7 @@ class ReplicationTest < Minitest::Test
       assert_raises(ArgumentError) { db.apply_replicated(start, StringIO.new(image(FIRST)), length) }
     end
     db.apply_replicated(87, StringIO.new, 0)
+
     assert_equal image(FIRST), store.read_at(0, store.length)
   end
 
@@ -77,11 +84,12 @@ class ReplicationTest < Minitest::Test
           assert_raises(error) { replica.apply_replicated(87, StringIO.new(bytes), length) }
           assert_equal last_good_state, replica.replica_state
           assert_equal image(FIRST), File.binread(path)
-          refute replica.needs_reopen?
+          refute_predicate replica, :needs_reopen?
         end
         input = StringIO.new("#{SECOND}next frame")
         input.define_singleton_method(:read) { |length| super([length, 2].min) }
         replica.apply_replicated(87, input, 25)
+
         assert_equal 25, input.pos
         assert_equal image(FIRST, SECOND), File.binread(path)
       end
@@ -93,15 +101,17 @@ class ReplicationTest < Minitest::Test
       path = File.join(dir, "stage")
       input = StringIO.new(image(FIRST))
       copy = Core::Database.copy_replica(to: path, source_io: input, length: 87)
+
       assert_equal 7, copy.root_cursor.slot.value
       assert_equal image(FIRST), File.binread(path)
-      refute input.closed?
+      refute_predicate input, :closed?
       copy.close
       assert_raises(ArgumentError) { Core::Database.copy_replica(to: path, source_io: StringIO.new(EMPTY), length: 62) }
       assert_equal image(FIRST), File.binread(path)
       empty_path = File.join(dir, "empty")
       File.binwrite(empty_path, "")
       Core::Database.copy_replica(to: empty_path, source_io: StringIO.new(EMPTY), length: 62).close
+
       assert_equal EMPTY, File.binread(empty_path)
       invalid = image(FIRST).dup
       invalid[29, 8] = [62].pack("Q>")
@@ -142,10 +152,11 @@ class ReplicationTest < Minitest::Test
           original.call(**options, &block)
         end
       end
+
       with_target_store(path, configure) do
         assert_raises(ArgumentError) { Core::Database.copy_replica(to: path, source_io: StringIO.new(EMPTY), length: 62) }
       end
-      assert captured.closed?
+      assert_predicate captured, :closed?
       assert_equal image(FIRST), File.binread(path)
     end
   end
@@ -192,6 +203,7 @@ class ReplicationTest < Minitest::Test
       else
         assert_same original, assert_raises(IOError) { db.apply_replicated(87, input, 25) }
       end
+
       assert_equal state, db.replica_state
       assert_equal(point == :cleanup_failure, db.needs_reopen?)
       assert_equal(point == :cleanup_failure ? 90 : 87, store.length)
@@ -219,6 +231,8 @@ class ReplicationTest < Minitest::Test
   end
 
   def test_file_publication_failures_classify_durability_and_recover
+    outcomes = { append: :not_committed, data_sync: :not_committed, header_write: :unknown,
+                 header_sync: :unknown, release: :committed }
     %i[append data_sync header_write header_sync release].each do |point|
       Dir.mktmpdir do |dir|
         path = File.join(dir, "replica")
@@ -236,22 +250,23 @@ class ReplicationTest < Minitest::Test
         end
         store.release_fault = -> { raise IOError, "release failed" } if point == :release
         error = assert_raises(XitDB::CommitError) { replica.apply_replicated(87, StringIO.new(SECOND), 25) }
-        outcome = { append: :not_committed, data_sync: :not_committed, header_write: :unknown,
-                    header_sync: :unknown, release: :committed }.fetch(point)
+        outcome = outcomes.fetch(point)
+
         assert_equal outcome, error.outcome
         assert_instance_of IOError, error.cause
         store.fault = nil
         store.release_fault = nil
         if outcome == :not_committed
-          refute replica.needs_reopen?
+          refute_predicate replica, :needs_reopen?
           assert_equal image(FIRST), File.binread(path)
           replica.apply_replicated(87, StringIO.new(SECOND), 25)
         else
-          assert replica.needs_reopen?
+          assert_predicate replica, :needs_reopen?
           assert_raises(XitDB::TransactionStateError) { replica.apply_replicated(112, StringIO.new, 0) }
           assert_raises(XitDB::TransactionStateError) { replica.transaction { nil } }
         end
         replica.close
+
         Core::Database.open(path, readonly: true) do |reopened|
           assert_equal(point == :header_write ? 7 : 8, reopened.root_cursor.slot.value)
         end
@@ -281,6 +296,7 @@ class ReplicationTest < Minitest::Test
       assert_instance_of Errno::ENOSPC, error.cause
       assert_equal image(FIRST), File.binread(path)
       db.apply_replicated(87, StringIO.new(SECOND), 25)
+
       assert_equal image(FIRST, SECOND), File.binread(path)
     ensure
       db&.close
@@ -288,6 +304,7 @@ class ReplicationTest < Minitest::Test
   end
 
   def test_staging_interrupts_and_sync_failures_close_the_descriptor
+    interrupted_points = %i[interrupt throw throw_in_rescue]
     Dir.mktmpdir do |dir|
       %i[interrupt throw throw_in_rescue data_write sync].each do |point|
         path = File.join(dir, point.to_s)
@@ -306,7 +323,7 @@ class ReplicationTest < Minitest::Test
           end
         end
         input = StringIO.new(image(FIRST))
-        if %i[interrupt throw throw_in_rescue].include?(point)
+        if interrupted_points.include?(point)
           input.define_singleton_method(:read) do |length|
             if pos.positive?
               throw :stop unless point == :interrupt
@@ -327,14 +344,16 @@ class ReplicationTest < Minitest::Test
               catch(:stop) { action.call }
             end
           when :interrupt
+
             assert_raises(Interrupt, &action)
           else
             error = assert_raises(XitDB::CommitError, &action)
             assert_equal(point == :sync ? :unknown : :not_committed, error.outcome)
           end
         end
-        assert captured.closed?
-        refute input.closed?
+
+        assert_predicate captured, :closed?
+        refute_predicate input, :closed?
         assert_equal(point == :sync ? image(FIRST) : "", File.binread(path))
       end
     end
@@ -378,12 +397,12 @@ class ReplicationTest < Minitest::Test
           assert_same storage_error, error.cause
           assert_equal :unknown, error.outcome
         end
-        assert captured.instance_variable_get(:@file).closed?
-        assert captured.closed?
+        assert_predicate captured.instance_variable_get(:@file), :closed?
+        assert_predicate captured, :closed?
         assert_equal EMPTY.byteslice(0, prefix_length), retained_bytes
         assert_equal retained_bytes, File.binread(path)
         assert_equal 62, input.pos
-        refute input.closed?
+        refute_predicate input, :closed?
       ensure
         captured&.close(discard: true)
       end
@@ -415,11 +434,11 @@ class ReplicationTest < Minitest::Test
         assert_same storage_error, error.cause
         assert_equal :unknown, error.outcome
       end
-      assert captured.instance_variable_get(:@file).closed?
-      assert captured.closed?
+      assert_predicate captured.instance_variable_get(:@file), :closed?
+      assert_predicate captured, :closed?
       assert_equal EMPTY, File.binread(path)
       Core::Database.open(path, readonly: true) { |db| assert_equal 62, db.committed_size }
-      refute input.closed?
+      refute_predicate input, :closed?
     ensure
       captured&.close(discard: true)
     end
@@ -443,14 +462,17 @@ class ReplicationTest < Minitest::Test
       reader = Thread.new { source.read_committed(0, 87, output) }
       entered.pop
       source.transaction { |root| root.replace(Core::Slot.uint(9)) }
+
       assert_equal 112, source.committed_size
       closer = Thread.new { source.close }
       Thread.pass until closer.status == "sleep"
-      refute source.closed?
+
+      refute_predicate source, :closed?
       release << true
       reader.value
       closer.value
-      assert source.closed?
+
+      assert_predicate source, :closed?
       assert_equal image(FIRST), output.string
       assert_raises(XitDB::ClosedError) { source.replica_state }
       assert_raises(XitDB::ClosedError) { source.read_committed(0, 87, StringIO.new) }
@@ -475,6 +497,7 @@ class ReplicationTest < Minitest::Test
         rescue StandardError
           $ERROR_INFO
         end.value
+
         assert_instance_of XitDB::BusyError, error
         assert_raises(XitDB::TransactionStateError) { first.apply_replicated(87, StringIO.new(SECOND), 25) }
       end
@@ -503,6 +526,7 @@ class ReplicationTest < Minitest::Test
         super(bytes)
       end
       source.read_committed(0, source.committed_size, output)
+
       assert_operator writes.max, :<=, 65_536
       output.rewind
       reads = []
@@ -511,12 +535,14 @@ class ReplicationTest < Minitest::Test
         super([length, 997].min)
       end
       copy = Core::Database.copy_replica(to: File.join(dir, "copy"), source_io: output, length: output.size)
+
       assert_operator reads.max, :<=, 65_536
       assert_equal "rb01", copy.header.hash_id
       assert_equal payload, copy.root_cursor.read_bytes.bytes
       assert_equal "\xff\x00".b, copy.root_cursor.read_bytes.format_tag
       assert_equal source.replica_state, copy.replica_state
       compacted = source.compact(to: File.join(dir, "compacted"))
+
       assert_equal 0, source.replication_start(compacted.replica_state)
       assert_equal payload, compacted.root_cursor.read_bytes.bytes
     ensure

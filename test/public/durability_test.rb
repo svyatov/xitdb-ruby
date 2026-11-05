@@ -36,7 +36,7 @@ class PublicDurabilityTest < Minitest::Test
     assert_equal :not_committed, error.outcome
     assert_same fault, error.cause
     assert_equal 1, invocations
-    refute @database.core.needs_reopen?
+    refute_predicate @database.core, :needs_reopen?
     assert_equal 0, @database.snapshot["counter"]
     assert_equal 1, @database.history.size
     assert_equal 2, @database.transaction { |root| root["counter"] = 2 }["counter"]
@@ -55,11 +55,12 @@ class PublicDurabilityTest < Minitest::Test
     assert_equal :unknown, error.outcome
     assert_same fault, error.cause
     assert_equal 1, invocations
-    assert @database.core.needs_reopen?
+    assert_predicate @database.core, :needs_reopen?
     assert_raises(XitDB::TransactionStateError) { @database.transaction { flunk "uncertain handle entered callback" } }
     # Visibility after failed fsync does not establish durability.
     assert_equal 1, @database.snapshot["counter"]
     @database.close
+
     assert_reopened_counter(1)
   end
 
@@ -75,12 +76,14 @@ class PublicDurabilityTest < Minitest::Test
       @database.transaction { |root| root["counter"] = 1 }
     end
     assert_equal :unknown, error.outcome
-    assert @database.core.needs_reopen?
+    assert_predicate @database.core, :needs_reopen?
     @store.fault = nil
     @database.close
     reopened = XitDB.open(@path)
+
     assert_equal 0, reopened.snapshot["counter"]
     reopened.transaction { |root| root["counter"] = 2 }
+
     assert_equal reopened.core.committed_size, File.size(@path)
   ensure
     reopened&.close
@@ -99,10 +102,11 @@ class PublicDurabilityTest < Minitest::Test
     assert_equal :committed, error.outcome
     assert_same fault, error.cause
     assert_equal 1, invocations
-    assert @database.core.needs_reopen?
+    assert_predicate @database.core, :needs_reopen?
     assert_raises(XitDB::TransactionStateError) { @database.transaction { flunk "failed handle entered callback" } }
     @store.release_fault = nil
     @database.close
+
     assert_reopened_counter(1)
   end
 
@@ -136,15 +140,18 @@ class PublicDurabilityTest < Minitest::Test
       exit! 2
     end
     writer.close
+
     assert_equal "s", Timeout.timeout(5) { reader.read(1) }
     Process.kill("KILL", pid)
     _, status = Timeout.timeout(5) { Process.wait2(pid) }
     pid = nil
-    assert status.signaled?
+
+    assert_predicate status, :signaled?
     XitDB.open(@path) do |reopened|
       assert_equal 0, reopened.snapshot["counter"]
       assert_equal 1, reopened.history.size
       reopened.transaction { |root| root["counter"] = 2 }
+
       assert_equal 2, reopened.snapshot["counter"]
       assert_equal reopened.core.committed_size, File.size(@path)
     end
@@ -165,8 +172,9 @@ class PublicDurabilityTest < Minitest::Test
   end
 
   def test_failed_owned_initialization_and_compaction_release_persistent_write_failures
+    failure_cases = [[:open, 2], [:compact, 2], [:compact, 4]]
     [XitDB::Core::Database, XitDB, XitDB::Ruby].each do |api|
-      [[:open, 2], [:compact, 2], [:compact, 4]].each do |operation, failed_sync|
+      failure_cases.each do |operation, failed_sync|
         path = File.join(@directory, "failed-#{api.name}-#{operation}-#{failed_sync}")
         failure = Errno::ENOSPC.new("persistent root write failure")
         captured = physical = source = before = nil
@@ -214,8 +222,8 @@ class PublicDurabilityTest < Minitest::Test
           end
           assert_equal :unknown, error.outcome
           assert_same failure, error.cause
-          assert captured.closed?, "unreturned store remains open: #{api} sync #{failed_sync}"
-          assert captured.instance_variable_get(:@file).closed?
+          assert_predicate captured, :closed?, "unreturned store remains open: #{api} sync #{failed_sync}"
+          assert_predicate captured.instance_variable_get(:@file), :closed?
           refute XitDB::Core::FileStore.const_get(:WRITERS).key?(captured.storage_identity)
           assert_equal physical, File.binread(path)
           if source
@@ -238,6 +246,7 @@ class PublicDurabilityTest < Minitest::Test
       path = File.join(@directory, "sync-#{api.name}-#{operation}")
       with_file_syncs do |events, files|
         output = create_output(api, operation, path)
+
         assert_equal %i[file directory], events.first(2), "#{api} #{operation}"
         assert_equal 1, events.count(:directory)
         assert(files.select { |_file, _, directory| directory }.all? { |file, _, _| file.closed? })
@@ -248,16 +257,19 @@ class PublicDurabilityTest < Minitest::Test
       with_file_syncs do |events, _files|
         api.open(path) do |db|
           db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(2)) : root["value"] = 2 }
+
           assert_equal %i[file directory file], events
           events.clear
           db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(3)) : root["value"] = 3 }
         end
+
         assert_equal %i[file file], events
       end
     end
   end
 
   def test_directory_sync_failure_preserves_outcome_and_releases_owned_files
+    empty_output_operations = %i[compact convert]
     durable_output_cases.each do |api, operation|
       path = File.join(@directory, "directory-failure-#{api.name}-#{operation}")
       failure = IOError.new("directory fsync failed")
@@ -270,8 +282,8 @@ class PublicDurabilityTest < Minitest::Test
         files.reject { |_, _, directory| directory }.each do |_, identity, _|
           refute XitDB::Core::FileStore.const_get(:WRITERS).key?(identity)
         end
-        assert File.exist?(path)
-        assert_equal 0, File.size(path) if %i[compact convert].include?(operation)
+        assert_path_exists path
+        assert_equal 0, File.size(path) if empty_output_operations.include?(operation)
       end
     end
   end
@@ -303,9 +315,11 @@ class PublicDurabilityTest < Minitest::Test
         assert_empty events
         assert_equal 1, db.root_cursor.slot.value
         db.transaction { |root| root.replace(XitDB::Core::Slot.uint(2)) }
+
         assert_equal %i[file directory file], events
         events.clear
         db.transaction { |root| root.replace(XitDB::Core::Slot.uint(3)) }
+
         assert_equal %i[file file], events
       end
     end
@@ -328,7 +342,7 @@ class PublicDurabilityTest < Minitest::Test
         assert_same failure, error.cause
         assert_equal 1, calls
         assert_equal %i[file directory], events
-        refute db.core.needs_reopen?
+        refute_predicate db.core, :needs_reopen?
         assert_equal 0, db.snapshot["counter"]
         assert_equal original, File.binread(@path)
       end
@@ -356,11 +370,14 @@ class PublicDurabilityTest < Minitest::Test
                  else
                    in_process(&initialize_and_commit)
                  end
+
       assert_equal %i[file directory file file file], observed, cooperation.to_s
       before = File.binread(path)
       creator = XitDB::Core::Database.new(store: created)
+
       assert_equal 7, creator.root_cursor.slot.value
       creator.close
+
       assert_equal before, File.binread(path)
       refute XitDB::Core::FileStore.const_get(:WRITERS).key?(created.storage_identity)
     ensure
@@ -385,7 +402,8 @@ class PublicDurabilityTest < Minitest::Test
     result = Timeout.timeout(5) { Marshal.load(reader) } # rubocop:disable Security/MarshalLoad -- The private pipe contains only our forked child's result.
     _, status = Timeout.timeout(5) { Process.wait2(pid) }
     pid = nil
-    assert status.success?
+
+    assert_predicate status, :success?
     assert_equal :ok, result.first, result.inspect
     result.last
   ensure

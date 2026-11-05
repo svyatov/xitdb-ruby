@@ -33,6 +33,7 @@ class PortableProfileTest < Minitest::Test
      [0, :int, 0], [(2**63) - 1, :int, 0x7fffffffffffffff],
      [2**63, :uint, 0x8000000000000000], [(2**64) - 1, :uint, 0xffffffffffffffff]].each do |value, tag, bits|
       slot = encode(value)
+
       assert_equal tag, slot.tag
       assert_equal bits, slot.value
       assert_equal value, profile.decode_scalar(slot, core: @core)
@@ -40,7 +41,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(RangeError) { encode(-(2**63) - 1) }
     assert_equal :uint, encode(XitDB.uint(1)).tag
     assert_equal 1, profile.decode_scalar(encode(XitDB.uint(1)), core: @core)
-    assert XitDB.uint(0).frozen?
+    assert_predicate XitDB.uint(0), :frozen?
     assert_raises(RangeError) { XitDB.uint(-1) }
     assert_raises(RangeError) { XitDB.uint(2**64) }
     assert_raises(TypeError) { XitDB.uint(1.0) }
@@ -59,11 +60,12 @@ class PortableProfileTest < Minitest::Test
     [[1.5, 0x3ff8000000000000], [-0.0, 0x8000000000000000],
      [Float::INFINITY, 0x7ff0000000000000], [-Float::INFINITY, 0xfff0000000000000]].each do |value, bits|
       slot = encode(value)
+
       assert_equal :float, slot.tag
       assert_equal bits, slot.value
       assert_equal bits, [profile.decode_scalar(slot, core: @core)].pack("G").unpack1("Q>")
     end
-    assert profile.decode_scalar(encode(Float::NAN), core: @core).nan?
+    assert_predicate profile.decode_scalar(encode(Float::NAN), core: @core), :nan?
   end
 
   def test_string_bytes_determine_read_encoding
@@ -71,19 +73,23 @@ class PortableProfileTest < Minitest::Test
      ["\xc3".b, Encoding::BINARY], ["\0abcdefgh".b, Encoding::UTF_8], ["", Encoding::UTF_8]].each do |input, encoding|
       @core.transaction { |root| root.replace(encode(input)) }
       value = profile.decode_scalar(@core.root_cursor.slot, core: @core)
+
       assert_equal input.b, value.b
       assert_equal encoding, value.encoding
-      assert value.frozen?
+      assert_predicate value, :frozen?
       assert_raises(FrozenError) { value << "x" }
       mutable = profile.decode_scalar(@core.root_cursor.slot, core: @core, immutable: false)
       mutable << "x"
+
       assert_equal input.b, profile.decode_scalar(@core.root_cursor.slot, core: @core).b
     end
     latin1 = "\xe9".b.force_encoding("ISO-8859-1")
+
     assert_equal "\xe9".b, profile.key_bytes(latin1)
     source = +"key"
     key = profile.key_bytes(source)
     source.replace("changed")
+
     assert_equal "key".b, key
     assert_equal Encoding::BINARY, key.encoding
   end
@@ -96,9 +102,10 @@ class PortableProfileTest < Minitest::Test
     tag.clear
     @core.transaction { |root| root.replace(encode(declaration)) }
     decoded = profile.decode_scalar(@core.root_cursor.slot, core: @core, immutable: false)
+
     assert_equal "\0opaque bytes".b, decoded.bytes
     assert_equal "\xff\0".b, decoded.format_tag
-    assert decoded.frozen?
+    assert_predicate decoded, :frozen?
     assert_raises(FrozenError) { decoded.bytes.clear }
     assert_raises(FrozenError) { decoded.format_tag.clear }
     assert_raises(ArgumentError) { XitDB.bytes("data", format_tag: "bad") }
@@ -125,7 +132,7 @@ class PortableProfileTest < Minitest::Test
     declarations.each do |declaration, kind, counted|
       assert_equal kind, declaration.kind
       assert_equal counted, declaration.counted?
-      assert declaration.frozen?
+      assert_predicate declaration, :frozen?
       assert_raises(XitDB::UnsupportedValueError) { encode(declaration) }
     end
     assert_raises(ArgumentError) { XitDB.map(counted: 1) }
@@ -143,10 +150,11 @@ class PortableProfileTest < Minitest::Test
       assert_equal id.b, hasher.id
       assert_equal width, hasher.size
       assert_equal hex, hasher.digest("abc").unpack1("H*")
-      assert hasher.frozen?
+      assert_predicate hasher, :frozen?
     end
     assert_equal "sha1".b, profile.hasher.id
     custom = Core::Hasher.sha256
+
     assert_same custom, XitDB::Profiles::Portable.new(hasher: custom).hasher
     assert_raises(TypeError) { XitDB::Profiles::Portable.new(hasher: :sha1) }
   end
@@ -156,12 +164,14 @@ class PortableProfileTest < Minitest::Test
     result = +"12"
     hasher = Core::Hasher.new(id: id, size: 2) { |bytes| bytes == "abc".b ? result : "x" }
     id.clear
+
     assert_equal "test".b, hasher.id
     digest = hasher.digest("abc")
     result.clear
+
     assert_equal "12".b, digest
     assert_equal Encoding::BINARY, digest.encoding
-    assert digest.frozen?
+    assert_predicate digest, :frozen?
     assert_raises(FrozenError) { hasher.id.clear }
     assert_raises(ArgumentError) { hasher.digest("different") }
     assert_raises(TypeError) { hasher.digest(1) }

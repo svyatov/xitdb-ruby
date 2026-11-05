@@ -14,6 +14,7 @@ class SelectorProtocolTest < Minitest::Test
       database.transaction do |root|
         root.write_bytes(Key.new("blob")) { |writer| writer.write("ok") }
       end
+
       assert_equal "ok", database.snapshot["blob"]
     end
   end
@@ -25,6 +26,7 @@ class SelectorProtocolTest < Minitest::Test
         database.transaction do |root|
           root.context.copy_from(source.snapshot, at: [Key.new("copy")])
         end
+
         assert_equal({ "x" => 1 }, database.snapshot["copy"].to_ruby)
       end
     end
@@ -39,6 +41,7 @@ class SelectorProtocolTest < Minitest::Test
             role == :key ? Key.new(value) : value
           })
         end
+
         assert_equal({ "x" => 1 }, database.snapshot["copy"].to_ruby)
       end
     end

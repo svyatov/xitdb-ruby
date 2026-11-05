@@ -10,6 +10,7 @@ class ReferenceTest < Minitest::Test
     %w[go typescript java zig].each do |reference|
       with_reference(reference) do
         path = File.join(Interop::ROOT, "test/fixtures/interop", reference, "all-kinds.xit")
+
         assert File.file?(path), "missing independent #{reference} all-kinds fixture"
         assert_equal expected_values(reference), read_reference_fixture(reference, "all-kinds")
         assert_reference_reads_ruby_file(reference, "all-kinds")
@@ -18,17 +19,20 @@ class ReferenceTest < Minitest::Test
     end
   end
 
+  source_states = %w[missing empty]
   %w[read compact replicate].each do |operation|
-    %w[missing empty].each do |state|
+    source_states.each do |state|
       define_method("test_typescript_#{operation}_rejects_#{state}_source_unchanged") do
         with_reference("typescript") do
           path = File.join(@directory, "source.xit")
           File.binwrite(path, "") if state == "empty"
           output, error, status = typescript_request(operation, path)
+
           assert_equal state == "empty", File.exist?(path), error
           assert_equal "", File.binread(path) if state == "empty"
+
           assert_empty Dir.glob("#{path}.*"), error
-          refute status.success?, "#{operation} accepted #{state} source: #{output}"
+          refute_predicate status, :success?, "#{operation} accepted #{state} source: #{output}"
           assert_empty output
         end
       end
@@ -39,9 +43,10 @@ class ReferenceTest < Minitest::Test
     with_reference("typescript") do
       path = File.join(@directory, "source.xit")
       output, error, status = typescript_request("destroy", path)
-      refute File.exist?(path)
+
+      refute_path_exists path
       assert_empty Dir.glob("#{path}.*")
-      refute status.success?
+      refute_predicate status, :success?
       assert_empty output
       assert_match(/unsupported operation/, error)
     end
@@ -53,8 +58,10 @@ class ReferenceTest < Minitest::Test
       Interop.write_tree(path)
       original = File.binread(path)
       File.chmod(0o444, path)
+
       assert_equal Interop.expected_tree(linked_hole: true), @invoke.call("read", "all-kinds", path).fetch("tree")
       Interop.check_maintenance(@invoke, path, Interop.expected_tree(linked_hole: true))
+
       assert_equal original, File.binread(path)
       assert_equal 0o444, File.stat(path).mode & 0o777
     end

@@ -18,10 +18,12 @@ class SortedMapTest < Minitest::Test
       header = tx.append([1, leaf].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :sorted_map, value: header))
       map = Core::SortedMap.new(root)
+
       assert_equal 7, map.get("a").value
       map.put("b", value: Core::Slot.uint(8))
       leaf_pointer = db_read(root, root.slot.value + 8, 8).unpack1("Q>")
       stored = Core::Slot.parse(db_read(root, leaf_pointer + 11, 9))
+
       assert_equal "6200000000000000", db_read(root, stored.value + 1, 8).unpack1("H*")
       assert_equal Core::Slot.uint(8), Core::Slot.parse(db_read(root, stored.value + 9, 9))
     end
@@ -31,10 +33,12 @@ class SortedMapTest < Minitest::Test
     Core::Database.memory.transaction do |root|
       index = Core::SortedMap.new(root)
       %w[c a b].each_with_index { |key, i| index.put(key, value: Core::Slot.uint(i)) }
+
       assert_equal 1, index.rank("b")
       assert_equal %w[b c], index.each_from("b").map(&:first)
       assert_equal "c", index.at(-1).first
       ["", "\0", "a\0", "é", "\xff".b].each { |key| index.put(key, value: Core::Slot.null) }
+
       assert_equal ["", "\0", "a", "a\0", "b", "c", "é".b, "\xff".b], index.map(&:first)
       assert_equal 4, index.rank("az")
       assert_equal ["b", "c", "é".b, "\xff".b], index.each_from("az").map(&:first)
@@ -48,30 +52,34 @@ class SortedMapTest < Minitest::Test
     Core::Database.memory.transaction do |root|
       set = Core::SortedSet.new(root)
       ["", "a\0", "é", "long-key-with-bytes"].each { |key| set.add(key) }
+
       assert_equal :sorted_set, root.slot.tag
       assert_equal 4, set.size
-      assert set.include?("é".b)
-      assert set.get("é").empty?
+      assert_includes set, "é".b
+      assert_empty set.get("é")
       set.add("é".b)
+
       assert_equal 4, set.size
       map = Core::SortedMap.new(root)
       map.put("é", value: Core::Slot.uint(7))
       set.add("é")
+
       assert_equal 7, map.get("é".b).value
       assert map.remove("a\0")
       refute map.remove("a\0")
       assert_equal 3, map.size
-      refute map.include?("a\0")
+      refute_includes map, "a\0"
     end
   end
 
   def test_seeded_edits_counts_empty_leaves_and_old_roots
     db = Core::Database.memory
-    keys = 513.times.map { |i| format("k%04d", i) }
+    keys = Array.new(513) { |i| format("k%04d", i) }
     db.transaction do |root|
       map = Core::SortedMap.new(root)
       keys.shuffle(random: Random.new(8)).each_with_index do |key, i|
         map.put(key, value: Core::Slot.uint(key.delete_prefix("k").to_i))
+
         assert_equal i + 1, map.size
       end
     end
@@ -83,11 +91,14 @@ class SortedMapTest < Minitest::Test
         assert_equal 512 - i, map.size
         assert_equal 0, map.rank(key) if i == 512
       end
+
       assert_empty map.to_a
       keys.reverse_each { |key| map.put(key, value: Core::Slot.uint(99)) }
+
       assert_equal keys, map.map(&:first)
       keys.each_with_index { |key, i| assert_equal i, map.rank(key) }
     end
+
     assert_equal 513, old.size
     assert_equal 512, old.at(-1).last.value
   end
@@ -103,15 +114,18 @@ class SortedMapTest < Minitest::Test
       child = map.cursor_at("b", create: true)
       list = Core::ArrayList.new(child)
       list.append(Core::Slot.uint(1))
+
       assert_same child, map_cursor.child(kind: :sorted_map, selector: "b")
       map.put("a", value: Core::Slot.uint(2))
       root.transaction.freeze
       list.append(Core::Slot.uint(3))
+
       assert_equal [1, 3], Core::ArrayList.new(child).map(&:value)
       checkpoint = root.transaction.checkpoint
       map.remove("b")
       assert_raises(XitDB::ExpiredViewError) { child.slot }
       root.transaction.restore(checkpoint)
+
       assert_equal 2, list.size
       length = root.transaction.length
       store.fault = lambda do |name, _args|
@@ -139,9 +153,11 @@ class SortedMapTest < Minitest::Test
     end
     map = Core::SortedMap.new(db.root_cursor)
     store.events.clear
+
     assert_equal([4095, 4096], map.each_from("00004095").map { |_key, slot| slot.value })
     assert_operator store.events.count { |name, _| name == :read_at }, :<, 100
     store.events.clear
+
     assert_equal([4095, 4096], map.each_from_index(4095).map { |_key, slot| slot.value })
     assert_operator store.events.count { |name, _| name == :read_at }, :<, 30
   end
@@ -158,17 +174,20 @@ class SortedMapTest < Minitest::Test
       retained = nested.cursor
       root.transaction.freeze
       nested.add("b")
+
       assert_equal %w[a b], nested.map(&:first)
       assert_equal 1, map.size
       assert_same nested.cursor, map.cursor_at("hash").child(kind: :hash_map, selector: key)
       nested.add("c")
       transient = WeakRef.new(nested.cursor_at("c"))
       3.times { GC.start }
-      refute transient.weakref_alive?
+
+      refute_predicate transient, :weakref_alive?
     end
     assert_raises(XitDB::ExpiredViewError) { retained.slot }
     reader = Core::SortedMap.new(db.root_cursor)
     nested_cursor = Core::HashMap.new(reader.cursor_at("hash")).cursor_at("\x01" * 20)
+
     assert_equal %w[a b c], Core::SortedSet.new(nested_cursor).map(&:first)
   end
 
@@ -205,17 +224,19 @@ class SortedMapTest < Minitest::Test
         Core::Database.open(path) { |db| db.transaction { |root| klass.new(root) } }
         Core::Database.open(path, readonly: true) do |db|
           map = klass.new(db.root_cursor)
+
           assert_equal 0, map.size
-          refute db.root_cursor.slot.empty?
+          refute_empty db.root_cursor.slot
           assert_raises(XitDB::ReadOnlyError) { map.remove("missing") }
           assert_raises(XitDB::ReadOnlyError) { map.put("a", value: Core::Slot.uint(1)) }
         end
       end
     end
     db = Core::Database.memory
+
     assert_nil db.root_cursor.child(kind: :sorted_map, selector: "a")
     assert_equal 0, Core::SortedMap.new(db.root_cursor).size
-    assert db.root_cursor.slot.empty?
+    assert_empty db.root_cursor.slot
     db.transaction do |root|
       map = Core::SortedMap.new(root)
       length = root.transaction.length

@@ -161,7 +161,7 @@ module XitDB
         replacement = Slot.new
         path.reverse_each do |old_pointer, block, index|
           block[index * Slot::SIZE, Slot::SIZE] = replacement.to_bytes
-          entries = 16.times.map { |i| parse_slot(Format.slice(block, i * Slot::SIZE, Slot::SIZE)) }.reject(&:empty?)
+          entries = Array.new(16) { |i| parse_slot(Format.slice(block, i * Slot::SIZE, Slot::SIZE)) }.reject(&:empty?)
           if collapsible?(old_pointer, start, entries)
             replacement = entries.first || Slot.new
           else

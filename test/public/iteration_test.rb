@@ -30,6 +30,7 @@ class PublicIterationTest < Minitest::Test
         prefix << 4
         current = items[2]["child"]
         current << 6
+
         assert_equal [[0, 4], [9], { "child" => [1, 6] }, [2]], items.to_ruby
         items.delete_at(1)
         assert_raises(XitDB::ExpiredViewError) { current.size }
@@ -62,11 +63,13 @@ class PublicIterationTest < Minitest::Test
         root["items"] = declaration
         items = root["items"].merge!({ "a" => [1], "b" => [2], "c" => [3] })
         items.each_value { |child| child << 4 }
+
         assert_equal [[1, 4], [2, 4], [3, 4]], items.values.map(&:to_ruby).sort
         order = items.keys
         iterator = items.each_value
         iterator.next
         items[order[1]] = [9]
+
         assert_equal [9], iterator.next.to_ruby
         items.delete(order[2])
         assert_raises(XitDB::ConcurrentModificationError) { iterator.next }
@@ -80,6 +83,7 @@ class PublicIterationTest < Minitest::Test
     before = retained_context_bytes(items.context)
     items.each(&:size)
     GC.start
+
     assert_operator retained_context_bytes(items.context) - before, :<, 4096
   end
 
@@ -101,6 +105,7 @@ class PublicIterationTest < Minitest::Test
 
               original.call(offset, length)
             end
+
             assert_equal %w[a b], items.keys.sort
             assert_equal %w[a b], items.each_key.to_a.sort
             iterator = items.each_key
@@ -131,6 +136,7 @@ class PublicIterationTest < Minitest::Test
       items.each(&:size)
       GC.start
       items << [2]
+
       assert_operator retained_context_bytes(items.context) - before, :<, 4096
     end
   end
@@ -174,6 +180,7 @@ class PublicIterationTest < Minitest::Test
         iterator = items.each
         first = iterator.next
         items.add(first).delete("missing")
+
         assert_kind_of String, iterator.next
         items.add("d")
         assert_raises(XitDB::ConcurrentModificationError) { iterator.next }

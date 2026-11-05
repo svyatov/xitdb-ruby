@@ -248,12 +248,14 @@ module XitDB
     def copy_location(at)
       # @type var location: path
       location = []
+      set_kinds = %i[set sorted_set]
+      array_kinds = %i[array linked_array]
       at.each_with_index do |selector, index|
         adapter = profile.container(resolve(location), context: self, path: location)
         raise TypeError, "copy parent must be a collection" unless adapter
-        raise TypeError, "cannot assign a collection to a set member" if %i[set sorted_set].include?(adapter.kind)
+        raise TypeError, "cannot assign a collection to a set member" if set_kinds.include?(adapter.kind)
 
-        selector = copy_array_position(selector, adapter.size) if %i[array linked_array].include?(adapter.kind)
+        selector = copy_array_position(selector, adapter.size) if array_kinds.include?(adapter.kind)
         adapter.lookup(selector)
         location << case selector
                     when Time then selector.dup.freeze

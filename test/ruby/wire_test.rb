@@ -16,6 +16,7 @@ class RubyWireTest < RubyProfileTest
         assert_equal hex, Wire.public_send(method, value).unpack1("H*")
         reader = Wire::Reader.new([hex].pack("H*"))
         expected = method == :t ? value.encode("UTF-8") : value
+
         assert_equal expected, reader.public_send(method)
         reader.finish!
       end

@@ -22,6 +22,7 @@ module ReferenceHelpers
     path = File.join(directory, "#{name}.xit")
     provenance = JSON.parse(File.read(File.join(directory, "provenance.json")))
     pin = Interop::MANIFEST.fetch("references").fetch(reference)
+
     assert_equal pin.fetch("revision"), provenance.fetch("revision")
     assert_equal pin.fetch("source_sha256"), provenance.fetch("source_sha256")
     assert_equal Digest::SHA256.file(path).hexdigest, provenance.fetch("fixture_sha256")
@@ -29,6 +30,7 @@ module ReferenceHelpers
                  provenance["generator_sha256"]
     adapter = { "go" => "main.go", "typescript" => "main.ts", "java" => "Main.java",
                 "zig" => "main.zig" }.fetch(reference)
+
     assert_equal Digest::SHA256.file(File.join(Interop::ROOT, "test/interop", reference, adapter)).hexdigest,
                  provenance.fetch("adapter_sha256")
     assert_equal Digest::SHA256.file(File.join(Interop::ROOT, "test/interop/manifest.json")).hexdigest,
@@ -43,6 +45,7 @@ module ReferenceHelpers
     path = File.join(@directory, "ruby.xit")
     Interop.write_tree(path)
     result = @invoke.call("read", name, path)
+
     assert_equal Interop.expected_tree(linked_hole: true), result.fetch("tree")
     Interop.assert_reference_result(reference, result, linked_hole: true)
   end
@@ -51,6 +54,7 @@ module ReferenceHelpers
     Interop.check_maintenance(@invoke, File.join(@directory, "ruby.xit"), Interop.expected_tree(linked_hole: true))
     path = File.join(@directory, "reference.xit")
     Interop.assert_reference_result(reference, @invoke.call("write", name, path))
+
     assert_equal expected_values(reference), Interop.read_tree(path)
     Interop.check_maintenance(@invoke, path, expected_values(reference))
     Interop.check_opaque(@invoke, @directory)

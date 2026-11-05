@@ -20,6 +20,7 @@ class PublicDatabaseTest < Minitest::Test
     @db.transaction { |root| root["visits"] = 0 }
     before = @db.snapshot
     after = @db.transaction { |root| root["visits"] += 1 }
+
     assert_equal [0, 1], [before["visits"], after["visits"]]
     assert_equal 0, @db.revert(before)["visits"]
     assert_equal([0, 1, 0], @db.history.map { |snapshot| snapshot["visits"] })
@@ -27,8 +28,9 @@ class PublicDatabaseTest < Minitest::Test
     assert_nil @db.history[3]
     assert_raises(IndexError) { @db.history.fetch(-4) }
     assert_equal 0, @db.snapshot(revision: before.revision)["visits"]
-    assert before.revision.frozen?
+    assert_predicate before.revision, :frozen?
     size = @db.history.size
+
     assert_equal 0, @db.transaction { |_root| next 42 }["visits"]
     assert_equal size, @db.history.size
     assert_equal(:exit, @db.transaction do |root|
@@ -43,6 +45,7 @@ class PublicDatabaseTest < Minitest::Test
     }
     assert_equal :returned, return_from_transaction
     failure = RuntimeError.new("application error")
+
     assert_same failure, assert_raises(RuntimeError) {
       @db.transaction { |root|
         root["visits"] = 9
@@ -57,6 +60,7 @@ class PublicDatabaseTest < Minitest::Test
     snapshot = @db.transaction do |root|
       root["profile"] = { "name" => "Ada", "visits" => 0 }
       root["nil"] = nil
+
       assert root.key?("nil")
       assert_nil root["missing"]
       assert_equal :default, root.fetch("missing", :default)
@@ -65,19 +69,22 @@ class PublicDatabaseTest < Minitest::Test
       assert_nil root.dig("missing", "child")
       assert_raises(TypeError) { root.dig("profile", "visits", "child") }
       root["profile"].merge!({ "visits" => 1, "city" => "Paris" })
+
       assert_equal "Paris", root["profile"].delete("city")
       assert_equal "absent", root.delete("absent") { |key| key }
       root["temporary"] = { "a" => 1 }
       root["temporary"].clear
     end
+
     assert_equal "Ada", snapshot.dig("profile", "name")
     assert_equal %w[nil profile temporary], snapshot.keys.sort
     assert_equal snapshot.keys, snapshot.each_key.to_a
     assert_equal snapshot.values, snapshot.each_value.to_a
     assert_equal 3, snapshot.size
-    assert snapshot["profile"]["name"].frozen?
+    assert_predicate snapshot["profile"]["name"], :frozen?
     ruby = snapshot.to_ruby
     ruby["profile"]["name"] << " Smith"
+
     assert_equal "Ada", snapshot.dig("profile", "name")
     assert_equal({ "profile" => { "name" => "Ada", "visits" => 1 }, "nil" => nil, "temporary" => {} }, snapshot.to_ruby)
     assert_raises(XitDB::ReadOnlyError) { snapshot["a"] = 1 }
@@ -90,10 +97,12 @@ class PublicDatabaseTest < Minitest::Test
       root["data"] = input
       input["name"].replace("Changed")
       input["nested"] << 3
+
       assert_equal "Ada", root.dig("data", "name")
       assert_equal [1, { "x" => 2 }], root["data"]["nested"].to_ruby
       root["copy"] = root["data"]
       root["data"]["name"] = "New"
+
       assert_equal "Ada", root.dig("copy", "name")
       old = root.to_ruby
       bad = [Hash.new(1), Hash.new { 1 }, {}.compare_by_identity, true, :symbol, Object.new]
@@ -107,6 +116,7 @@ class PublicDatabaseTest < Minitest::Test
       assert_equal ["cycle", 0], error.path
       assert_equal old, root.to_ruby
       duplicate = { "é" => 1, "é".b => 2 }
+
       assert_equal 2, duplicate.size
       assert_raises(XitDB::KeyCollisionError) { root["collision"] = duplicate }
       assert_raises(XitDB::KeyCollisionError) { root.merge!(duplicate) }
@@ -122,6 +132,7 @@ class PublicDatabaseTest < Minitest::Test
   def test_assigning_a_virtual_empty_snapshot_captures_an_empty_map
     empty = @db.snapshot
     snapshot = @db.transaction { |root| root["copy"] = empty }
+
     assert_equal({}, snapshot["copy"].to_ruby)
     assert_empty empty
   end
@@ -134,9 +145,11 @@ class PublicDatabaseTest < Minitest::Test
       expired = root
       child = root["child"]
       child["value"] = 2
+
       assert_equal 2, child["value"]
       assert_equal 1, @db.snapshot.dig("child", "value")
       root["unrelated"] = 3
+
       assert_equal 2, child["value"]
       root["child"] = { "value" => 4 }
       assert_raises(XitDB::ExpiredViewError) { child["value"] }
@@ -147,6 +160,7 @@ class PublicDatabaseTest < Minitest::Test
       rescue StandardError
         $ERROR_INFO
       end.value
+
       assert_instance_of XitDB::TransactionStateError, error
     end
     assert_raises(XitDB::ExpiredViewError) { expired.size }
@@ -157,8 +171,10 @@ class PublicDatabaseTest < Minitest::Test
 
   def test_iterators_detect_membership_changes_but_allow_value_edits
     @db.transaction do |root|
-      root.merge!({ "a" => { "n" => 1 }, "b" => { "n" => 2 } })
+      initial_values = { "a" => { "n" => 1 }, "b" => { "n" => 2 } }
+      root.merge!(initial_values)
       root.each_value { |value| value["n"] += 10 }
+
       assert_equal [11, 12], root.values.map { |value| value["n"] }.sort
       iterator = root.each
       key, = iterator.next
@@ -180,10 +196,12 @@ class PublicDatabaseTest < Minitest::Test
       [XitDB.array, XitDB.linked_array, XitDB.set(counted: true), XitDB.sorted_map,
        XitDB.sorted_set].each_with_index do |declaration, i|
         root[i.to_s] = declaration
-        assert root[i.to_s].empty?
+
+        assert_empty root[i.to_s]
       end
     end
     snapshot = @db.snapshot
+
     assert_equal [1, "two", { "three" => 3 }], snapshot["array"].to_ruby
     assert_equal([1, "two", { "three" => 3 }], snapshot["array"].map { |v| v.respond_to?(:to_ruby) ? v.to_ruby : v })
     assert_equal Set["a", "b"], snapshot["set"].to_ruby
@@ -233,7 +251,7 @@ class PublicDatabaseTest < Minitest::Test
     Dir.mktmpdir do |dir|
       path = File.join(dir, "reserved.xit")
       assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path, hash: hasher) }
-      refute File.exist?(path)
+      refute_path_exists path
     end
   end
 
@@ -251,6 +269,7 @@ class PublicDatabaseTest < Minitest::Test
         assert_empty db.snapshot
         db.transaction { |root| root["created"] = 1 }
       end
+
       XitDB.open(missing_path) { |db| assert_equal 1, db.snapshot["created"] }
       assert_equal 0, File.size(empty_path)
     end
@@ -269,7 +288,7 @@ class PublicDatabaseTest < Minitest::Test
       end
       assert_raises(Errno::ENOENT) { trace.enable { XitDB.open(path) } }
       assert removed
-      refute File.exist?(path)
+      refute_path_exists path
     ensure
       trace&.disable
     end
@@ -302,10 +321,12 @@ class PublicDatabaseTest < Minitest::Test
       second = root["map"]
       child = first["child"]
       first.clear
+
       assert_empty first
       assert_empty second
       assert_raises(XitDB::ExpiredViewError) { child.size }
       second["new"] = 2
+
       assert_equal 2, first["new"]
     end
   end
@@ -327,6 +348,7 @@ class PublicDatabaseTest < Minitest::Test
     @db.transaction { |root| root["deep"] = value }
     materialized = @db.snapshot["deep"].to_ruby
     1100.times { materialized = materialized.first }
+
     assert_equal "leaf", materialized
     @db.core.transaction do |history_cursor|
       tx = history_cursor.transaction
@@ -347,6 +369,7 @@ class PublicDatabaseTest < Minitest::Test
       %i[sha1 sha256 sha384 sha512].each do |algorithm|
         path = File.join(dir, "#{algorithm}.xit")
         XitDB.open(path, hash: algorithm) { |db| db.transaction { |root| root["n"] = 42 } }
+
         XitDB.open(path) { |db| assert_equal 42, db.snapshot["n"] }
       end
       path = File.join(dir, "bad-history.xit")
@@ -361,6 +384,7 @@ class PublicDatabaseTest < Minitest::Test
 
   def test_inspect_is_bounded_without_reading_collection_entries
     @db.transaction { |root| root["x" * 10_000] = { "n" => 1 } }
+
     assert_operator @db.snapshot["x" * 10_000].inspect.bytesize, :<, 300
   end
 
@@ -387,17 +411,19 @@ class PublicDatabaseTest < Minitest::Test
     declarations = [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map,
                     XitDB.set, XitDB.set(counted: true), XitDB.sorted_set,
                     XitDB.array, XitDB.linked_array]
+    positional_kinds = %i[array_list linked_array_list]
     @db.transaction do |root|
       declarations.each_with_index do |declaration, index|
         key = index.to_s
         root[key] = declaration
         view = root[key]
-        positional = %i[array_list linked_array_list].include?(declaration.kind)
+        positional = positional_kinds.include?(declaration.kind)
         first, second = positional ? [0, 1] : %w[a b]
         root.context.mutate([key]) do |cursor|
           adapter = @db.profile.container(cursor.slot, context: root.context, path: [key])
           adapter.assign(first, XitDB::Core::Slot.int(1))
           adapter.assign(second, XitDB::Core::Slot.int(2))
+
           assert_equal 2, adapter.size
           refute_nil adapter.lookup(second)
           assert_equal [first, second], adapter.each_entry.map { |selector, _stored| selector }.sort
@@ -409,6 +435,7 @@ class PublicDatabaseTest < Minitest::Test
                    when :hash_set, :counted_hash_set, :sorted_set then Set["b"]
                    else { "b" => 2 }
                    end
+
         assert_equal expected, view.to_ruby
       end
     end

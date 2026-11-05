@@ -62,14 +62,17 @@ class PublicConcurrencyTest < Minitest::Test
     end
     ready_write.close
     start_read.close
+
     assert_equal "rr", Timeout.timeout(5) { ready_read.read(2) }
     start_write.write("ss")
     @children.dup.each do |pid|
       _, status = Timeout.timeout(10) { Process.wait2(pid) }
       @children.delete(pid)
-      assert status.success?, "writer exited with #{status.inspect}"
+
+      assert_predicate status, :success?, "writer exited with #{status.inspect}"
     end
     reopened = open_database
+
     assert_equal 200, reopened.snapshot["counter"]
   ensure
     [ready_read, ready_write, start_read, start_write].compact.each { |io| io.close unless io.closed? }
@@ -98,6 +101,7 @@ class PublicConcurrencyTest < Minitest::Test
     join(writer)
     callback_invocations_on_success = 0
     waiter.transaction { callback_invocations_on_success += 1 }
+
     assert_equal 1, callback_invocations_on_success
   end
 
@@ -129,10 +133,12 @@ class PublicConcurrencyTest < Minitest::Test
       end
     end
     Timeout.timeout(2) { entered.pop }
+
     assert_equal "old" * 100, Timeout.timeout(2) { snapshot["value"] }
     assert_equal "old" * 100, Timeout.timeout(2) { database.snapshot["value"] }
     release << true
     join(writer)
+
     assert_equal "new" * 100, database.snapshot["value"]
     assert_equal "old" * 100, snapshot["value"]
   end
@@ -161,9 +167,11 @@ class PublicConcurrencyTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { database.snapshot }
     assert_raises(XitDB::ClosedError) { database.transaction { flunk "closing handle entered callback" } }
     release << true
+
     assert_equal "stored" * 100, join(reader)
     join(closer)
-    assert database.closed?
+
+    assert_predicate database, :closed?
     assert_raises(XitDB::ClosedError) { snapshot["value"] }
   end
 
@@ -182,9 +190,11 @@ class PublicConcurrencyTest < Minitest::Test
     closer = in_thread { database.close }
     Timeout.timeout(2) { Thread.pass until closer.status == "sleep" || !closer.alive? }
     release << true
+
     assert_instance_of XitDB::Snapshot, join(writer)
     join(closer)
-    assert database.closed?
+
+    assert_predicate database, :closed?
     assert_equal 1, open_database.snapshot["counter"]
   end
 
@@ -201,7 +211,7 @@ class PublicConcurrencyTest < Minitest::Test
         join(closer)
       end
     end
-    assert database.closed?
+    assert_predicate database, :closed?
   end
 
   def test_logical_reads_finish_before_close
@@ -262,6 +272,7 @@ class PublicConcurrencyTest < Minitest::Test
       release << true
       actual = join(reader)
       join(closer)
+
       assert waiting, "close did not wait for logical read #{index}"
       assert_equal expected, actual
     end
@@ -313,8 +324,9 @@ class PublicConcurrencyTest < Minitest::Test
         view["sorted"] = XitDB.sorted_map
         view["sorted"]["a"] = 1
       end
+
       assert_equal :closed, operation.call(database, root)
-      assert database.closed?
+      assert_predicate database, :closed?
     end
   end
 

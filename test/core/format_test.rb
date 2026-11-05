@@ -5,6 +5,7 @@ require "test_helper"
 class FormatTest < Minitest::Test
   def test_header_and_null_vectors
     header = XitDB::Core::Header.new(file_id: 1, hash_id: "sha1", hash_size: 20)
+
     assert_equal "7869740000010014736861310000000000000001", header.to_bytes.unpack1("H*")
     assert_equal "800000000000000000", XitDB::Core::Slot.new(tag: :none, value: 0, full: true).to_bytes.unpack1("H*")
   end
@@ -18,11 +19,13 @@ class FormatTest < Minitest::Test
   def test_header_parses_without_losing_reserved_bytes_or_unknown_hash_ids
     bytes = ["786974ff00010000800000ff0123456789abcdef"].pack("H*")
     header = XitDB::Core::Header.parse(bytes)
+
     assert_equal 0x0123456789abcdef, header.file_id
     assert_equal "\x80\x00\x00\xff".b, header.hash_id
     assert_equal 0, header.hash_size
     assert_equal bytes, header.to_bytes
     bytes.clear
+
     assert_equal "\x80\x00\x00\xff".b, header.hash_id
     assert_predicate header.hash_id, :frozen?
   end
@@ -52,13 +55,15 @@ class FormatTest < Minitest::Test
 
   def test_null_is_occupied_and_zero_slot_is_empty
     null = XitDB::Core::Slot.null
+
     refute_predicate null, :empty?
     assert_equal "800000000000000000", null.to_bytes.unpack1("H*")
     empty = XitDB::Core::Slot.parse("\0" * 9)
+
     assert_predicate empty, :empty?
     assert_equal :none, empty.tag
     assert_equal 0, empty.value
-    assert_equal false, empty.full
+    assert_same false, empty.full
     refute_predicate XitDB::Core::Slot.uint(0), :empty?
   end
 
@@ -71,8 +76,10 @@ class FormatTest < Minitest::Test
       [:uint, (2**64) - 1, "08ffffffffffffffff"]
     ].each do |kind, value, hex|
       slot = XitDB::Core::Slot.public_send(kind, value)
+
       assert_equal hex, slot.to_bytes.unpack1("H*")
       parsed = XitDB::Core::Slot.parse([hex].pack("H*"))
+
       assert_equal kind, parsed.tag
       assert_equal value & 0xffffffffffffffff, parsed.value
     end
@@ -95,6 +102,7 @@ class FormatTest < Minitest::Test
       assert_equal hex, XitDB::Core::Slot.float(value).to_bytes.unpack1("H*")
     end
     nan = ["0a7ff8000000000042"].pack("H*")
+
     assert_equal nan, XitDB::Core::Slot.parse(nan).to_bytes
     assert_raises(TypeError) { XitDB::Core::Slot.float("1.5") }
   end
@@ -105,13 +113,15 @@ class FormatTest < Minitest::Test
     tags.each_with_index do |tag, code|
       bytes = [code | 0x80, 0x0123456789abcdef].pack("CQ>")
       slot = XitDB::Core::Slot.parse(bytes)
+
       assert_equal tag, slot.tag
-      assert_equal true, slot.full
+      assert_same true, slot.full
       assert_equal bytes, slot.to_bytes
     end
     [17, 127].each do |code|
       bytes = [code | 0x80, 7].pack("CQ>")
       slot = XitDB::Core::Slot.parse(bytes)
+
       assert_equal code, slot.tag
       assert_equal bytes, slot.to_bytes
       refute_predicate slot, :empty?
@@ -141,6 +151,7 @@ class FormatTest < Minitest::Test
     end
     path[0].replace("changed")
     path << "extra"
+
     assert_equal ["profile", "status", 2], error.path
     assert_predicate error.path, :frozen?
     assert_predicate error.path.first, :frozen?
@@ -159,9 +170,11 @@ class FormatTest < Minitest::Test
     assert XitDB.const_defined?(:KeyCollisionError, false), "KeyCollisionError must be available"
     path = [+"records", 1]
     error = XitDB::KeyCollisionError.new("distinct keys have the same bytes", path: path)
+
     assert_kind_of XitDB::ValueError, error
     path.first.replace("changed")
     path << "extra"
+
     assert_equal ["records", 1], error.path
     assert_predicate error.path, :frozen?
     assert_predicate error.path.first, :frozen?

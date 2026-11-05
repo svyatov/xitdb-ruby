@@ -20,11 +20,12 @@ class RubyCodecTest < Minitest::Test
       original_bytes = "\x01\x0a\x10example/money/v1\x02\x00\xff".b
       XitDB::Ruby.open(path) do |db|
         unknown = db.snapshot[:price]
+
         assert_instance_of XitDB::Ruby::EncodedValue, unknown
         assert_equal "example/money/v1", unknown.codec_id
         assert_equal original_bytes, unknown.bytes
-        assert unknown.frozen?
-        assert unknown.bytes.frozen?
+        assert_predicate unknown, :frozen?
+        assert_predicate unknown.bytes, :frozen?
         db.transaction { |root| root[:copy] = unknown }
       end
       loads = []
@@ -63,6 +64,7 @@ class RubyCodecTest < Minitest::Test
         assert_equal [1], child.to_ruby
         child << 2
       end
+
       assert_equal({ kept: [1, 2] }, db.snapshot.to_ruby)
     end
   end
@@ -78,6 +80,7 @@ class RubyCodecTest < Minitest::Test
         db.transaction do |root|
           root[:items] = declaration
           root[:items]["price"] = Money.new("100")
+
           assert_equal ["price"], root[:items].keys
           assert_equal ["price"], root[:items].each_key.to_a
         end
@@ -97,10 +100,12 @@ class RubyCodecTest < Minitest::Test
         root[:items].push({ name: ["first"] }, { name: ["last"] })
         captured = root[:items][1, 1]
         root[:slice] = Money.new("reference")
+
         assert_equal "first", root.dig(:items, 0, :name, 0)
         assert_equal "last", root.dig(:slice, 0, :name, 0)
         assert_raises(XitDB::ReadOnlyError) { root.dig(:slice, 0, :name) << "changed" }
         root[:items][1][:name][0] = "changed"
+
         assert_equal "last", root.dig(:slice, 0, :name, 0)
       end
       assert_equal "changed", db.snapshot.dig(:items, -1, :name, 0)
@@ -124,7 +129,7 @@ class RubyCodecTest < Minitest::Test
       path = File.join(directory, "rejected.xit")
       registrations.each do |codecs|
         assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.open(path, codecs: codecs) }
-        refute File.exist?(path)
+        refute_path_exists path
       end
     end
   end
@@ -132,6 +137,7 @@ class RubyCodecTest < Minitest::Test
   def test_invalid_basic_object_codec_arguments_raise_configuration_errors
     callback = ->(value) { value }
     invalid = BasicObject.new
+
     [{ type: invalid, dump: callback, load: callback },
      { type: Money, dump: invalid, load: callback },
      { type: Money, dump: callback, load: invalid }].each do |options|
@@ -148,6 +154,7 @@ class RubyCodecTest < Minitest::Test
     def type.is_a?(*) = raise("class type hook ran")
 
     codec = XitDB::Ruby::Codec.new(id: "example/predicate/v1", type: type, dump: callback, load: callback)
+
     assert_equal "bytes", codec.dump(type.new)
     assert_equal "bytes", codec.load("bytes")
   end
@@ -159,7 +166,8 @@ class RubyCodecTest < Minitest::Test
     def inputs.each = raise("must not call each")
     registry = XitDB::Ruby::CodecRegistry.new(inputs)
     inputs.clear
-    assert registry.frozen?
+
+    assert_predicate registry, :frozen?
     assert_same codec, registry.for_value(Money.new("1"))
     assert_same codec, registry.for_id("example/money/v1")
     assert_nil registry.for_value(Class.new(Money).new("1"))
@@ -201,6 +209,7 @@ class RubyCodecTest < Minitest::Test
         root[:parent] = Money.new("1")
         root[:child] = type.new("2")
       end
+
       assert_equal "1", db.snapshot[:parent].amount
       assert_equal "2", db.snapshot[:child].amount
     end
@@ -222,11 +231,12 @@ class RubyCodecTest < Minitest::Test
                                          nil
                                        })
         assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.open(path, codecs: [codec], &:close) }
-        refute File.exist?(path)
+        refute_path_exists path
       ensure
         type.singleton_class.remove_method(:<=)
       end
     end
+
     assert_empty calls
   end
 
@@ -248,9 +258,10 @@ class RubyCodecTest < Minitest::Test
     id = +"example/money/v1"
     codec = XitDB::Ruby::Codec.new(id: id, type: Money, dump: lambda(&:amount), load: ->(v) { Money.new(v) })
     id.replace("changed")
+
     assert_equal "example/money/v1", codec.id
-    assert codec.frozen?
-    assert codec.id.frozen?
+    assert_predicate codec, :frozen?
+    assert_predicate codec.id, :frozen?
   end
 
   def test_invalid_dump_output_and_nonlocal_exit_restore_assignment
@@ -264,11 +275,13 @@ class RubyCodecTest < Minitest::Test
         callback = ->(_value) { 100 }
         assert_raises(XitDB::CodecError) { root[:price] = Money.new("1") }
         callback = ->(_value) { throw :stop, :stopped }
+
         assert_equal :stopped, catch(:stop) { root[:price] = ["temporary" * 20, Money.new("1")] }
         assert_equal before, root.context.root
         assert_equal bound, root.context.read_bound
         callback = ->(value) { value.amount.freeze }
         root[:price] = Money.new("100")
+
         assert_equal "100", root[:price].amount
       end
     end
@@ -285,6 +298,7 @@ class RubyCodecTest < Minitest::Test
         root[:unknown] = XitDB.bytes("\x01\x0a\x10example/money/v2\x01x".b, format_tag: "rb")
         root[:invalid] = XitDB.bytes("\x01\x0a\x10example/money/v1\x01x\x00".b, format_tag: "rb")
       end
+
       assert_instance_of XitDB::Ruby::EncodedValue, db.snapshot[:unknown]
       assert_raises(XitDB::InvalidValueError) { db.snapshot[:invalid] }
       assert_equal 0, calls
@@ -300,8 +314,9 @@ class RubyCodecTest < Minitest::Test
     })
     XitDB::Ruby.memory(codecs: [codec]) do |db|
       db.transaction { |root| root[:value] = type.new }
-      assert db.snapshot[:value].frozen?
-      refute db.snapshot.to_ruby[:value].frozen?
+
+      assert_predicate db.snapshot[:value], :frozen?
+      refute_predicate db.snapshot.to_ruby[:value], :frozen?
     end
   end
 
@@ -322,6 +337,7 @@ class RubyCodecTest < Minitest::Test
       XitDB::Ruby.memory(codecs: [codec]) do |db|
         db.transaction do |root|
           root[:value] = value
+
           assert_instance_of type, root[:value]
           assert_equal 1, calls
           assert_raises(XitDB::UnsupportedValueError) { root[value] = 2 }
@@ -344,16 +360,19 @@ class RubyCodecTest < Minitest::Test
       original.amount.replace("changed")
       first = db.snapshot[:price]
       second = db.snapshot[:price]
-      assert first.frozen?
+
+      assert_predicate first, :frozen?
       refute_same first, second
       assert_equal "100", first.amount
       refute_same payloads[0], payloads[1]
       assert payloads.all?(&:frozen?)
       materialized = db.snapshot.to_ruby[:price]
-      refute materialized.frozen?
+
+      refute_predicate materialized, :frozen?
       materialized.amount.replace("200")
+
       assert_equal "100", db.snapshot[:price].amount
-      refute original.frozen?
+      refute_predicate original, :frozen?
     end
   end
 
@@ -378,6 +397,7 @@ class RubyCodecTest < Minitest::Test
           assert_raises(XitDB::TransactionStateError) { root[:sibling] = 2 }
         }
         root[:price] = Money.new("3")
+
         assert_equal 2, calls
         assert_equal "3", root[:price].amount
         detached[:value] = 4
@@ -386,6 +406,7 @@ class RubyCodecTest < Minitest::Test
   end
 
   def test_delete_loaders_run_once_inside_the_mutation_guard
+    expected_amounts = { delete: ["1"], delete_at: ["2"], pop: ["3"], pop_many: %w[2 3] }
     %i[delete delete_at pop pop_many].each do |operation|
       callback = nil
       calls = 0
@@ -411,6 +432,7 @@ class RubyCodecTest < Minitest::Test
           before = root.context.root
           bound = root.context.read_bound
           callback = -> { detached[:bad] = [5] }
+
           assert_raises(XitDB::TransactionStateError, operation.to_s, &remove)
           assert_equal 1, calls
           assert_equal before, root.context.root
@@ -422,8 +444,10 @@ class RubyCodecTest < Minitest::Test
             assert_raises(XitDB::TransactionStateError) { root[:sibling] = 6 }
           }
           removed = remove.call
+
           assert_equal(operation == :pop_many ? 3 : 2, calls)
-          expected = { delete: ["1"], delete_at: ["2"], pop: ["3"], pop_many: %w[2 3] }.fetch(operation)
+          expected = expected_amounts.fetch(operation)
+
           assert_equal expected, (operation == :pop_many ? removed : [removed]).map(&:amount)
           child << 1
           detached[:kept] = 7
@@ -448,6 +472,7 @@ class RubyCodecTest < Minitest::Test
         items = root[:items]
         child = items[0]
         iterator = items.each
+
         assert_equal [0], iterator.next.to_ruby
         before = root.context.root
         bound = root.context.read_bound
@@ -458,6 +483,7 @@ class RubyCodecTest < Minitest::Test
         assert_equal bound, root.context.read_bound
         assert_equal "1", iterator.next.amount
         child << 3
+
         assert_equal %w[1 2], items.pop(2).map(&:amount)
         assert_equal [[0, 3]], items.to_ruby
       end
@@ -484,6 +510,7 @@ class RubyCodecTest < Minitest::Test
           } }.fetch(operation)
           before = root.context.root
           bound = root.context.read_bound
+
           assert_raises(XitDB::CodecError, &remove)
           assert_equal 1, calls
           assert_equal before, root.context.root
@@ -496,6 +523,7 @@ class RubyCodecTest < Minitest::Test
           end
           fail_load = false
           target[key] = Money.new("3")
+
           assert_equal "3", remove.call.amount
           root[:later] = true
         end

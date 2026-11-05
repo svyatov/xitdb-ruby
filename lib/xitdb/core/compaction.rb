@@ -65,14 +65,14 @@ module XitDB
         reserve(source, size) { |origin, target| slots(origin, target, start, count) }
       end
 
-      def reserve(source, size, cache: true, &worker)
+      def reserve(source, size, cache: true)
         mapped = @offsets.fetch(source) if cache
         return mapped if mapped
 
         bytes = read(source, size)
         target = @transaction.append(bytes)
         @offsets.store(source, target) if cache
-        @stack << -> { worker.call(source, target) }
+        @stack << -> { yield(source, target) }
         target
       end
 

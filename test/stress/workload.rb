@@ -237,8 +237,9 @@ module BoundedWorkload
 
   def self.benchmarks(directory)
     workloads = []
+    storage_kinds = %w[file memory]
     %w[portable ruby].each do |profile|
-      %w[file memory].each do |storage|
+      storage_kinds.each do |storage|
         states = storage == "file" ? %w[fresh_handle warm_handle] : %w[first_handle warm_handle]
         states.each do |state|
           entry = { "profile" => profile, "storage" => storage, "handle_state" => state,
@@ -298,8 +299,9 @@ module BoundedWorkload
   end
 
   def self.shared_histories(directory)
+    depths = [0, 600]
     %w[portable ruby].flat_map do |profile|
-      [0, 600].map do |depth|
+      depths.map do |depth|
         source_path = File.join(directory, "shared.xit")
         destination = File.join(directory, "shared-copy.xit")
         database = open_database(profile, source_path)

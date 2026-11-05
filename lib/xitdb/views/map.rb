@@ -63,7 +63,7 @@ module XitDB
       def each_key(&block)
         return enum_for(:each_key) unless block
 
-        each_entries(-> { adapter.each_entry }, selectors_only: true) { |key| block.call(key) }
+        each_entries(-> { adapter.each_entry }, selectors_only: true, &block)
         self
       end
 

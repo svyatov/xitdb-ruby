@@ -16,6 +16,7 @@ class CompactionTest < Minitest::Test
       end
       compacted = source.compact(to: File.join(dir, "target"))
       slot = compacted.root_cursor.slot
+
       assert_equal :bytes, slot.tag
       assert slot.full
       assert_equal "abc", compacted.read_bytes(slot).bytes
@@ -44,11 +45,14 @@ class CompactionTest < Minitest::Test
       original = File.binread(File.join(dir, "source.xit"))
       compacted = source.compact(to: File.join(dir, "target.xit"))
       history = Core::ArrayList.new(compacted.root_cursor)
+
       assert_equal 1, history.size
       graph = history.get(0)
+
       assert_equal :array_list, graph.tag
       assert graph.full
       children = Core::ArrayList.new(history.cursor_at(0)).to_a
+
       assert_equal graph, children[0]
       assert_equal children[1], children[2]
       assert_equal "a\0b".b, compacted.read_bytes(children[1]).bytes
@@ -75,6 +79,7 @@ class CompactionTest < Minitest::Test
         end
         original = File.binread(File.join(dir, "source.xit"))
         compacted = source.compact(to: File.join(dir, "target.xit"))
+
         assert_equal 1, compacted.history.size
         assert_equal "latest", compacted.snapshot["value"]
         assert_equal [1, nil, "three"], compacted.snapshot["array"].to_ruby
@@ -85,6 +90,7 @@ class CompactionTest < Minitest::Test
         assert_equal source.core.header.hash_id, compacted.core.header.hash_id
         refute_equal source.core.header.file_id, compacted.core.header.file_id
         compacted.transaction { |root| root["new"] = 42 }
+
         assert_equal 42, compacted.snapshot["new"]
       ensure
         compacted&.close
@@ -101,6 +107,7 @@ class CompactionTest < Minitest::Test
       values.each_with_index do |slot, index|
         source.transaction { |root| root.replace(slot) }
         compacted = source.compact(to: File.join(dir, index.to_s))
+
         assert_equal slot.to_bytes, compacted.root_cursor.slot.to_bytes
         assert_equal "cust", compacted.header.hash_id
         assert_equal 11, compacted.header.hash_size
@@ -111,7 +118,8 @@ class CompactionTest < Minitest::Test
         Core::ArrayList.new(root)
       end
       compacted = source.compact(to: File.join(dir, "empty-history"))
-      assert compacted.root_cursor.slot.empty?
+
+      assert_empty compacted.root_cursor.slot
       assert_equal 62, compacted.committed_size
     ensure
       compacted&.close
@@ -124,8 +132,9 @@ class CompactionTest < Minitest::Test
                       [XitDB, XitDB.sorted_map], [XitDB, XitDB.sorted_set],
                       [XitDB::Ruby, XitDB.map], [XitDB::Ruby, XitDB.set],
                       [XitDB::Ruby, XitDB.sorted_map(key: :string)], [XitDB::Ruby, XitDB.sorted_set(key: :string)]]
+    churn_counts = [0, 512]
     configurations.each do |api, declaration|
-      sizes = [0, 512].map do |churn|
+      sizes = churn_counts.map do |churn|
         Dir.mktmpdir do |dir|
           source = api.open(File.join(dir, "source"))
           source.transaction do |root|
@@ -147,6 +156,7 @@ class CompactionTest < Minitest::Test
               batch.each do |index| # rubocop:disable Style/CombinableLoops -- Populate every route before testing deletion and reclamation.
                 remove.call(format("%08d", index))
               end
+
               assert_equal 1, items.size
             end
           end
@@ -156,8 +166,10 @@ class CompactionTest < Minitest::Test
             assert_equal ["live"], declaration.new(compacted.root_cursor).map(&:first)
           else
             expected = declaration.kind.to_s.end_with?("set") ? Set["live"] : { "live" => 1 }
+
             assert_equal expected, compacted.snapshot["items"].to_ruby
           end
+
           assert_equal original, File.binread(File.join(dir, "source"))
           File.size(File.join(dir, "target"))
         ensure
@@ -165,6 +177,7 @@ class CompactionTest < Minitest::Test
           source&.close
         end
       end
+
       assert_operator sizes.last, :<=, sizes.first + 1024,
                       "retained empty routes: #{api} #{declaration.inspect}: #{sizes}"
     end
@@ -189,7 +202,8 @@ class CompactionTest < Minitest::Test
       assert_equal "user data", File.binread(target)
       File.binwrite(target, "")
       compacted = source.compact(to: target)
-      assert compacted.root_cursor.slot.empty?
+
+      assert_empty compacted.root_cursor.slot
       compacted.close
       original = File.binread(target)
       assert_raises(ArgumentError) { source.compact(to: target) }
@@ -202,10 +216,12 @@ class CompactionTest < Minitest::Test
   def test_offset_map_spills_exact_keys_and_removes_its_scratch_file
     offsets = Core::OffsetMap.new
     16_384.times { |i| offsets.store(i, i + 50) }
+
     assert_equal 16_384, offsets.peak_cache_size
     assert_nil offsets.instance_variable_get(:@temporary)
     offsets.store((1 << 64) - 1, 999)
     path = offsets.instance_variable_get(:@temporary).path
+
     assert File.file?(path)
     assert_equal 16_384, offsets.peak_cache_size
     assert_equal 0, offsets.instance_variable_get(:@cache).size
@@ -213,9 +229,11 @@ class CompactionTest < Minitest::Test
     assert_equal 999, offsets.fetch((1 << 64) - 1)
     assert_nil offsets.fetch(16_384)
     offsets.store(0, 123)
+
     assert_equal 123, offsets.fetch(0)
     offsets.close
-    refute File.exist?(path)
+
+    refute_path_exists path
     offsets.close
     assert_raises(XitDB::ClosedError) { offsets.fetch(0) }
   ensure
@@ -235,6 +253,7 @@ class CompactionTest < Minitest::Test
       assert_equal original, File.binread(path)
       source.transaction { |root| root.replace(Core::Slot.uint(7)) }
       compacted = source.compact(to: target)
+
       assert_equal 7, compacted.root_cursor.slot.value
     ensure
       compacted&.close
@@ -248,13 +267,15 @@ class CompactionTest < Minitest::Test
     store = offsets.instance_variable_get(:@store)
     file = store.instance_variable_get(:@file)
     path = offsets.instance_variable_get(:@temporary).path
+
     assert_operator store.instance_variable_get(:@pending).bytesize, :>, 0
     file.define_singleton_method(:pwrite) { |*| raise Errno::ENOSPC }
     assert_raises(Errno::ENOSPC) { store.flush }
     offsets.close
-    assert store.closed?
-    assert file.closed?
-    refute File.exist?(path)
+
+    assert_predicate store, :closed?
+    assert_predicate file, :closed?
+    refute_path_exists path
     assert_raises(XitDB::ClosedError) { offsets.fetch(0) }
     assert_raises(XitDB::ClosedError) { offsets.store(0, 1) }
     offsets.close
@@ -280,15 +301,17 @@ class CompactionTest < Minitest::Test
       end
       original.call
     end
+
     assert_same failure, assert_raises(IOError) { offsets.close }
-    refute store.closed?
-    refute file.closed?
-    refute File.exist?(path)
+    refute_predicate store, :closed?
+    refute_predicate file, :closed?
+    refute_path_exists path
     assert_raises(XitDB::ClosedError) { offsets.fetch(0) }
     assert_raises(XitDB::ClosedError) { offsets.store(0, 1) }
     offsets.close
-    assert store.closed?
-    assert file.closed?
+
+    assert_predicate store, :closed?
+    assert_predicate file, :closed?
     offsets.close
   ensure
     file&.singleton_class&.remove_method(:close)
@@ -317,6 +340,7 @@ class CompactionTest < Minitest::Test
       end
       calls.clear
       compacted = source.compact(to: File.join(dir, "target"))
+
       assert_empty calls
       refute_same source.profile, compacted.profile
       refute_same source.profile.instance_variable_get(:@registry), compacted.profile.instance_variable_get(:@registry)
@@ -378,37 +402,45 @@ class CompactionTest < Minitest::Test
         source.transaction { |root| root.replace(slot) }
         compacted = source.compact(to: File.join(dir, tag.to_s))
         root = compacted.root_cursor
+
         assert_equal tag, root.slot.tag
         assert_equal slot.full, root.slot.full
         case tag
         when :bytes, :short_bytes
           expected = tag == :bytes ? "x\0".b * 70_000 : "sixsix"
+
           assert_equal expected, root.read_bytes.bytes
           assert_equal(tag == :bytes ? "zz" : "\xff\0".b, root.read_bytes.format_tag)
         when :index, :kv_pair, :sorted_kv_pair
           pair = tag == :index ? Core::Slot.parse(compacted.read_at(root.slot.value, 9, bound: root.bound)) : root.slot
           offset = pair.value + (pair.tag == :kv_pair ? 20 : 0)
           value = Core::Slot.parse(compacted.read_at(offset + 9, 9, bound: root.bound))
+
           assert_equal "x\0".b * 70_000, compacted.read_bytes(value).bytes
         when *Core::HashMap::TAGS
           map = Core::HashMap.from_cursor(root)
+
           assert_equal 17, map.size
           slots = map.each_entry.map { |_hash, _key, value| value }
+
           assert_equal 1, slots.map(&:value).uniq.size
           assert_equal "x\0".b * 70_000, compacted.read_bytes(slots.first).bytes
         when :linked_array_list
           list = Core::LinkedArrayList.new(root)
+
           assert_equal 257, list.size
           assert_equal 1, list.map(&:value).uniq.size
           assert_equal "x\0".b * 70_000, compacted.read_bytes(list.get(256)).bytes
         else
           map = Core::SortedMap.new(root)
+
           assert_equal 257, map.size
           assert_equal "key-0256-long", map.at(256).first
           assert_equal "x\0".b * 70_000, compacted.read_bytes(map.get("key-0256-long")).bytes
         end
         compacted.close
       end
+
       assert_equal 64 * 1024, max_read
     ensure
       compacted&.close
@@ -430,11 +462,13 @@ class CompactionTest < Minitest::Test
       end
       compacted = source.compact(to: File.join(dir, "target"))
       holder = Core::LinkedArrayList.new(compacted.root_cursor)
+
       assert_equal [11], Core::ArrayList.new(holder.cursor_at(0)).map(&:value)
       assert_equal [11, 22], Core::ArrayList.new(holder.cursor_at(1)).map(&:value)
       pointers = holder.map do |slot|
         compacted.read_at(slot.value + 8, 8, bound: compacted.committed_size).unpack1("Q>")
       end
+
       refute_equal pointers[0], pointers[1]
       assert_equal "\0".b * 135, compacted.read_at(pointers[0] + 9, 135, bound: compacted.committed_size)
       assert_equal "\0".b * 126, compacted.read_at(pointers[1] + 18, 126, bound: compacted.committed_size)
@@ -466,6 +500,7 @@ class CompactionTest < Minitest::Test
       compacted = source.compact(to: File.join(dir, "success"))
       pointer = compacted.root_cursor.slot.value
       count.times { pointer = Core::Slot.parse(compacted.read_at(pointer, 9, bound: compacted.committed_size)).value }
+
       assert_equal compacted.root_cursor.slot.value, pointer
       assert_equal 16_384, maps.first.peak_cache_size
       assert_raises(XitDB::ClosedError) { maps.first.fetch(first) }
@@ -490,14 +525,15 @@ class CompactionTest < Minitest::Test
         original_read.call(offset, size, bound: bound)
       end
       target = File.join(dir, "interrupted")
+
       assert_same interrupted, assert_raises(Interrupt) { source.compact(to: target) }
       assert_equal 0, File.size(target)
       assert_equal 16_384, maps.last.peak_cache_size
       assert_equal 1, scratch_paths.size
-      refute File.exist?(scratch_paths.first)
+      refute_path_exists scratch_paths.first
       assert_same scratch_failure, scratch_flush_errors.fetch(0)
-      assert maps.last.instance_variable_get(:@store).closed?
-      assert maps.last.instance_variable_get(:@store).instance_variable_get(:@file).closed?
+      assert_predicate maps.last.instance_variable_get(:@store), :closed?
+      assert_predicate maps.last.instance_variable_get(:@store).instance_variable_get(:@file), :closed?
       assert_raises(XitDB::ClosedError) { maps.last.fetch(first) }
       assert_equal original, File.binread(source_path)
     ensure
@@ -525,6 +561,7 @@ class CompactionTest < Minitest::Test
           original.call(**options, &block)
         end
       end
+
       with_target_store(target, configure) { assert_raises(ArgumentError) { source.compact(to: target) } }
       assert_equal "competing writer", File.binread(target)
     ensure
@@ -553,10 +590,11 @@ class CompactionTest < Minitest::Test
             original.call(**options, &block)
           end
         end
+
         with_target_store(target, configure) { assert_raises(XitDB::CorruptionError) { source.compact(to: target) } }
         Core::Database.open(target, readonly: true) do |reader|
           if change == :generation
-            assert reader.root_cursor.slot.empty?
+            assert_empty reader.root_cursor.slot
             assert_equal 62, reader.committed_size
           else
             assert_equal 99, reader.root_cursor.slot.value
@@ -616,6 +654,7 @@ class CompactionTest < Minitest::Test
             original.call(**options, &block)
           end
         end
+
         with_target_store(target, configure) { assert_raises(ArgumentError) { source.compact(to: target) } }
         Core::Database.open(target, readonly: true) { |reader| assert_equal competing_slot, reader.root_cursor.slot }
       ensure
@@ -662,6 +701,7 @@ class CompactionTest < Minitest::Test
           raise Interrupt, "cleanup interrupted"
         end
       end
+
       with_target_store(target, configure) { assert_raises(XitDB::CorruptionError) { source.compact(to: target) } }
       assert_equal 0, File.size(target)
     ensure

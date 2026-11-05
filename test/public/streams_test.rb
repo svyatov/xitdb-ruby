@@ -23,6 +23,7 @@ class StreamsTest < Minitest::Test
     @db.transaction do |root|
       root.write_bytes("blob") do |io|
         retained_writer = io
+
         assert_equal data.bytesize, IO.copy_stream(StringIO.new(data), io)
         assert_equal data.bytesize, io.pos
         root["other"] = "kept"
@@ -39,9 +40,11 @@ class StreamsTest < Minitest::Test
     end
     @db.snapshot.open_bytes("blob") do |io|
       retained_reader = io
+
       assert_equal expected_digest, Digest::SHA256.hexdigest(io.read)
       io.rewind
       output = StringIO.new
+
       assert_equal data.bytesize, IO.copy_stream(io, output)
       assert_equal expected_digest, Digest::SHA256.hexdigest(output.string)
     end
@@ -54,8 +57,9 @@ class StreamsTest < Minitest::Test
     @db.snapshot.open_bytes("blob") do |io|
       assert_equal 6, io.size
       assert_equal 0, io.pos
-      refute io.eof?
+      refute_predicate io, :eof?
       output = +"old"
+
       assert_same output, io.read(2, output)
       assert_equal "ab".b, output
       assert_equal Encoding::BINARY, output.encoding
@@ -63,7 +67,7 @@ class StreamsTest < Minitest::Test
       assert_equal "bcd", io.readpartial(3)
       assert_equal 0, io.seek(-1, IO::SEEK_END)
       assert_equal "f", io.read(100)
-      assert io.eof?
+      assert_predicate io, :eof?
       assert_nil io.read(1, output)
       assert_empty output
       assert_equal "", io.read
@@ -86,6 +90,7 @@ class StreamsTest < Minitest::Test
   def test_empty_inline_and_binary_storage
     ["", "abcdefgh", "a\0b", "\xff".b, "a" * 65_537].each do |data|
       @db.transaction { |root| root.write_bytes("blob") { |io| assert_equal data.bytesize, io.write(data) } }
+
       @db.snapshot.open_bytes("blob") { |io| assert_equal data.b, io.read }
       assert_equal data.b, @db.snapshot["blob"].b
     end
@@ -101,6 +106,7 @@ class StreamsTest < Minitest::Test
         root["sibling"] = 1
         break :stopped
       end
+
       assert_equal :stopped, result
       assert_equal "before", root["blob"]
       assert_equal 1, root["sibling"]
@@ -110,9 +116,11 @@ class StreamsTest < Minitest::Test
           throw :stop
         end
       end
+
       refute root.key?("absent")
       root.write_bytes("blob") { |io| io.write("done") }
     end
+
     assert_equal :stopped, @db.snapshot.open_bytes("blob") { |io|
       reader = io
       break :stopped
@@ -137,10 +145,12 @@ class StreamsTest < Minitest::Test
         child.write_bytes("second") { |second| second.write("two") }
         io.write("new")
       end
+
       assert_equal({ "blob" => "new", "sibling" => 1, "second" => "two" }, child.to_ruby)
       child.open_bytes("blob") do |io|
         assert_raises(XitDB::ConcurrentModificationError) { child["blob"] = "bad" }
         child["sibling"] = 2
+
         assert_equal "new", io.read
         child.open_bytes("blob") { |other| assert_equal "new", other.read }
       end
@@ -164,10 +174,12 @@ class StreamsTest < Minitest::Test
           items.delete_at(2)
           io.write("stream")
         end
+
         assert_equal %w[changed stream last], items.to_ruby
         items.open_bytes(-2) { |io| assert_equal "stream", io.read }
         items[1, 2].open_bytes(0) { |io| assert_equal "stream", io.read }
         items.write_bytes(4) { |io| io.write("gap") }
+
         assert_equal ["changed", "stream", "last", nil, "gap"], items.to_ruby
       end
     end
@@ -210,6 +222,7 @@ class StreamsTest < Minitest::Test
     @db.snapshot.open_bytes("blob") do |io|
       assert_equal data, io.read
       io.rewind
+
       assert_equal data, io.readpartial(data.bytesize)
     end
   end
@@ -239,6 +252,7 @@ class StreamsTest < Minitest::Test
       assert_equal 0, io.pos
       count = Object.new
       count.define_singleton_method(:to_int) { 1 }
+
       assert_equal "a", io.read(count)
       assert_equal "b", io.read(1.9)
       assert_equal 0, io.seek(1, :SET)
@@ -253,6 +267,7 @@ class StreamsTest < Minitest::Test
         assert_equal 0, io.write(nil)
       end
     end
+
     assert_equal "123", @db.snapshot["blob"]
   end
 
@@ -261,6 +276,7 @@ class StreamsTest < Minitest::Test
     retained = nil
     @db.snapshot.open_bytes("blob") { |io| retained = io }
     @db.close
+
     [[:read], [:readpartial, 1], [:seek, 0], [:rewind], [:pos], [:size], [:eof?]].each do |arguments|
       assert_raises(XitDB::ExpiredViewError) { retained.public_send(*arguments) }
     end
@@ -290,6 +306,7 @@ class StreamsTest < Minitest::Test
       assert_equal "kept", root["sibling"]
       root.write_bytes("blob") { |io| io.write("after") }
     end
+
     assert_equal({ "blob" => "after", "sibling" => "kept" }, @db.snapshot.to_ruby)
   end
 
@@ -302,6 +319,7 @@ class StreamsTest < Minitest::Test
         rescue StandardError
           $ERROR_INFO
         end.value
+
         assert_instance_of XitDB::TransactionStateError, error
       end
       root.write_bytes("blob") do |io|
@@ -310,10 +328,12 @@ class StreamsTest < Minitest::Test
         rescue StandardError
           $ERROR_INFO
         end.value
+
         assert_instance_of XitDB::TransactionStateError, error
         io.write("good")
       end
     end
+
     assert_equal "good", @db.snapshot["blob"]
   end
 
@@ -341,8 +361,10 @@ class StreamsTest < Minitest::Test
     closer = Thread.new { @db.close }
     closer.report_on_exception = false
     Timeout.timeout(2) { Thread.pass until closer.status == "sleep" || !closer.alive? }
-    assert closer.alive?, "close did not wait for the complete byte read"
+
+    assert_predicate closer, :alive?, "close did not wait for the complete byte read"
     release << true
+
     assert_equal data, Timeout.timeout(2) { reader.value }
     Timeout.timeout(2) { closer.value }
   ensure
@@ -375,8 +397,10 @@ class StreamsTest < Minitest::Test
     closer = Thread.new { @db.close }
     closer.report_on_exception = false
     Timeout.timeout(2) { Thread.pass until closer.status == "sleep" || !closer.alive? }
-    assert closer.alive?, "close did not wait for reader setup"
+
+    assert_predicate closer, :alive?, "close did not wait for reader setup"
     release << true
+
     assert_equal XitDB::Streams::Reader, Timeout.timeout(2) { reader.value }
     Timeout.timeout(2) { closer.value }
   ensure
@@ -415,6 +439,7 @@ class StreamsTest < Minitest::Test
         original.call(slot, **options)
       end
       blocked_slot = root.adapter.lookup("blob")
+
       root.open_bytes("blob") do
         assert_raises(XitDB::ConcurrentModificationError) { root.delete("blob") }
       end
@@ -439,21 +464,25 @@ class StreamsTest < Minitest::Test
         items[4] = "sibling"
         io.write("stream")
       end
+
       assert_equal [nil, nil, nil, nil, "sibling", "stream"], items.to_ruby
     end
   end
 
   def test_array_reader_bounds_after_negative_index_normalization
+    valid_indices = [[-3, "left"], [-1, "right"], [0, "left"], [2, "right"]]
+    invalid_indices = [-4, -5, -6, -100, 3]
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
         root["items"] = declaration
         root["items"].push("left", "middle", "right")
       end
       items = @db.snapshot["items"]
-      [[-3, "left"], [-1, "right"], [0, "left"], [2, "right"]].each do |index, expected|
+
+      valid_indices.each do |index, expected|
         assert_equal expected, items.open_bytes(index, &:read)
       end
-      [-4, -5, -6, -100, 3].each do |index|
+      invalid_indices.each do |index|
         assert_nil items[index]
         assert_raises(KeyError) { items.open_bytes(index) { flunk "out-of-range reader was yielded" } }
       end

@@ -63,7 +63,8 @@ It checks Ruby style, library types, and Change Risk Anti-Patterns (CRAP), then 
 The tests execute packaged examples from temporary storage and inspect package contents.
 The package check uses an isolated application bundle and local gem resolution. It does not install dependencies from the network.
 
-`bundle exec rake` runs the same checks. Individual checks are available:
+`rake` and `bundle exec rake` run the same checks using the locked development dependencies.
+RuboCop loads the Minitest, Performance, and Rake plugins. Individual checks are available:
 
 | Command | Check |
 | --- | --- |

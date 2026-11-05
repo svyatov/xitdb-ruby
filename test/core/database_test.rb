@@ -14,9 +14,11 @@ class DatabaseTest < Minitest::Test
     assert_raises(XitDB::CorruptionError) { Core::Database.new(store: store, initialize_empty: false) }
     assert_equal 0, store.length
     core = Core::Database.new(store: store)
+
     assert_equal 62, core.committed_size
     existing = Core::Database.new(store: store, initialize_empty: false)
-    assert existing.root_cursor.slot.empty?
+
+    assert_empty existing.root_cursor.slot
     Dir.mktmpdir do |dir|
       path = File.join(dir, "empty.xit")
       File.binwrite(path, "")
@@ -31,15 +33,17 @@ class DatabaseTest < Minitest::Test
 
   def test_empty_file_and_exception_rollback
     core = Core::Database.memory(file_id: 1)
+
     assert_equal 62, core.committed_size
     error = RuntimeError.new("abort")
+
     assert_same error, assert_raises(RuntimeError) {
       core.transaction { |cursor|
         cursor.replace(core.bytes("new"))
         raise error
       }
     }
-    assert core.root_cursor.slot.empty?
+    assert_empty core.root_cursor.slot
     assert_equal 62, core.committed_size
   end
 
@@ -49,9 +53,10 @@ class DatabaseTest < Minitest::Test
     [Core::Slot.null, Core::Slot.int(-(1 << 63)), Core::Slot.uint((1 << 64) - 1),
      Core::Slot.float(-0.0), Core::Slot.float(Float::INFINITY)].each do |slot|
       core.transaction { |cursor| cursor.replace(slot) }
+
       assert_equal slot.to_bytes, core.root_cursor.slot.to_bytes
     end
-    assert old.slot.empty?
+    assert_empty old.slot
   end
 
   def test_bytes_preserve_zero_bytes_and_unknown_tags
@@ -61,12 +66,15 @@ class DatabaseTest < Minitest::Test
      ["a\0b", nil, :bytes], ["long string", nil, :bytes]].each do |data, tag, kind|
       core.transaction { |cursor| cursor.replace(core.bytes(data, format_tag: tag)) }
       slot = core.root_cursor.slot
+
       assert_equal kind, slot.tag
       value = core.read_bytes(slot)
+
       assert_equal data.b, value.bytes
       tag ? assert_equal(tag, value.format_tag) : assert_nil(value.format_tag)
-      assert value.frozen?
-      assert value.bytes.frozen?
+
+      assert_predicate value, :frozen?
+      assert_predicate value.bytes, :frozen?
     end
   end
 
@@ -89,16 +97,18 @@ class DatabaseTest < Minitest::Test
         raise Interrupt
       end
     end
-    assert core.root_cursor.slot.empty?
+    assert_empty core.root_cursor.slot
     assert_equal 62, core.committed_size
     core.transaction do |cursor|
       cursor.replace(Core::Slot.uint(5))
       next :ignored
     end
+
     assert_equal 5, core.root_cursor.slot.value
   end
 
   def test_publication_faults_classify_durability_and_never_retry
+    uncertain_points = %i[header_write header_sync]
     %i[append data_sync header_write header_sync].each do |point|
       store = FaultStore.new(Core::MemoryStore.new)
       core = Core::Database.new(store: store)
@@ -119,17 +129,19 @@ class DatabaseTest < Minitest::Test
         end
       end
       assert_equal 1, calls
-      uncertain = %i[header_write header_sync].include?(point)
+      uncertain = uncertain_points.include?(point)
+
       assert_equal(uncertain ? :unknown : :not_committed, error.outcome)
       assert_instance_of IOError, error.cause
       store.fault = nil
       if uncertain
-        assert core.needs_reopen?
+        assert_predicate core, :needs_reopen?
         assert_raises(XitDB::TransactionStateError) { core.transaction { flunk "must not run" } }
       else
-        assert core.root_cursor.slot.empty?
+        assert_empty core.root_cursor.slot
         assert_equal 62, store.length
         core.transaction { |cursor| cursor.replace(Core::Slot.uint(7)) }
+
         assert_equal 7, core.root_cursor.slot.value
       end
     end
@@ -146,6 +158,7 @@ class DatabaseTest < Minitest::Test
         assert_equal 1, cursor.slot.value
         cursor.replace(Core::Slot.uint(2))
       end
+
       assert_equal 112, second.committed_size
       assert_equal 112, File.size(path)
       first.close
@@ -192,6 +205,7 @@ class DatabaseTest < Minitest::Test
       detached.replace(Core::Slot.uint(4))
       temporary = tx.cursor(slot: core.bytes("temporary external bytes"))
       tx.restore(checkpoint)
+
       assert_equal 1, root.slot.value
       assert_equal 2, detached.slot.value
       assert_raises(XitDB::ExpiredViewError) { temporary.slot }
@@ -201,12 +215,14 @@ class DatabaseTest < Minitest::Test
       rescue StandardError
         $ERROR_INFO
       end.value
+
       assert_instance_of XitDB::TransactionStateError, error
       assert_raises(XitDB::TransactionStateError) { core.transaction { nil } }
     end
     assert_raises(XitDB::ExpiredViewError) { owned.slot }
     before = core.committed_size
     core.transaction { |root| root.transaction.cancel_publication }
+
     assert_equal before, core.committed_size
     assert_raises(XitDB::ReadOnlyError) { core.root_cursor.replace(Core::Slot.uint(5)) }
     core.close
@@ -216,10 +232,13 @@ class DatabaseTest < Minitest::Test
   def test_trailer_not_cached_header_supplies_root_and_initial_id_is_zero
     store = Core::MemoryStore.new
     core = Core::Database.new(store: store, file_id: 1)
+
     assert_equal "0000000000000000", store.read_at(46, 8).unpack1("H*")
     store.write_at(20, Core::Slot.uint(99).to_bytes)
-    assert core.root_cursor.slot.empty?
+
+    assert_empty core.root_cursor.slot
     core.transaction { |cursor| cursor.replace(Core::Slot.uint(42)) }
+
     assert_equal 42, Core::Database.new(store: store).root_cursor.slot.value
   end
 
@@ -227,6 +246,7 @@ class DatabaseTest < Minitest::Test
     store = Core::MemoryStore.new
     Core::Database.new(store: store, file_id: 1)
     expected = File.read(File.expand_path("../fixtures/core/empty-v1.hex", __dir__)).strip
+
     assert_equal expected, store.read_at(0, store.length).unpack1("H*")
   end
 
@@ -235,8 +255,9 @@ class DatabaseTest < Minitest::Test
     core = Core::Database.new(store: store)
     original = Interrupt.new("application interrupt")
     store.fault = ->(name, _args) { raise IOError, "truncate failed" if name == :truncate }
+
     assert_same original, assert_raises(Interrupt) { core.transaction { raise original } }
-    assert core.needs_reopen?
+    assert_predicate core, :needs_reopen?
   end
 
   def test_cancelled_publication_reports_cleanup_failure
@@ -247,7 +268,7 @@ class DatabaseTest < Minitest::Test
       core.transaction { |cursor| cursor.transaction.cancel_publication }
     end
     assert_equal :not_committed, error.outcome
-    assert core.needs_reopen?
+    assert_predicate core, :needs_reopen?
   end
 
   def test_failure_after_header_sync_is_committed
@@ -257,7 +278,7 @@ class DatabaseTest < Minitest::Test
     error = assert_raises(XitDB::CommitError) { core.transaction { |cursor| cursor.replace(Core::Slot.uint(9)) } }
     assert_equal :committed, error.outcome
     assert_equal 9, core.root_cursor.slot.value
-    assert core.needs_reopen?
+    assert_predicate core, :needs_reopen?
   end
 
   def test_interrupt_during_publication_is_unknown_after_header_attempt
@@ -289,6 +310,7 @@ class DatabaseTest < Minitest::Test
       tx = root.transaction
       offset = tx.append("1234")
       tx.write_at(offset, "abcd")
+
       assert_equal "abcd", tx.read_at(offset, 4)
       tx.freeze
       assert_raises(XitDB::TransactionStateError) { tx.write_at(offset, "xxxx") }
@@ -296,6 +318,7 @@ class DatabaseTest < Minitest::Test
     end
     old = core.root_cursor
     core.transaction { |root| root.replace(core.bytes("replacement bytes")) }
+
     assert_equal "captured bytes", old.read_bytes.bytes
   end
 
@@ -310,6 +333,7 @@ class DatabaseTest < Minitest::Test
   end
 
   def test_partial_file_writes_and_sync_failures_reopen_at_observed_root
+    uncertain_points = %i[header header_sync]
     %i[trailer data_sync header header_sync].each do |point|
       Dir.mktmpdir do |dir|
         path = File.join(dir, "fault.xit")
@@ -335,16 +359,17 @@ class DatabaseTest < Minitest::Test
         error = assert_raises(XitDB::CommitError) do
           core.transaction { |root| root.replace(Core::Slot.uint(42)) }
         end
-        assert_equal(%i[header header_sync].include?(point) ? :unknown : :not_committed, error.outcome)
+        assert_equal(uncertain_points.include?(point) ? :unknown : :not_committed, error.outcome)
         store.fault = nil
         core.close
         Core::Database.open(path) do |reopened|
           if point == :header_sync
             assert_equal 42, reopened.root_cursor.slot.value
           else
-            assert reopened.root_cursor.slot.empty?
+            assert_empty reopened.root_cursor.slot
           end
           reopened.transaction { |root| root.replace(Core::Slot.uint(7)) }
+
           assert_equal reopened.committed_size, File.size(path)
           assert_equal 7, reopened.root_cursor.slot.value
         end
@@ -359,6 +384,7 @@ class DatabaseTest < Minitest::Test
     Core::Database.new(store: store, hash_id: "????", hash_size: 7, file_id: 55)
     original = store.read_at(0, store.length)
     core = Core::Database.new(store: store)
+
     assert_equal "????", core.header.hash_id
     assert_equal 7, core.header.hash_size
     assert_raises(XitDB::ProfileMismatchError) { Core::Database.new(store: store, hash_size: 20) }
@@ -388,12 +414,13 @@ class DatabaseTest < Minitest::Test
     store.release_fault = -> { raise IOError, "release failure" }
     error = assert_raises(RuntimeError) { core.transaction { raise original } }
     assert_same original, error
-    assert core.needs_reopen?
+    assert_predicate core, :needs_reopen?
   end
 
   def test_release_failure_preserves_throw_break_and_nonlocal_return
+    exit_kinds = %i[throw break return]
     %i[memory file].each do |kind|
-      %i[throw break return].each do |exit_kind|
+      exit_kinds.each do |exit_kind|
         Dir.mktmpdir do |dir|
           real = kind == :memory ? Core::MemoryStore.new : Core::FileStore.open(File.join(dir, "test.xit"))
           store = FaultStore.new(real)
@@ -407,8 +434,9 @@ class DatabaseTest < Minitest::Test
                    when :return
                      return_from_transaction(core)
                    end
+
           assert_equal :original_exit, result
-          assert core.needs_reopen?
+          assert_predicate core, :needs_reopen?
           assert_equal 62, core.committed_size
           assert_raises(XitDB::TransactionStateError) { core.transaction { flunk "must not run" } }
         ensure
@@ -425,12 +453,14 @@ class DatabaseTest < Minitest::Test
       Core::Database.memory.transaction do |root|
         tx = root.transaction
         references = Array.new(200) { temporary_cursor_reference(tx) }
-        assert root.slot.empty?
+
+        assert_empty root.slot
         retained = [tx, tx.instance_variable_get(:@cursors), references]
       end
       retained
     end.value
     GC.start
+
     assert_equal 0, references.count(&:weakref_alive?),
                  "originating registry #{registry.object_id} retained temporary cursors"
     assert_raises(XitDB::ExpiredViewError) { transaction.check_active! }
@@ -446,6 +476,7 @@ class DatabaseTest < Minitest::Test
         [WeakRef.new(checkpoint), reference]
       end
       GC.start
+
       assert_equal(0, references.sum { |pair| pair.count(&:weakref_alive?) })
     end
   end
@@ -459,8 +490,10 @@ class DatabaseTest < Minitest::Test
         checkpoint, reference = checkpoint_with_temporary_cursor(tx)
         live.replace(Core::Slot.uint(8))
         GC.start
-        assert reference.weakref_alive?
+
+        assert_predicate reference, :weakref_alive?
         tx.restore(checkpoint)
+
         assert_equal 7, live.slot.value
         assert_equal 0, checkpoint.slots.size, "consumed checkpoint still owns cursor states during the transaction"
         assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
@@ -469,7 +502,8 @@ class DatabaseTest < Minitest::Test
       retained
     end.value
     GC.start
-    refute reference.weakref_alive?, "consumed checkpoint #{checkpoint.object_id} retained a cursor"
+
+    refute_predicate reference, :weakref_alive?, "consumed checkpoint #{checkpoint.object_id} retained a cursor"
   end
 
   def test_expiration_releases_snapshots_even_when_an_expired_cursor_is_retained
@@ -480,7 +514,7 @@ class DatabaseTest < Minitest::Test
     end
     GC.start
     assert_raises(XitDB::ExpiredViewError) { expired.slot }
-    refute reference.weakref_alive?
+    refute_predicate reference, :weakref_alive?
     assert checkpoint
   end
 
@@ -492,6 +526,7 @@ class DatabaseTest < Minitest::Test
       cursor.replace(Core::Slot.uint(42))
       tx.release_checkpoint(checkpoint)
       GC.start
+
       assert_equal 42, cursor.slot.value
     end
   end

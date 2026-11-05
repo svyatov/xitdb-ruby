@@ -18,12 +18,13 @@ class StoreTest < Minitest::Test
 
   def test_exclusive_creation_and_existing_only_open_preserve_file_identity
     assert_raises(Errno::ENOENT) { file_store(create: false) }
-    refute File.exist?(@path)
+    refute_path_exists @path
     created = file_store(exclusive: true)
     created.write_at(0, "kept")
     created.sync
     assert_raises(Errno::EEXIST) { file_store(exclusive: true) }
     existing = file_store(create: false)
+
     assert_equal "kept", existing.read_at(0, 4)
     assert_raises(ArgumentError) { file_store(create: false, exclusive: true) }
     assert_raises(ArgumentError) { file_store(readonly: true, exclusive: true) }
@@ -38,16 +39,19 @@ class StoreTest < Minitest::Test
     File.link(@path, alias_path)
     aliased = XitDB::Core::FileStore.open(alias_path)
     @stores << aliased
+
     assert_equal original.storage_identity, aliased.storage_identity
-    assert original.storage_identity.frozen?
+    assert_predicate original.storage_identity, :frozen?
     File.unlink(@path)
     replacement = file_store
     replacement.write_at(0, "kept")
+
     refute_equal original.storage_identity, replacement.storage_identity
     assert_equal original.storage_identity, aliased.storage_identity
     first = XitDB::Core::MemoryStore.new("kept")
     second = XitDB::Core::MemoryStore.new("kept")
     @stores.push(first, second)
+
     refute_equal first.storage_identity, second.storage_identity
   end
 
@@ -57,11 +61,13 @@ class StoreTest < Minitest::Test
     assert_raises(Errno::ENOENT) { file_store }
     assert File.symlink?(@path)
     assert_equal target, File.readlink(@path)
-    refute File.exist?(target)
+    refute_path_exists target
     File.binwrite(target, "kept")
     store = file_store
+
     assert_equal "kept", store.read_at(0, 4)
     store.sync
+
     assert_equal "kept", File.binread(target)
     assert_equal target, File.readlink(@path)
   end
@@ -70,6 +76,7 @@ class StoreTest < Minitest::Test
   def test_positional_reads_and_bounded_pending_writes
     each_store do |store|
       store.write_at(0, "abcdef")
+
       assert_equal "cd", store.read_at(2, 2)
       assert_equal 6, store.append("gh")
       assert_equal "abcdefgh", store.read_at(0, 8)
@@ -78,8 +85,10 @@ class StoreTest < Minitest::Test
 
     store = file_store(buffer_limit: 8)
     store.write_at(0, "a" * 8)
+
     assert_equal 0, File.size(@path)
     store.append("b")
+
     assert_equal 8, File.size(@path)
     assert_equal "aaaaaaaab", store.read_at(0, 9)
   end
@@ -90,10 +99,12 @@ class StoreTest < Minitest::Test
       source = +"é\xff".b
       store.write_at(0, source)
       source.clear
+
       assert_equal "\xa9\xff".b, store.read_at(1, 2)
       assert_equal Encoding::BINARY, store.read_at(0, 3).encoding
       read = store.read_at(0, 3)
       read.clear
+
       assert_equal "\xc3\xa9\xff".b, store.read_at(0, 3)
       assert_equal "".b, store.read_at(100, 0)
       assert_raises(EOFError) { store.read_at(2, 2) }
@@ -104,6 +115,7 @@ class StoreTest < Minitest::Test
     store = XitDB::Core::MemoryStore.new(initial)
     @stores << store
     initial.clear
+
     assert_equal "abc", store.read_at(0, 3)
   end
 
@@ -112,10 +124,12 @@ class StoreTest < Minitest::Test
     store = file_store(buffer_limit: 4)
     store.write_at(0, "abcdefghij")
     store.write_at(3, "XY")
+
     assert_equal "abcXYfghij", store.read_at(0, 10)
     assert_equal "cXYf", store.read_at(2, 4)
     store.write_at(0, "0123456789")
     store.flush
+
     assert_equal "0123456789", File.binread(@path)
   end
 
@@ -123,12 +137,16 @@ class StoreTest < Minitest::Test
   def test_truncate_and_sparse_writes
     each_store do |store|
       store.write_at(3, "xy")
+
       assert_equal "\0\0\0xy".b, store.read_at(0, 5)
       store.truncate(4)
+
       assert_equal "\0\0\0x".b, store.read_at(0, 4)
       store.truncate(7)
+
       assert_equal "\0\0\0x\0\0\0".b, store.read_at(0, 7)
       store.truncate(0)
+
       assert_equal 0, store.append("z")
       assert_equal "z", store.read_at(0, 1)
     end
@@ -138,6 +156,7 @@ class StoreTest < Minitest::Test
     fault_file(store, :pwrite) { |_original, *_args| raise Errno::ENOSPC }
     store.truncate(0)
     store.flush
+
     assert_equal 0, File.size(@path)
   end
 
@@ -153,9 +172,11 @@ class StoreTest < Minitest::Test
     store.append("d")
     store.close
     store.close
+
     assert_equal "abcd", File.binread(@path)
 
     readonly = file_store(readonly: true)
+
     assert_predicate readonly, :readonly?
     assert_equal "abcd", readonly.read_at(0, 4)
     assert_raises(XitDB::ReadOnlyError) { readonly.write_at(0, "z") }
@@ -180,6 +201,7 @@ class StoreTest < Minitest::Test
       assert_raises(TypeError) { store.append(nil) }
       assert_raises(TypeError) { store.truncate(1.0) }
       store.close
+
       assert_predicate store, :closed?
       assert_raises(XitDB::ClosedError) { store.read_at(0, 0) }
       assert_raises(XitDB::ClosedError) { store.write_at(0, "") }
@@ -214,6 +236,7 @@ class StoreTest < Minitest::Test
       end
       original.call([count, 2].min, offset)
     end
+
     assert_equal "abcdef", store.read_at(0, 6)
     assert_equal "abcdef", File.binread(@path)
   end
@@ -234,6 +257,7 @@ class StoreTest < Minitest::Test
     assert_equal "abcdef", store.read_at(0, 6)
     failing = false
     store.flush
+
     assert_equal "abcdef", File.binread(@path)
 
     store.append("g")
@@ -244,6 +268,7 @@ class StoreTest < Minitest::Test
     assert_raises(IOError) { store.flush }
     failing = false
     store.flush
+
     assert_equal "abcdefg", File.binread(@path)
   end
 
@@ -260,11 +285,12 @@ class StoreTest < Minitest::Test
       original.call(bytes, offset)
     end
     assert_raises(Errno::ENOSPC) { store.close }
-    refute store.closed?
-    refute store.instance_variable_get(:@file).closed?
+    refute_predicate store, :closed?
+    refute_predicate store.instance_variable_get(:@file), :closed?
     store.close(discard: true)
-    assert store.closed?
-    assert store.instance_variable_get(:@file).closed?
+
+    assert_predicate store, :closed?
+    assert_predicate store.instance_variable_get(:@file), :closed?
     assert_equal "kept", File.binread(@path)
     store.close(discard: true)
   ensure
@@ -285,6 +311,7 @@ class StoreTest < Minitest::Test
     refute_predicate store, :closed?
     failing = false
     store.close
+
     assert_equal "abc", File.binread(@path)
   end
 
@@ -301,12 +328,14 @@ class StoreTest < Minitest::Test
         end
       end
       Timeout.timeout(2) { entered.pop }
+
       assert_equal "abc", store.read_at(0, 3)
       ran = false
       assert_raises(XitDB::BusyError) { store.with_exclusive_lock(timeout: 0.02) { ran = true } }
       refute ran
       release << true
       writer.value
+
       assert_equal :result, store.with_exclusive_lock(timeout: 0) { :result }
       assert_raises(RuntimeError) { store.with_exclusive_lock { raise "abort" } }
       assert_equal :released, store.with_exclusive_lock(timeout: 0) { :released }
@@ -327,10 +356,12 @@ class StoreTest < Minitest::Test
     [first, second].each do |store|
       fault_file(store, :flock) { |_original, *_args| 0 }
     end
+
     first.with_exclusive_lock do
       assert_raises(XitDB::TransactionStateError) { second.with_exclusive_lock(timeout: 0) { flunk "writer ran" } }
     end
     first.close
+
     assert_equal :released, second.with_exclusive_lock(timeout: 0) { :released }
   end
 
@@ -352,12 +383,14 @@ class StoreTest < Minitest::Test
     end
     ready_writer.close
     release_reader.close
+
     assert_equal "ready", Timeout.timeout(2) { ready_reader.read }
     assert_raises(XitDB::BusyError) { store.with_exclusive_lock(timeout: 0.02) { flunk "writer ran" } }
     release_writer.write("x")
     release_writer.close
     Process.wait(child)
     child = nil
+
     assert_equal :acquired, store.with_exclusive_lock(timeout: 0) { :acquired }
   ensure
     [ready_reader, ready_writer, release_reader, release_writer].compact.each { |io| io.close unless io.closed? }
@@ -392,10 +425,12 @@ class StoreTest < Minitest::Test
         store.close
       end
       Timeout.timeout(2) { closing.pop }
+
       refute_predicate store, :closed?
       release << true
       writer.value
       closer.value
+
       assert_predicate store, :closed?
     ensure
       release << true if writer&.alive?
@@ -421,6 +456,7 @@ class StoreTest < Minitest::Test
       release << true
       writer.value
       closers.each(&:value)
+
       assert_predicate store, :closed?
     ensure
       release << true if writer&.alive?
@@ -433,11 +469,14 @@ class StoreTest < Minitest::Test
   def test_default_buffer_limit_is_two_mebibytes
     store = file_store
     store.write_at(0, "a" * (2 * 1024 * 1024))
+
     assert_equal 0, File.size(@path)
     store.append("b")
+
     assert_equal 2 * 1024 * 1024, File.size(@path)
     store.truncate(0)
     store.write_at(0, "c" * ((2 * 1024 * 1024) + 1))
+
     assert_equal (2 * 1024 * 1024) + 1, File.size(@path)
     assert_equal "cc", store.read_at((2 * 1024 * 1024) - 1, 2)
   end
@@ -454,11 +493,13 @@ class StoreTest < Minitest::Test
     result = catch(:abort) do
       store.with_exclusive_lock(on_release_error: ->(error) { errors << error }) { throw :abort, :original }
     end
+
     assert_equal :original, result
     assert_equal [failure], errors
     assert_raises(XitDB::TransactionStateError) { store.append("must not write") }
     store.close
-    file_store.with_exclusive_lock { assert true }
+
+    assert_equal(:locked, file_store.with_exclusive_lock { :locked })
   end
 
   def test_unlock_failure_after_normal_return_remains_an_error
@@ -505,6 +546,7 @@ class StoreTest < Minitest::Test
     end
     waiting.pop
     finish << true
+
     assert_instance_of IOError, first.value
     assert_instance_of XitDB::TransactionStateError, second.value
   ensure
@@ -527,10 +569,10 @@ class StoreTest < Minitest::Test
     store
   end
 
-  def fault_file(store, method, &fault)
+  def fault_file(store, method, &)
     file = store.instance_variable_get(:@file)
     original = file.method(method)
     file.singleton_class.remove_method(method) if file.singleton_methods.include?(method)
-    file.define_singleton_method(method) { |*args| fault.call(original, *args) }
+    file.define_singleton_method(method) { |*args| yield(original, *args) }
   end
 end

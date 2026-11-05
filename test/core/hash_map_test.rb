@@ -16,6 +16,7 @@ class HashMapTest < Minitest::Test
       map = Core::HashMap.new(root, counted: true)
       map.put(first_hash, key: Core::Slot.uint(1), value: Core::Slot.uint(7))
       map.put(second_hash, key: Core::Slot.uint(2), value: Core::Slot.uint(8))
+
       assert_equal 2, map.size
       assert_equal 7, map.get(first_hash).value
       assert map.remove(first_hash)
@@ -32,19 +33,21 @@ class HashMapTest < Minitest::Test
       core = Core::Database.memory
       core.transaction do |root|
         map = klass.new(root)
+
         assert_equal tag, root.slot.tag
         assert_equal 0, map.size
         map.add(hash(1), key: Core::Slot.int(-1))
         map.put(hash(2), key: Core::Slot.float(-0.0), value: Core::Slot.null)
         map.put(hash(1), key: Core::Slot.uint(999), value: Core::Slot.uint(7))
         map.add(hash(3), key: Core::Slot.null)
+
         assert_equal 3, map.size
         assert_equal (1 << 64) - 1, map.key(hash(1)).value
         assert_equal 1 << 63, map.key(hash(2)).value
         assert map.get(hash(2)).full
-        assert map.get(hash(3)).empty?
-        assert map.include?(hash(3))
-        refute map.include?(hash(4))
+        assert_empty map.get(hash(3))
+        assert_includes map, hash(3)
+        refute_includes map, hash(4)
         assert_nil map.get(hash(4))
         assert_nil map.key(hash(4))
         assert_equal [1, 2, 3], map.each_entry.map { |h, _k, _v| h.unpack1("H*").to_i(16) }.sort
@@ -53,6 +56,7 @@ class HashMapTest < Minitest::Test
         assert_empty root.transaction.instance_variable_get(:@checkpoints)
       end
       reader = klass.new(core.root_cursor)
+
       assert_equal 2, reader.size
       assert_raises(XitDB::ReadOnlyError) { reader.remove(hash(90)) }
       assert_raises(XitDB::ReadOnlyError) { reader.add(hash(90), key: Core::Slot.uint(90)) }
@@ -71,17 +75,21 @@ class HashMapTest < Minitest::Test
       list = Core::ArrayList.new(child)
       list.append(Core::Slot.uint(11))
       alias_child = root.child(kind: :array_list, selector: 0).child(kind: :hash_map, selector: hash(7))
+
       assert_same child, alias_child
       root.transaction.freeze
       list.append(Core::Slot.uint(12))
+
       assert_equal [11, 12], Core::ArrayList.new(alias_child).map(&:value)
       map.put(hash(8), key: Core::Slot.uint(8), value: Core::Slot.uint(8))
+
       assert_equal 2, list.size
       descendant = list.cursor_at(0)
       checkpoint = root.transaction.checkpoint
       map.remove(hash(7))
       assert_raises(XitDB::ExpiredViewError) { descendant.slot }
       root.transaction.restore(checkpoint)
+
       assert_equal 11, descendant.slot.value
       assert_equal 2, map.size
       map.put(hash(7), key: Core::Slot.uint(7), value: Core::Slot.uint(99))
@@ -110,6 +118,7 @@ class HashMapTest < Minitest::Test
       assert_equal 1, map.size
       map.add(hash(4), key: Core::Slot.uint(4))
     end
+
     assert_equal 1, Core::HashSet.new(Core::HashMap.new(old).cursor_at(hash(1))).size
     assert_equal 2, Core::HashSet.new(Core::HashMap.new(core.root_cursor).cursor_at(hash(1))).size
   end
@@ -117,13 +126,15 @@ class HashMapTest < Minitest::Test
   def test_missing_reads_never_initialize_a_parent
     core = Core::Database.memory
     original_size = core.committed_size
+
     assert_equal 0, Core::HashMap.new(core.root_cursor).size
     assert_equal original_size, core.committed_size
     core.transaction do |root|
       length = root.transaction.length
+
       assert_nil root.child(kind: :hash_map, selector: hash(1))
       assert_nil root.child(kind: :hash_set, selector: hash(1))
-      assert root.slot.empty?
+      assert_empty root.slot
       assert_equal length, root.transaction.length
     end
   end
@@ -152,13 +163,16 @@ class HashMapTest < Minitest::Test
       map = Core::CountedHashMap.new(root)
       utf8_hash = "é" * 10
       map.put(utf8_hash, key: Core::Slot.uint(1), value: Core::Slot.uint(7))
-      assert map.include?(utf8_hash)
+
+      assert_includes map, utf8_hash
       assert_equal 7, map.get(utf8_hash.b).value
       map.put(utf8_hash.b, key: Core::Slot.uint(2), value: Core::Slot.uint(8))
+
       assert_equal 1, map.size
       assert_equal 8, map.get(utf8_hash).value
       child = map.cursor_at(utf8_hash)
       child.replace(Core::Slot.uint(9))
+
       assert_equal 9, map.get(utf8_hash.b).value
       assert map.remove(utf8_hash)
       assert_equal 0, map.size
@@ -174,6 +188,7 @@ class HashMapTest < Minitest::Test
         map = Core::CountedHashMap.new(root)
         map.put(first, key: Core::Slot.uint(1), value: Core::Slot.uint(7))
         map.put(second, key: Core::Slot.uint(2), value: Core::Slot.uint(8))
+
         assert_equal 2, map.size
         assert_equal 7, map.get(first).value
         assert_equal 8, map.get(second).value
@@ -185,7 +200,7 @@ class HashMapTest < Minitest::Test
 
   def test_many_shared_branches_collapse_after_removal_without_changing_snapshots
     core = Core::Database.memory
-    hashes = 100.times.map { |i| [format("%04x", i) + ("a" * 36)].pack("H*") }
+    hashes = Array.new(100) { |i| [format("%04x", i) + ("a" * 36)].pack("H*") }
     core.transaction do |root|
       map = Core::CountedHashMap.new(root)
       hashes.each_with_index { |h, i| map.put(h, key: Core::Slot.uint(i), value: Core::Slot.uint(i + 1)) }
@@ -255,7 +270,7 @@ class HashMapTest < Minitest::Test
         path = File.join(dir, "#{klass.name.split("::").last}.xit")
         Core::Database.open(path) { |db| db.transaction { |root| klass.new(root) } }
         Core::Database.open(path, readonly: true) do |db|
-          refute db.root_cursor.slot.empty?
+          refute_empty db.root_cursor.slot
           assert_equal 0, klass.new(db.root_cursor).size
         end
       end
@@ -266,8 +281,9 @@ class HashMapTest < Minitest::Test
     Core::Database.memory.transaction do |root|
       map = Core::HashMap.new(root)
       100.times { |i| map.add(hash(i), key: Core::Slot.uint(i)) }
-      references = 100.times.map { |i| WeakRef.new(map.cursor_at(hash(i))) }
+      references = Array.new(100) { |i| WeakRef.new(map.cursor_at(hash(i))) }
       3.times { GC.start }
+
       assert_equal 0, references.count(&:weakref_alive?)
       assert_equal 0, root.instance_variable_get(:@children).size
       assert_empty root.transaction.instance_variable_get(:@checkpoints)

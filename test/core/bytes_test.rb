@@ -12,6 +12,7 @@ class BytesTest < Minitest::Test
       plain = Core::Bytes.append(root.transaction, size: 7, prefix: "p") { "1234567" }
       tagged = Core::Bytes.append(root.transaction, size: 5, prefix: "p", format_tag: "xy") { "12345" }
       external = Core::Bytes.append(root.transaction, size: 6, prefix: "p", format_tag: "xy") { "123456" }
+
       assert_equal :short_bytes, plain.tag
       assert_equal :short_bytes, tagged.tag
       assert_equal :bytes, external.tag
@@ -30,6 +31,7 @@ class BytesTest < Minitest::Test
       root.replace(core.bytes(input))
       store.fault = nil
     end
+
     assert_equal "changed!!", input
     assert_equal "123456789", core.root_cursor.read_bytes.bytes
   end
@@ -45,6 +47,7 @@ class BytesTest < Minitest::Test
     core.transaction do |root|
       root.replace(Core::Bytes.copy(source, size: 65_537, database: core, transaction: root.transaction))
     end
+
     assert_equal [65_536, 1], requests
     assert_equal "x" * 65_537, core.root_cursor.read_bytes.bytes
   end
@@ -53,8 +56,10 @@ class BytesTest < Minitest::Test
     core = Core::Database.memory
     core.transaction do |root|
       slot = Core::Bytes.append(root.transaction, size: 0, representation: :external) { flunk "empty source" }
+
       assert_equal :bytes, slot.tag
       source = Core::Bytes.open(core, slot, bound: root.transaction.length)
+
       assert_nil source.format_tag
       assert_equal "".b, source.read(0, 0)
       assert_raises(XitDB::InvalidValueError) { Core::Bytes.open(core, Core::Slot.uint(1), bound: root.transaction.length) }
@@ -79,7 +84,7 @@ class BytesTest < Minitest::Test
       end
     end
     assert_same original, error
-    assert core.root_cursor.slot.empty?
+    assert_empty core.root_cursor.slot
   end
 
   def test_writer_rejects_nonstring_and_oversized_tags_without_io
@@ -101,6 +106,7 @@ class BytesTest < Minitest::Test
       rescue Encoding::CompatibilityError => e
         flunk "valid binary tag rejected: #{e.message}"
       end
+
       assert_equal "\0x".b, Core::Bytes.open(core, slot, bound: root.transaction.length).format_tag
       assert_equal Encoding::UTF_16BE, tag.encoding
     end
@@ -114,6 +120,7 @@ class BytesTest < Minitest::Test
         Core::Bytes.open(core, slot, bound: root.transaction.length - 1)
       end
       source = Core::Bytes.open(core, slot, bound: root.transaction.length)
+
       assert_equal "xy", source.format_tag
     end
   end
@@ -124,6 +131,7 @@ class BytesTest < Minitest::Test
     old = core.root_cursor
     source = Core::Bytes.open(core, old.slot, bound: old.bound)
     core.transaction { |root| root.replace(core.bytes("a later and larger value")) }
+
     assert_equal 9, source.size
     assert_equal "123456789", source.read(0, 9)
     assert_raises(XitDB::CorruptionError) { Core::Bytes.open(core, core.root_cursor.slot, bound: old.bound) }
@@ -138,6 +146,7 @@ class BytesTest < Minitest::Test
     core.transaction do |root|
       inline = Core::Bytes.open(core, core.bytes("abc"), bound: root.transaction.length)
       external = Core::Bytes.open(core, core.bytes("123456789"), bound: root.transaction.length)
+
       assert_equal "".b, inline.read(3, 0)
     end
     core.close
@@ -177,7 +186,7 @@ class BytesTest < Minitest::Test
     assert_equal [[0, 65_536], [65_536, 1]], calls
     assert_equal 62, store.length
     assert_equal 62, core.committed_size
-    assert core.root_cursor.slot.empty?
+    assert_empty core.root_cursor.slot
   end
 
   def test_store_failure_propagates_without_writer_cleanup_or_retry
@@ -202,13 +211,16 @@ class BytesTest < Minitest::Test
       store.events.clear
       source = Core::Bytes.open(core, slot, bound: root.transaction.length)
       reads = store.events.select { |name, args| name == :read_at && args.last.positive? }.map(&:last)
+
       assert_equal [[slot.value, 8], [slot.value + 17, 2]], reads
       store.events.clear
+
       assert_equal "12", source.read(0, 2)
       assert_equal "89", source.read(7, 2)
       assert_equal 9, source.size
       assert_equal "xy", source.format_tag
       reads = store.events.select { |event| event.first == :read_at }.map(&:last)
+
       assert_equal [[slot.value + 8, 2], [slot.value + 15, 2]], reads
     end
   end
@@ -269,6 +281,7 @@ class BytesTest < Minitest::Test
 
   def test_writer_rejects_a_missing_block_result
     core = Core::Database.memory
+
     core.transaction do |root|
       assert_raises(EOFError) { Core::Bytes.append(root.transaction, size: 1) }
     end
@@ -276,6 +289,7 @@ class BytesTest < Minitest::Test
 
   def test_writer_rejects_a_nonstring_block_result
     core = Core::Database.memory
+
     core.transaction do |root|
       assert_raises(TypeError) { Core::Bytes.append(root.transaction, size: 1) { 1 } }
     end
@@ -283,6 +297,7 @@ class BytesTest < Minitest::Test
 
   def test_writer_rejects_a_nil_block_result
     core = Core::Database.memory
+
     core.transaction do |root|
       assert_raises(EOFError) { Core::Bytes.append(root.transaction, size: 1) { nil } }
     end
@@ -295,6 +310,7 @@ class BytesTest < Minitest::Test
       store.events.clear
       assert_raises(ArgumentError) { Core::Bytes.append(root.transaction, size: 9) { "x" * 10 } }
       appends = store.events.select { |event| event.first == :append }.map { |_, args| args.first }
+
       assert_equal [[9].pack("Q>")], appends
       root.transaction.cancel_publication
     end
@@ -323,6 +339,7 @@ class BytesTest < Minitest::Test
         payload.byteslice(position, length)
       end
       source = Core::Bytes.open(core, slot, bound: root.transaction.length)
+
       assert_equal 131_076, source.size
       assert_equal prefix + payload, source.read(0, source.size)
       assert_equal "xy", source.format_tag
@@ -354,11 +371,13 @@ class BytesTest < Minitest::Test
     core = Core::Database.memory
     core.transaction do |root|
       slot = Core::Bytes.append(root.transaction, size: 0, format_tag: "\xff\0".b, representation: :external) { flunk "empty payload" }
+
       assert_equal :bytes, slot.tag
       source = Core::Bytes.open(core, slot, bound: root.transaction.length)
+
       assert_equal 0, source.size
       assert_equal "\xff\0".b, source.format_tag
-      assert source.format_tag.frozen?
+      assert_predicate source.format_tag, :frozen?
       assert_equal Encoding::BINARY, source.format_tag.encoding
       assert_equal "".b, source.read(0, 0)
       assert_equal [0].pack("Q>") + "\xff\0".b, root.transaction.read_at(slot.value, 10)
@@ -373,6 +392,7 @@ class BytesTest < Minitest::Test
         calls << [position, length]
         "a\0b".b.byteslice(position, length)
       end
+
       assert_equal :bytes, slot.tag
       assert_equal [[0, 3]], calls
       assert_equal "a\0b".b, Core::Bytes.open(core, slot, bound: root.transaction.length).read(0, 3)
@@ -384,10 +404,13 @@ class BytesTest < Minitest::Test
     core.transaction do |root|
       inline = core.bytes("abc")
       external = core.bytes("123456789")
+
       assert_equal ["abc".b, 3], Core::Bytes.locate(core, inline, bound: root.transaction.length)
       data, = Core::Bytes.locate(core, inline, bound: root.transaction.length)
-      refute data.frozen?
+
+      refute_predicate data, :frozen?
       data.replace("xyz")
+
       assert_equal "abc", Core::Bytes.locate(core, inline, bound: root.transaction.length).first
       assert_equal [external.value + 8, 9], Core::Bytes.locate(core, external, bound: root.transaction.length)
       error = assert_raises(XitDB::InvalidValueError) do
@@ -406,6 +429,7 @@ class BytesTest < Minitest::Test
     core.transaction do |root|
       root.replace(Core::Bytes.copy(source, size: 12, database: core, transaction: root.transaction))
     end
+
     assert_equal "123456789abc", core.root_cursor.read_bytes.bytes
   end
 
@@ -414,6 +438,7 @@ class BytesTest < Minitest::Test
     source = StringIO.new("abc")
     core.transaction do |root|
       slot = Core::Bytes.copy(source, size: 8, database: core, transaction: root.transaction)
+
       assert_equal :short_bytes, slot.tag
       assert_equal "abc", core.read_bytes(slot).bytes
     end

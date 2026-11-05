@@ -68,9 +68,10 @@ module Interop
 
   def self.expected_tree(linked_hole: false)
     items = MANIFEST.fetch("scalars").dup
+    collection_sizes = [0, 17]
     KINDS.each do |kind|
-      [0, 17].each do |count|
-        entries = count.times.map do |index|
+      collection_sizes.each do |count|
+        entries = Array.new(count) do |index|
           value = { "tag" => "uint", "full" => false, "bits" => index.to_s }
           if kind.end_with?("list")
             if index < 2
@@ -99,7 +100,7 @@ module Interop
     items = case slot.tag
             when :array_list, :linked_array_list
               list = slot.tag == :array_list ? core::ArrayList.new(cursor) : core::LinkedArrayList.new(cursor)
-              list.size.times.map { |index| normalized(list.cursor_at(index)) }
+              Array.new(list.size) { |index| normalized(list.cursor_at(index)) }
             when :hash_map, :hash_set, :counted_hash_map, :counted_hash_set
               core::HashMap.from_cursor(cursor).each_entry.map do |_hash, key, value|
                 [child.call(key).read_bytes.bytes.unpack1("H*"),
@@ -124,6 +125,7 @@ module Interop
 
   def self.write_tree(path, hash_size: 20, hash_id: "sha1")
     core = XitDB::Core
+    collection_sizes = [0, 17]
     core::Database.open(path, file_id: 1, hash_size: hash_size, hash_id: hash_id) do |db|
       db.transaction { |root| core::ArrayList.new(root).append(core::Slot.uint(7)) }
       first = db.committed_size
@@ -142,7 +144,7 @@ module Interop
           list.append(slot)
         end
         KINDS.each do |kind|
-          [0, 17].each do |count|
+          collection_sizes.each do |count|
             list.append(core::Slot.new)
             cursor = list.cursor_at(list.size - 1)
             collection = case kind
@@ -518,7 +520,7 @@ module Interop
       XitDB::Core::Database.open(go_path, readonly: true) do |db|
         list = XitDB::Core::ArrayList.new(db.root_cursor)
         assert_equal length, list.size
-        assert_equal(values, length.times.map { |index| read_cursor_value(list.cursor_at(index)) })
+        assert_equal(values, Array.new(length) { |index| read_cursor_value(list.cursor_at(index)) })
       end
     end
     puts "8 array lengths checked with sparse slots and occupied nulls in both directions"
@@ -632,7 +634,7 @@ module Interop
     end
     assert_equal true, graph.full
     pointer = kind == "history" ? db.read_at(graph.value + 8, 8, bound: db.committed_size).unpack1("Q>") : graph.value
-    children = 4.times.map { |i| core::Slot.parse(db.read_at(pointer + (i * 9), 9, bound: db.committed_size)) }
+    children = Array.new(4) { |i| core::Slot.parse(db.read_at(pointer + (i * 9), 9, bound: db.committed_size)) }
     assert_equal graph, children[0]
     assert_equal children[1], children[2]
     assert_equal payload, db.read_bytes(children[1]).bytes
@@ -741,7 +743,7 @@ module Interop
           list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
           assert_equal :linked_array_list, db.root_cursor.slot.tag
           assert_equal length, list.size
-          assert_equal(oracle, length.times.map { |index| list.get(index).value.to_s })
+          assert_equal(oracle, Array.new(length) { |index| list.get(index).value.to_s })
           assert_equal(oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s })
         end
       end
@@ -754,8 +756,9 @@ module Interop
   end
 
   def self.sorted_collections(binary, dir)
+    collection_sizes = [0, 17, 257, 4097]
     %w[sorted_map sorted_set].each do |tag|
-      [0, 17, 257, 4097].each do |length|
+      collection_sizes.each do |length|
         keys = ["", "\0", "a", "a\0", "aa", "b", "é".b, "\xff".b, "long-key-with-bytes"]
         keys.concat((0...[length - keys.size, 0].max).map { |i| format("k%08d", i) })
         keys = keys.first(length)

@@ -20,11 +20,13 @@ class RubyDatabaseTest < Minitest::Test
       root[:name] = "symbol"
       root["name"] = "string"
     end
+
     assert_equal [:name, "name"], @db.snapshot.keys
     @db.transaction do |root|
       root.delete(:name)
       root[:name] = "again"
     end
+
     assert_equal ["name", :name], @db.snapshot.keys
     Dir.mktmpdir do |directory|
       path = File.join(directory, "native.xit")
@@ -47,6 +49,7 @@ class RubyDatabaseTest < Minitest::Test
       root[0.0] = "zero"
       root["name".encode("US-ASCII")] = "updated"
     end
+
     assert_equal keys, @db.snapshot.keys
     assert_equal(-Float::INFINITY, 1.0 / @db.snapshot.keys[5])
     assert_equal Encoding::UTF_8, @db.snapshot.keys[7].encoding
@@ -70,6 +73,7 @@ class RubyDatabaseTest < Minitest::Test
       root[:data][:members].delete(1).add(1)
       root[:linked].insert(1, :middle)
       root[:linked].concat([4, 5]) # rubocop:disable Style/ConcatArrayLiterals -- Exercise the collection's concat API.
+
       assert_equal [2, 3], root[:linked].pop(4).first(2)
     end
     assert_equal ["Ada", { active: true }], first[:data][:name].to_ruby
@@ -78,10 +82,12 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal [1, :middle], @db.snapshot[:linked].to_ruby
     materialized = @db.snapshot.to_ruby
     materialized[:data][:name][0].replace("independent")
+
     assert_equal "Ada", @db.snapshot[:data][:name][0]
-    assert @db.snapshot[:data][:name][0].frozen?
+    assert_predicate @db.snapshot[:data][:name][0], :frozen?
     assert_equal 2, @db.history.size
     @db.revert(first.revision)
+
     assert_equal first.to_ruby, @db.snapshot.to_ruby
   end
 
@@ -123,6 +129,7 @@ class RubyDatabaseTest < Minitest::Test
         end
         root.open_bytes(key) do |reader|
           escaped_reader = reader
+
           assert_equal "\x00\xff".b, reader.read
         end
       end
@@ -133,6 +140,7 @@ class RubyDatabaseTest < Minitest::Test
           assert_raises(XitDB::ConcurrentModificationError) { items[2] = "bad" }
           writer.write("bytes")
         end
+
         assert_equal [nil, "bytes".b], items.to_ruby
         items.open_bytes(-1) do |reader|
           assert_raises(XitDB::ConcurrentModificationError) { items.insert(0, 1) }
@@ -147,10 +155,12 @@ class RubyDatabaseTest < Minitest::Test
       end
     end
     binary = @db.snapshot[:blob]
+
     assert_equal Encoding::BINARY, binary.encoding
-    assert binary.frozen?
+    assert_predicate binary, :frozen?
     copy = @db.snapshot.to_ruby
     copy[:blob].replace("changed")
+
     assert_equal "\x00\xff".b, @db.snapshot[:blob]
     assert_raises(XitDB::ExpiredViewError) { escaped_reader.read }
     assert_raises(XitDB::ExpiredViewError) { escaped_writer.write("late") }
@@ -170,7 +180,8 @@ class RubyDatabaseTest < Minitest::Test
         end
       RUBY
       output, status = Open3.capture2e(RbConfig.ruby, "-Ilib", "-e", script, path)
-      assert status.success?, output
+
+      assert_predicate status, :success?, output
       XitDB::Ruby.open(path, readonly: true) do |db|
         assert_equal [:name, 2**200, "name"], db.snapshot.keys
         assert_equal [true, Rational(2, 3)], db.snapshot[2**200].to_ruby
@@ -202,10 +213,12 @@ class RubyDatabaseTest < Minitest::Test
         assert_equal before, root.to_ruby
         items[:first] = 3 unless set
         items.delete(:first)
+
         assert_empty items
         assert_raises(RangeError) { set ? items.add(:second) : items[:second] = 2 }
         items.clear
         set ? items.add(:second) : items[:second] = 2
+
         assert_equal [:second], set ? items.to_a : items.keys
         assert_equal 1, physical_envelope(items).get(1).value
       end
@@ -220,6 +233,7 @@ class RubyDatabaseTest < Minitest::Test
     end
     snapshot = @db.snapshot
     envelope = physical_envelope(snapshot)
+
     assert_equal 4, envelope.size
     assert_equal 0x52420103, envelope.get(0).value
     assert_equal 3, envelope.get(1).value
@@ -227,22 +241,27 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal :sorted_map, envelope.get(3).tag
     [[:array, 0x52420101, :array_list], [:linked, 0x52420102, :linked_array_list]].each do |key, marker, tag|
       item = physical_envelope(snapshot[key])
+
       assert_equal 2, item.size
       assert_equal marker, item.get(0).value
       assert_equal tag, item.get(1).tag
     end
     set = physical_envelope(snapshot[:set])
+
     assert_equal 0x52420104, set.get(0).value
     lookup = XitDB::Core::HashMap.new(snapshot.context.cursor(set.get(2)), counted: true)
     digest, key, record_slot = lookup.each_entry.first
+
     assert_equal Digest::SHA256.digest("\x06\x00\x06member".b), digest
     assert_equal "\x06\x00\x06member".b, @db.core.read_bytes(key).bytes
     record = XitDB::Core::ArrayList.new(snapshot.context.cursor(record_slot))
+
     assert_equal 3, record.size
     assert_equal XitDB::Core::Slot.null, record.get(1)
     assert_equal 0, record.get(2).value
     order = XitDB::Core::SortedMap.new(snapshot.context.cursor(set.get(3)))
     id, hash_slot = order.each.first
+
     assert_equal "\0".b * 8, id
     assert_equal digest, @db.core.read_bytes(hash_slot).bytes
   end
@@ -279,12 +298,13 @@ class RubyDatabaseTest < Minitest::Test
     codecs = []
     other = XitDB::Ruby.memory(codecs: codecs)
     codecs << Object.new
+
     assert_empty other.profile.codecs
     refute_same other.profile, @db.profile
     Dir.mktmpdir do |directory|
       path = File.join(directory, "rejected.xit")
       assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.open(path, codecs: codecs) }
-      refute File.exist?(path)
+      refute_path_exists path
     end
   ensure
     other&.close
@@ -303,11 +323,12 @@ class RubyDatabaseTest < Minitest::Test
 
   def test_invalid_codec_configuration_rejects_without_input_hooks_or_file_creation
     configurations = [Class.new(Array).new([Object.new]), [Object.new], Object.new, BasicObject.new]
+    input_hooks = %i[instance_of? class empty? dup initialize_dup]
     Dir.mktmpdir do |directory|
       configurations.each_with_index do |codecs, index|
         calls = []
         if Object === codecs # rubocop:disable Style/CaseEquality -- Avoid calling reflection on BasicObject or hostile inputs.
-          %i[instance_of? class empty? dup initialize_dup].each do |method|
+          input_hooks.each do |method|
             codecs.define_singleton_method(method) do |*|
               calls << method
               raise "configuration hook ran"
@@ -318,7 +339,7 @@ class RubyDatabaseTest < Minitest::Test
         assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.memory(codecs: codecs, &:close) }
         assert_raises(XitDB::CodecConfigurationError) { XitDB::Ruby.open(path, codecs: codecs, &:close) }
         assert_empty calls
-        refute File.exist?(path)
+        refute_path_exists path
       end
     end
   end
@@ -334,24 +355,27 @@ class RubyDatabaseTest < Minitest::Test
     end
     first = XitDB::Ruby.memory(codecs: codecs)
     second = XitDB::Ruby.memory(codecs: codecs)
+
     assert_empty first.profile.codecs
     assert_empty second.profile.codecs
-    assert first.profile.codecs.frozen?
-    assert second.profile.codecs.frozen?
+    assert_predicate first.profile.codecs, :frozen?
+    assert_predicate second.profile.codecs, :frozen?
     refute_same codecs, first.profile.codecs
     refute_same codecs, second.profile.codecs
     refute_same first.profile.codecs, second.profile.codecs
     Dir.mktmpdir do |directory|
       path = File.join(directory, "empty.xit")
       accepted = nil
+
       assert_equal :done, XitDB::Ruby.open(path, codecs: codecs) { |db|
         accepted = db
         :done
       }
-      assert accepted.closed?
-      assert File.exist?(path)
+      assert_predicate accepted, :closed?
+      assert_path_exists path
     end
     codecs << Object.new
+
     assert_empty first.profile.codecs
     assert_empty second.profile.codecs
     assert_empty calls
@@ -400,12 +424,14 @@ class RubyDatabaseTest < Minitest::Test
       root[1] = []
       integer_child = root[1]
       root[1.0] = []
+
       assert_empty integer_child
       root.write_bytes(-0.0) do |writer|
         assert_raises(XitDB::ConcurrentModificationError) { root[0.0] = "bad" }
         root[0] = "integer"
         writer.write("float")
       end
+
       assert_equal "float", root.open_bytes(0.0, &:read)
       assert_equal "integer", root[0]
       root["ascii"] = []
@@ -419,6 +445,7 @@ class RubyDatabaseTest < Minitest::Test
     escaped = nil
     @db.transaction do |root|
       root.write_bytes(:blob) { |writer| writer.write("before") }
+
       root.open_bytes(:blob) do |reader|
         assert_instance_of XitDB::TransactionStateError, Thread.new {
           begin
@@ -431,6 +458,7 @@ class RubyDatabaseTest < Minitest::Test
       assert_raises(RuntimeError) do
         root.write_bytes(:blob) do |writer|
           escaped = writer
+
           assert_instance_of XitDB::TransactionStateError, Thread.new {
             begin
               writer.write("bad")
@@ -444,7 +472,7 @@ class RubyDatabaseTest < Minitest::Test
         end
       end
       assert_equal "before", root[:blob]
-      assert_equal true, root[:sibling]
+      assert_same true, root[:sibling]
     end
     assert_raises(XitDB::ExpiredViewError) { escaped.pos }
     assert_raises(XitDB::ReadOnlyError) { @db.snapshot.write_bytes(:blob) { flunk } }
@@ -469,10 +497,13 @@ class RubyDatabaseTest < Minitest::Test
     end
     items = snapshot[:items]
     decoded.clear
+
     assert_equal 100, items.size
     size_reads = decoded.size
+
     assert_operator size_reads, :<, 10
     decoded.clear
+
     assert_equal [42, "value"], items[42].to_ruby
     assert_operator decoded.size, :<, 100
     assert_raises(XitDB::UnsupportedEncodingError) { snapshot[:untouched] }
@@ -483,6 +514,7 @@ class RubyDatabaseTest < Minitest::Test
     @db.transaction do |root|
       root[:pair] = [shared, shared]
       root[:pair][0] << 1
+
       assert_equal [["value", 1], ["value"]], root[:pair].to_ruby
       before = root.to_ruby
       bad = { ok: [1], bad: { deep: Object.new } }
@@ -494,6 +526,7 @@ class RubyDatabaseTest < Minitest::Test
       root[:deep] = nested
       materialized = root[:deep].to_ruby
       100.times { materialized = materialized[0] }
+
       assert_equal 1, materialized
     end
   end
@@ -518,6 +551,7 @@ class RubyDatabaseTest < Minitest::Test
       assert_equal 1, physical_envelope(items).get(1).value
       fail_record = false
       items[:second] = 2
+
       assert_equal %i[first second], items.keys
       assert_equal 2, physical_envelope(items).get(1).value
     end
@@ -542,6 +576,7 @@ class RubyDatabaseTest < Minitest::Test
       assert_equal({ first: 1, second: 2 }, items.to_ruby)
       assert_equal 2, items.size
       fail_count = false
+
       assert_equal 1, items.delete(:first)
       assert_equal [:second], items.keys
     end
@@ -554,6 +589,7 @@ class RubyDatabaseTest < Minitest::Test
       root["\u00e9"] = "text"
       root["\xc3\xa9".b] = "binary"
     end
+
     assert_equal 3, @db.snapshot.size
     assert_equal Encoding::UTF_16LE, @db.snapshot.keys.first.encoding
     assert_equal 2, @db.snapshot["".b]
@@ -568,10 +604,12 @@ class RubyDatabaseTest < Minitest::Test
       left, right = root[:items].split(2)
       root[:copy] = right
       root[:items].concat(left)
+
       assert_equal [1, 2, 3, 4, 1, 2], root[:items].to_ruby
       assert_equal [3, 4], root[:copy].to_ruby
       assert_equal :linked_array, root[:copy].kind
       root[:items].clear
+
       assert_empty root[:items]
       assert_equal [3, 4], root[:copy].to_ruby
     end
@@ -648,6 +686,7 @@ class RubyDatabaseTest < Minitest::Test
       end
       root[:copy] = snapshot[:source]
       root[:source] << "changed"
+
       assert_equal ["original"], root[:copy].to_ruby
       assert_equal %w[original changed], root[:source].to_ruby
     end
@@ -674,6 +713,7 @@ class RubyDatabaseTest < Minitest::Test
       array = root[:array]
       child = array[0]
       iterator = array.each
+
       assert_equal [1], iterator.next.to_ruby
       before = root.to_ruby
       assert_raises(TypeError) { root.merge!(hash_class.new) }
@@ -684,6 +724,7 @@ class RubyDatabaseTest < Minitest::Test
       child << 3
       root[:rescued] = "yes"
     end
+
     assert_equal({ kept: "value", array: [[1, 3], [2]], rescued: "yes" }, @db.snapshot.to_ruby)
   end
 
@@ -704,6 +745,7 @@ class RubyDatabaseTest < Minitest::Test
         assert_equal({ kept: "value" }, root.to_ruby)
         writer.write("data")
       end
+
       assert_equal "data", root.open_bytes(:stream, &:read)
     end
   end
@@ -716,6 +758,7 @@ class RubyDatabaseTest < Minitest::Test
         array = root[:array].push([1], [2])
         child = array[0]
         iterator = array.each
+
         assert_equal [1], iterator.next.to_ruby
         before = root.to_ruby
         bound = root.context.read_bound
@@ -736,6 +779,7 @@ class RubyDatabaseTest < Minitest::Test
         assert_equal [2], iterator.next.to_ruby
         child << 3
         array.concat([4]) # rubocop:disable Style/ConcatArrayLiterals -- Exercise the collection's concat API.
+
         assert_equal [[1, 3], [2], 4], array.to_ruby
       end
     end
@@ -746,6 +790,7 @@ class RubyDatabaseTest < Minitest::Test
       root[:array] = [1]
       root[:detached] = { value: 2 }
       detached = root.delete(:detached)
+
       refute_same root.context, detached.context
       readonly = root[:array][0, 1]
       snapshot = @db.snapshot
@@ -761,15 +806,18 @@ class RubyDatabaseTest < Minitest::Test
         [2]
       end
       root[:array].concat(coercer)
+
       assert_equal [1, 2], root[:array].to_ruby
       assert_equal 2, detached[:value]
       detached[:value] = 5
       root[:copy] = detached
+
       assert_equal({ value: 5 }, root[:copy].to_ruby)
       root.write_bytes(:stream) do |writer|
         root[:sibling] = 6
         writer.write("stream")
       end
+
       assert_equal 6, root[:sibling]
     end
   end
@@ -781,10 +829,12 @@ class RubyDatabaseTest < Minitest::Test
       before = root.context.read_bound
       coercer = Object.new
       coercer.define_singleton_method(:to_ary) { throw :stop, :stopped }
+
       assert_equal :stopped, catch(:stop) { items.concat([2], coercer) }
       assert_equal before, root.context.read_bound
       assert_equal [1], items.to_ruby
       items.concat([3]) # rubocop:disable Style/ConcatArrayLiterals -- Exercise the collection's concat API.
+
       assert_equal [1, 3], items.to_ruby
     end
   end
