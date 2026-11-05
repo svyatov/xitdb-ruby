@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"slices"
@@ -37,6 +39,7 @@ type request struct {
 	FileID        string        `json:"file_id"`
 	Value         value         `json:"value"`
 	Values        []value       `json:"values"`
+	Scalars       []value       `json:"scalars"`
 	Collection    string        `json:"collection"`
 	Entries       []hashEntry   `json:"entries"`
 	Removals      []string      `json:"removals"`
@@ -81,6 +84,9 @@ func run() error {
 	var req request
 	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
 		return err
+	}
+	if req.Case == "all-kinds" {
+		return allKinds(req)
 	}
 	if req.Operation != "read" && req.Operation != "write" {
 		return fmt.Errorf("unsupported operation: %s", req.Operation)
@@ -150,6 +156,355 @@ func run() error {
 	result, err := readValue(db.RootCursor().ReadCursor)
 	if err != nil {
 		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(result)
+}
+
+var kindNames = []string{"array_list", "linked_array_list", "hash_map", "hash_set", "counted_hash_map", "counted_hash_set", "sorted_map", "sorted_set"}
+var tagNames = []string{"none", "index", "array_list", "linked_array_list", "hash_map", "kv_pair", "bytes", "short_bytes", "uint", "int", "float", "hash_set", "counted_hash_map", "counted_hash_set", "sorted_map", "sorted_set", "sorted_kv_pair"}
+var iteration = []int{}
+
+func normalized(cursor *xitdb.ReadCursor) (any, error) {
+	slot, err := cursor.Slot()
+	if err != nil {
+		return nil, err
+	}
+	tag := tagNames[slot.Tag]
+	if !slices.Contains(kindNames, tag) {
+		return readValue(cursor)
+	}
+	items := []any{}
+	if strings.HasSuffix(tag, "list") {
+		returned := 0
+		for _, err := range cursor.All() {
+			if err != nil {
+				return nil, err
+			}
+			returned++
+		}
+		iteration = append(iteration, returned)
+		count, err := cursor.Count()
+		if err != nil {
+			return nil, err
+		}
+		for i := int64(0); i < count; i++ {
+			var path xitdb.PathPart = xitdb.ArrayListGet{Index: i}
+			if tag == "linked_array_list" {
+				path = xitdb.LinkedArrayListGet{Index: i}
+			}
+			child, err := cursor.ReadPath([]xitdb.PathPart{path})
+			if err != nil {
+				return nil, err
+			}
+			var item any = map[string]any{"tag": "none", "full": false, "bits": "0"}
+			if child != nil {
+				item, err = normalized(child)
+				if err != nil {
+					return nil, err
+				}
+			}
+			items = append(items, item)
+		}
+		return map[string]any{"tag": tag, "items": items}, nil
+	}
+	for child, err := range cursor.All() {
+		if err != nil {
+			return nil, err
+		}
+		var key []byte
+		var value any
+		if tag == "sorted_set" {
+			key, err = child.ReadBytes(-1)
+		} else {
+			pair, pairErr := child.ReadKeyValuePair()
+			if pairErr != nil {
+				return nil, pairErr
+			}
+			key, err = pair.KeyCursor.ReadBytes(-1)
+			if !strings.HasSuffix(tag, "set") && err == nil {
+				value, err = normalized(pair.ValueCursor)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, []any{hex.EncodeToString(key), value})
+	}
+	slices.SortFunc(items, func(a, b any) int { return strings.Compare(a.([]any)[0].(string), b.([]any)[0].(string)) })
+	return map[string]any{"tag": tag, "items": items}, nil
+}
+
+func populateKinds(db *xitdb.Database, req request) error {
+	history, err := xitdb.NewWriteArrayList(db.RootCursor())
+	if err != nil {
+		return err
+	}
+	if err = history.Append(xitdb.NewUint(7)); err != nil {
+		return err
+	}
+	first, err := db.CommittedSize()
+	if err != nil {
+		return err
+	}
+	err = history.AppendContext(nil, func(cursor *xitdb.WriteCursor) error {
+		list, err := xitdb.NewWriteArrayList(cursor)
+		if err != nil {
+			return err
+		}
+		for _, value := range req.Scalars {
+			data, err := writeValue(value)
+			if err != nil {
+				return err
+			}
+			if err = list.Append(data); err != nil {
+				return err
+			}
+		}
+		for _, kind := range kindNames {
+			for _, count := range []int{0, 17} {
+				child, err := list.AppendCursor()
+				if err != nil {
+					return err
+				}
+				var put func(int) error
+				switch kind {
+				case "array_list":
+					c, err := xitdb.NewWriteArrayList(child)
+					if err != nil {
+						return err
+					}
+					put = func(i int) error {
+						if i == 0 {
+							cursor, err := c.AppendCursor()
+							if err != nil {
+								return err
+							}
+							slot, err := cursor.Slot()
+							if err != nil {
+								return err
+							}
+							if !slot.Empty() {
+								return fmt.Errorf("unexpected array append occupancy")
+							}
+							return nil
+						}
+						if i == 1 {
+							return c.Append(xitdb.Slot{Tag: xitdb.TagNone, Full: false})
+						}
+						return c.Append(xitdb.NewUint(uint64(i)))
+					}
+				case "linked_array_list":
+					c, err := xitdb.NewWriteLinkedArrayList(child)
+					if err != nil {
+						return err
+					}
+					put = func(i int) error {
+						if i == 0 {
+							cursor, err := c.AppendCursor()
+							if err != nil {
+								return err
+							}
+							slot, err := cursor.Slot()
+							if err != nil {
+								return err
+							}
+							if slot.Empty() {
+								return fmt.Errorf("unexpected linked append occupancy")
+							}
+							return nil
+						}
+						if i == 1 {
+							return c.Append(xitdb.Slot{Tag: xitdb.TagNone, Full: false})
+						}
+						return c.Append(xitdb.NewUint(uint64(i)))
+					}
+				case "hash_map", "counted_hash_map":
+					var c interface {
+						Put(string, xitdb.WriteableData) error
+					}
+					if kind == "hash_map" {
+						c, err = xitdb.NewWriteHashMap(child)
+					} else {
+						c, err = xitdb.NewWriteCountedHashMap(child)
+					}
+					if err != nil {
+						return err
+					}
+					put = func(i int) error { return c.Put(fmt.Sprintf("k%02d", i), xitdb.NewUint(uint64(i))) }
+				case "hash_set", "counted_hash_set":
+					var c interface{ Put(string) error }
+					if kind == "hash_set" {
+						c, err = xitdb.NewWriteHashSet(child)
+					} else {
+						c, err = xitdb.NewWriteCountedHashSet(child)
+					}
+					if err != nil {
+						return err
+					}
+					put = func(i int) error { return c.Put(fmt.Sprintf("k%02d", i)) }
+				case "sorted_map":
+					c, err := xitdb.NewWriteSortedMap(child)
+					if err != nil {
+						return err
+					}
+					put = func(i int) error { return c.Put(fmt.Sprintf("k%02d", i), xitdb.NewUint(uint64(i))) }
+				case "sorted_set":
+					c, err := xitdb.NewWriteSortedSet(child)
+					if err != nil {
+						return err
+					}
+					put = func(i int) error { return c.Put(fmt.Sprintf("k%02d", i)) }
+				}
+				for i := range count {
+					if err := put(i); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	end, err := db.CommittedSize()
+	if err != nil {
+		return err
+	}
+	for _, part := range []struct {
+		suffix     string
+		start, end int64
+	}{{"base", 0, first}, {"delta", first, end}} {
+		var output bytes.Buffer
+		if err := db.ReadCommitted(part.start, part.end, &output); err != nil {
+			return err
+		}
+		if err := os.WriteFile(req.Path+"."+part.suffix, output.Bytes(), 0600); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func allKinds(req request) error {
+	if !((req.Hash.ID == "sha1" && req.Hash.Size == 20) || (req.Hash.ID == "rb01" && req.Hash.Size == 32) || (req.Hash.ID == "s384" && req.Hash.Size == 48)) {
+		return fmt.Errorf("unsupported hash")
+	}
+	hasher := xitdb.Hasher{Hash: sha1.New, ID: xitdb.BytesToID([4]byte{'s', 'h', 'a', '1'}), FileID: 1}
+	if req.Hash.ID == "rb01" {
+		hasher.Hash = sha256.New
+		hasher.ID = xitdb.BytesToID([4]byte{'r', 'b', '0', '1'})
+	}
+	if req.Hash.ID == "s384" {
+		hasher.Hash = sha512.New384
+		hasher.ID = xitdb.BytesToID([4]byte{'s', '3', '8', '4'})
+	}
+	flags := os.O_RDONLY
+	if req.Operation == "write" {
+		flags = os.O_RDWR | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(req.Path, flags, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	db, err := xitdb.NewDatabase(xitdb.NewCoreFile(file), hasher)
+	if err != nil {
+		return err
+	}
+	var result any
+	switch req.Operation {
+	case "write", "read":
+		if req.Operation == "write" {
+			if err := populateKinds(db, req); err != nil {
+				return err
+			}
+		}
+		tree, err := normalized(db.RootCursor().ReadCursor)
+		if err != nil {
+			return err
+		}
+		result = map[string]any{"tree": tree, "iteration": iteration}
+	case "compact":
+		target, err := os.OpenFile(req.Path+".compact", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		defer target.Close()
+		compacted, err := db.Compact(xitdb.NewCoreFile(target), make(xitdb.MemoryOffsetMap))
+		if err != nil {
+			return err
+		}
+		size, err := compacted.CommittedSize()
+		if err != nil {
+			return err
+		}
+		result = map[string]string{"size": strconv.FormatInt(size, 10)}
+	case "replicate":
+		target, err := os.OpenFile(req.Path+".replica", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
+		if err != nil {
+			return err
+		}
+		defer target.Close()
+		replica, err := xitdb.NewDatabase(xitdb.NewCoreFile(target), hasher)
+		if err != nil {
+			return err
+		}
+		base, err := os.ReadFile(req.Path + ".base")
+		if err != nil {
+			return err
+		}
+		delta, err := os.ReadFile(req.Path + ".delta")
+		if err != nil {
+			return err
+		}
+		if err := replica.ApplyReplicated(0, bytes.NewReader(base), int64(len(base))); err != nil {
+			return err
+		}
+		before, err := replica.ReplicaState()
+		if err != nil {
+			return err
+		}
+		start, err := db.ReplicationStart(before)
+		if err != nil {
+			return err
+		}
+		if start != int64(len(base)) {
+			return fmt.Errorf("prefix proof failed")
+		}
+		err = replica.ApplyReplicated(start, bytes.NewReader(delta[:len(delta)/2]), int64(len(delta)))
+		if !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Errorf("expected interrupted transport, got %v", err)
+		}
+		after, err := replica.ReplicaState()
+		if err != nil {
+			return err
+		}
+		if before != after {
+			return fmt.Errorf("interrupted replica published")
+		}
+		if err := replica.ApplyReplicated(start, bytes.NewReader(delta), int64(len(delta))); err != nil {
+			return err
+		}
+		state, err := replica.ReplicaState()
+		if err != nil {
+			return err
+		}
+		for _, part := range []struct {
+			suffix     string
+			start, end int64
+		}{{"base", 0, start}, {"delta", start, state.CommittedSize}} {
+			var output bytes.Buffer
+			if err := db.ReadCommitted(part.start, part.end, &output); err != nil {
+				return err
+			}
+			if err := os.WriteFile(req.Path+".reference."+part.suffix, output.Bytes(), 0600); err != nil {
+				return err
+			}
+		}
+		result = map[string]any{"interrupted": true, "size": strconv.FormatInt(state.CommittedSize, 10), "checksum": strconv.FormatUint(state.Checksum, 10)}
+	default:
+		return fmt.Errorf("unsupported operation: %s", req.Operation)
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)
 }

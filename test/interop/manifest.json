@@ -1,5 +1,23 @@
 {
   "references": {
+    "typescript": {
+      "repository": "xit-vcs/xitdb-ts",
+      "revision": "01ca291fd1a57a2047ee03ca6344abd009480730",
+      "source_glob": "src/**/*.ts",
+      "source_sha256": "e5852414c881ddea44a7c4a594a12ab6a02f9c50bf4d7701c9014a236edf2e9b"
+    },
+    "java": {
+      "repository": "xit-vcs/xitdb-java",
+      "revision": "905be4a6035975846d4ffe2e76ade8929eaf9d0d",
+      "source_glob": "src/main/java/**/*.java",
+      "source_sha256": "913f0f8b26087b7799a619eb38b3692d82266d95cf3c7182b795e6c380874185"
+    },
+    "zig": {
+      "repository": "xit-vcs/xitdb",
+      "revision": "6b93af1af3a260399fa0a0b1b268ded2cbf5eec5",
+      "source_glob": "src/lib.zig",
+      "source_sha256": "9ed624ae56356f534b6bd7fc27f889bbacf27e574c01467bb783f3365078663a"
+    },
     "go": {
       "repository": "xit-vcs/xitdb-go",
       "revision": "86db69bc728d2e9bdd015f9cefa23df40beaab65",
@@ -13,6 +31,11 @@
     {"tag": "int", "full": false, "bits": "9223372036854775808"},
     {"tag": "int", "full": false, "bits": "9223372036854775807"},
     {"tag": "uint", "full": false, "bits": "18446744073709551615"},
+    {"tag": "uint", "full": false, "bits": "9223372036854775807"},
+    {"tag": "uint", "full": false, "bits": "9223372036854775808"},
+    {"tag": "uint", "full": false, "bits": "9223372036854775809"},
+    {"tag": "int", "full": false, "bits": "9007199254740991"},
+    {"tag": "int", "full": false, "bits": "9007199254740993"},
     {"tag": "float", "full": false, "bits": "9223372036854775808"},
     {"tag": "float", "full": false, "bits": "4609434218613702656"},
     {"tag": "float", "full": false, "bits": "9218868437227405312"},
