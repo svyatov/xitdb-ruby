@@ -14,7 +14,7 @@ class SortedMapTest < Minitest::Test
       key = Core::Slot.new(tag: :short_bytes, value: 0x6100000000000000)
       pair = tx.append(key.to_bytes + Core::Slot.uint(7).to_bytes)
       entry = Core::Slot.new(tag: :sorted_kv_pair, value: pair)
-      leaf = tx.append([0, 1].pack("CC") + entry.to_bytes + "\0" * 135)
+      leaf = tx.append([0, 1].pack("CC") + entry.to_bytes + ("\0" * 135))
       header = tx.append([1, leaf].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :sorted_map, value: header))
       map = Core::SortedMap.new(root)
@@ -32,7 +32,7 @@ class SortedMapTest < Minitest::Test
       index = Core::SortedMap.new(root)
       %w[c a b].each_with_index { |key, i| index.put(key, value: Core::Slot.uint(i)) }
       assert_equal 1, index.rank("b")
-      assert_equal ["b", "c"], index.each_from("b").map(&:first)
+      assert_equal %w[b c], index.each_from("b").map(&:first)
       assert_equal "c", index.at(-1).first
       ["", "\0", "a\0", "é", "\xff".b].each { |key| index.put(key, value: Core::Slot.null) }
       assert_equal ["", "\0", "a", "a\0", "b", "c", "é".b, "\xff".b], index.map(&:first)
@@ -139,10 +139,10 @@ class SortedMapTest < Minitest::Test
     end
     map = Core::SortedMap.new(db.root_cursor)
     store.events.clear
-    assert_equal [4095, 4096], map.each_from("00004095").map { |_key, slot| slot.value }
+    assert_equal([4095, 4096], map.each_from("00004095").map { |_key, slot| slot.value })
     assert_operator store.events.count { |name, _| name == :read_at }, :<, 100
     store.events.clear
-    assert_equal [4095, 4096], map.each_from_index(4095).map { |_key, slot| slot.value }
+    assert_equal([4095, 4096], map.each_from_index(4095).map { |_key, slot| slot.value })
     assert_operator store.events.count { |name, _| name == :read_at }, :<, 30
   end
 
@@ -158,7 +158,7 @@ class SortedMapTest < Minitest::Test
       retained = nested.cursor
       root.transaction.freeze
       nested.add("b")
-      assert_equal ["a", "b"], nested.map(&:first)
+      assert_equal %w[a b], nested.map(&:first)
       assert_equal 1, map.size
       assert_same nested.cursor, map.cursor_at("hash").child(kind: :hash_map, selector: key)
       nested.add("c")
@@ -169,7 +169,7 @@ class SortedMapTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { retained.slot }
     reader = Core::SortedMap.new(db.root_cursor)
     nested_cursor = Core::HashMap.new(reader.cursor_at("hash")).cursor_at("\x01" * 20)
-    assert_equal ["a", "b", "c"], Core::SortedSet.new(nested_cursor).map(&:first)
+    assert_equal %w[a b c], Core::SortedSet.new(nested_cursor).map(&:first)
   end
 
   def test_malformed_nodes_records_cycles_and_captured_bounds_fail
@@ -183,15 +183,15 @@ class SortedMapTest < Minitest::Test
       tx.write_at(pointer + 2, Core::Slot.uint(1).to_bytes)
       assert_raises(XitDB::CorruptionError) { map.at(0) }
       cycle = tx.length
-      branch = [1, 1].pack("CC") + Core::Slot.new(tag: :index, value: cycle).to_bytes + "\0" * 279
-      branch << ([1] + [0] * 15).pack("Q>*")
+      branch = [1, 1].pack("CC") + Core::Slot.new(tag: :index, value: cycle).to_bytes + ("\0" * 279)
+      branch << ([1] + ([0] * 15)).pack("Q>*")
       tx.append(branch)
       header = tx.append([1, cycle].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :sorted_map, value: header))
       assert_raises(XitDB::CorruptionError) { map.get("a") }
       assert_raises(XitDB::CorruptionError) { map.at(0) }
       record = tx.append(Core::Slot.uint(1).to_bytes + Core::Slot.uint(2).to_bytes)
-      leaf = tx.append([0, 1].pack("CC") + Core::Slot.new(tag: :sorted_kv_pair, value: record).to_bytes + "\0" * 135)
+      leaf = tx.append([0, 1].pack("CC") + Core::Slot.new(tag: :sorted_kv_pair, value: record).to_bytes + ("\0" * 135))
       header = tx.append([1, leaf].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :sorted_map, value: header))
       assert_raises(XitDB::CorruptionError) { map.get("a") }

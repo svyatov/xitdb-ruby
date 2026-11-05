@@ -17,12 +17,13 @@ module PackageHelpers
       package_command({}, Gem.ruby, gem_command, "build", "xitdb.gemspec", "--output", artifact, chdir: ROOT)
       spec = Gem::Package.new(artifact).spec
       home = File.join(directory, "gems")
-      environment = {"GEM_HOME" => home, "GEM_PATH" => [home, Gem.default_dir].join(File::PATH_SEPARATOR),
-                     "RUBYLIB" => nil, "RUBYOPT" => nil, "BUNDLE_IGNORE_CONFIG" => "1",
-                     "BUNDLE_GEMFILE" => File.join(directory, "Gemfile")}
+      environment = { "GEM_HOME" => home, "GEM_PATH" => [home, Gem.default_dir].join(File::PATH_SEPARATOR),
+                      "RUBYLIB" => nil, "RUBYOPT" => nil, "BUNDLE_IGNORE_CONFIG" => "1",
+                      "BUNDLE_GEMFILE" => File.join(directory, "Gemfile") }
       package_command(environment, Gem.ruby, gem_command, "install", "--local", "--ignore-dependencies",
                       "--no-document", "--install-dir", home, artifact, chdir: directory)
-      File.write(File.join(directory, "Gemfile"), "source \"https://rubygems.org\"\ngem \"xitdb\", \"#{spec.version}\"\n")
+      File.write(File.join(directory, "Gemfile"),
+                 "source \"https://rubygems.org\"\ngem \"xitdb\", \"#{spec.version}\"\n")
       package_command(environment, Gem.ruby, bundle_command, "lock", "--local", chdir: directory)
       @package = [directory, environment, spec, File.join(home, "gems", "xitdb-#{spec.version}"), bundle_command]
       yield spec
@@ -41,7 +42,7 @@ module PackageHelpers
 
   def package_command(environment, *command, **options)
     output, status = Bundler.with_unbundled_env { Open3.capture2e(environment, *command, **options) }
-    raise "#{command.join(' ')} failed (#{status.exitstatus}):\n#{output}" unless status.success?
+    raise "#{command.join(" ")} failed (#{status.exitstatus}):\n#{output}" unless status.success?
 
     output
   end

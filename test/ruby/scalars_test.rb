@@ -10,8 +10,8 @@ class RubyScalarsTest < RubyProfileTest
   def test_literal_scalar_fixtures
     values = {
       "nil" => nil, "false" => false, "true" => true, "zero" => 0,
-      "signed_min" => -(2**63), "signed_max" => 2**63 - 1,
-      "unsigned_min" => 2**63, "unsigned_max" => 2**64 - 1,
+      "signed_min" => -(2**63), "signed_max" => (2**63) - 1,
+      "unsigned_min" => 2**63, "unsigned_max" => (2**64) - 1,
       "large_positive" => 2**64, "large_negative" => -(2**63) - 1,
       "positive_zero" => 0.0, "negative_zero" => -0.0,
       "positive_infinity" => Float::INFINITY, "negative_infinity" => -Float::INFINITY,
@@ -117,7 +117,7 @@ class RubyScalarsTest < RubyProfileTest
       assert_raises(XitDB::UnsupportedValueError) { store(value) }
     end
     value = +"text"
-    def value.special = true
+    def value.special = :singleton_behavior
     assert_raises(XitDB::UnsupportedValueError) { store(value) }
   end
 
@@ -137,7 +137,7 @@ class RubyScalarsTest < RubyProfileTest
       assert_empty calls
       assert_equal "text", value
     end
-    assert_equal "text", round_trip("text".freeze)
+    assert_equal "text", round_trip("text")
   end
 
   def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
@@ -151,7 +151,7 @@ class RubyScalarsTest < RubyProfileTest
   end
 
   def test_string_validation_is_nonmutating_and_warning_clean
-    program = <<~'RUBY'
+    program = <<~RUBY
       require "xitdb/ruby"
       [XitDB, XitDB::Ruby].each do |profile|
         profile.memory do |db|
@@ -177,7 +177,6 @@ class RubyScalarsTest < RubyProfileTest
         value = +"text"
         behavior = Module.new do
           define_method(name) { |*| raise "private override ran" }
-          private name
         end
         prepend ? value.singleton_class.prepend(behavior) : value.extend(behavior)
         assert_raises(XitDB::UnsupportedValueError) { store(value) }
@@ -186,4 +185,6 @@ class RubyScalarsTest < RubyProfileTest
       end
     end
   end
+
+  name
 end

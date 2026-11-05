@@ -28,7 +28,10 @@ class PublicDurabilityTest < Minitest::Test
     fault = fail_sync(1)
     invocations = 0
     error = assert_raises(XitDB::CommitError) do
-      @database.transaction { |root| invocations += 1; root["counter"] = 1 }
+      @database.transaction do |root|
+        invocations += 1
+        root["counter"] = 1
+      end
     end
     assert_equal :not_committed, error.outcome
     assert_same fault, error.cause
@@ -44,7 +47,10 @@ class PublicDurabilityTest < Minitest::Test
     fault = fail_sync(2)
     invocations = 0
     error = assert_raises(XitDB::CommitError) do
-      @database.transaction { |root| invocations += 1; root["counter"] = 1 }
+      @database.transaction do |root|
+        invocations += 1
+        root["counter"] = 1
+      end
     end
     assert_equal :unknown, error.outcome
     assert_same fault, error.cause
@@ -85,7 +91,10 @@ class PublicDurabilityTest < Minitest::Test
     @store.release_fault = -> { raise fault }
     invocations = 0
     error = assert_raises(XitDB::CommitError) do
-      @database.transaction { |root| invocations += 1; root["counter"] = 1 }
+      @database.transaction do |root|
+        invocations += 1
+        root["counter"] = 1
+      end
     end
     assert_equal :committed, error.outcome
     assert_same fault, error.cause
@@ -141,8 +150,16 @@ class PublicDurabilityTest < Minitest::Test
     end
   ensure
     if pid
-      Process.kill("KILL", pid) rescue Errno::ESRCH
-      Process.wait(pid) rescue Errno::ECHILD
+      begin
+        Process.kill("KILL", pid)
+      rescue StandardError
+        Errno::ESRCH
+      end
+      begin
+        Process.wait(pid)
+      rescue StandardError
+        Errno::ECHILD
+      end
     end
     [reader, writer].compact.each { |io| io.close unless io.closed? }
   end
@@ -201,7 +218,10 @@ class PublicDurabilityTest < Minitest::Test
           assert captured.instance_variable_get(:@file).closed?
           refute XitDB::Core::FileStore.const_get(:WRITERS).key?(captured.storage_identity)
           assert_equal physical, File.binread(path)
-          assert_equal before, source.respond_to?(:snapshot) ? source.snapshot.to_ruby : source.root_cursor.slot if source
+          if source
+            assert_equal before,
+                         source.respond_to?(:snapshot) ? source.snapshot.to_ruby : source.root_cursor.slot
+          end
         ensure
           XitDB::Core::FileStore.singleton_class.remove_method(:open)
           XitDB::Core::FileStore.define_singleton_method(:open, original)
@@ -218,9 +238,9 @@ class PublicDurabilityTest < Minitest::Test
       path = File.join(@directory, "sync-#{api.name}-#{operation}")
       with_file_syncs do |events, files|
         output = create_output(api, operation, path)
-        assert_equal [:file, :directory], events.first(2), "#{api} #{operation}"
+        assert_equal %i[file directory], events.first(2), "#{api} #{operation}"
         assert_equal 1, events.count(:directory)
-        assert files.select { |file, _, directory| directory }.all? { |file, _, _| file.closed? }
+        assert(files.select { |_file, _, directory| directory }.all? { |file, _, _| file.closed? })
         output.close
       ensure
         output&.close
@@ -228,11 +248,11 @@ class PublicDurabilityTest < Minitest::Test
       with_file_syncs do |events, _files|
         api.open(path) do |db|
           db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(2)) : root["value"] = 2 }
-          assert_equal [:file, :directory, :file], events
+          assert_equal %i[file directory file], events
           events.clear
           db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(3)) : root["value"] = 3 }
         end
-        assert_equal [:file, :file], events
+        assert_equal %i[file file], events
       end
     end
   end
@@ -245,8 +265,8 @@ class PublicDurabilityTest < Minitest::Test
         error = assert_raises(XitDB::CommitError) { create_output(api, operation, path) }
         assert_same failure, error.cause
         assert_equal(operation == :replica ? :unknown : :not_committed, error.outcome)
-        assert_equal [:file, :directory], events
-        assert files.all? { |file, _, _| file.closed? }
+        assert_equal %i[file directory], events
+        assert(files.all? { |file, _, _| file.closed? })
         files.reject { |_, _, directory| directory }.each do |_, identity, _|
           refute XitDB::Core::FileStore.const_get(:WRITERS).key?(identity)
         end
@@ -271,8 +291,8 @@ class PublicDurabilityTest < Minitest::Test
       error = assert_raises(XitDB::CommitError) { create_output(XitDB::Core::Database, :replica, path) }
       assert_equal :unknown, error.outcome
       assert_same failure, error.cause
-      assert_equal [:file, :directory], events
-      assert files.all? { |file, _, _| file.closed? }
+      assert_equal %i[file directory], events
+      assert(files.all? { |file, _, _| file.closed? })
     end
     uncertain = File.binread(path)
     with_file_syncs do |events, _files|
@@ -283,10 +303,10 @@ class PublicDurabilityTest < Minitest::Test
         assert_empty events
         assert_equal 1, db.root_cursor.slot.value
         db.transaction { |root| root.replace(XitDB::Core::Slot.uint(2)) }
-        assert_equal [:file, :directory, :file], events
+        assert_equal %i[file directory file], events
         events.clear
         db.transaction { |root| root.replace(XitDB::Core::Slot.uint(3)) }
-        assert_equal [:file, :file], events
+        assert_equal %i[file file], events
       end
     end
   end
@@ -299,17 +319,20 @@ class PublicDurabilityTest < Minitest::Test
       XitDB.open(@path) do |db|
         calls = 0
         error = assert_raises(XitDB::CommitError) do
-          db.transaction { |root| calls += 1; root["counter"] = 1 }
+          db.transaction do |root|
+            calls += 1
+            root["counter"] = 1
+          end
         end
         assert_equal :not_committed, error.outcome
         assert_same failure, error.cause
         assert_equal 1, calls
-        assert_equal [:file, :directory], events
+        assert_equal %i[file directory], events
         refute db.core.needs_reopen?
         assert_equal 0, db.snapshot["counter"]
         assert_equal original, File.binread(@path)
       end
-      assert files.all? { |file, _, _| file.closed? }
+      assert(files.all? { |file, _, _| file.closed? })
       assert_equal registrations, XitDB::Core::FileStore.const_get(:WRITERS).fetch(@real.storage_identity).last
     end
   end
@@ -329,11 +352,11 @@ class PublicDurabilityTest < Minitest::Test
         events.dup
       end
       observed = if cooperation == :thread
-        Thread.new(&initialize_and_commit).value
-      else
-        in_process(&initialize_and_commit)
-      end
-      assert_equal [:file, :directory, :file, :file, :file], observed, cooperation.to_s
+                   Thread.new(&initialize_and_commit).value
+                 else
+                   in_process(&initialize_and_commit)
+                 end
+      assert_equal %i[file directory file file file], observed, cooperation.to_s
       before = File.binread(path)
       creator = XitDB::Core::Database.new(store: created)
       assert_equal 7, creator.root_cursor.slot.value
@@ -351,15 +374,15 @@ class PublicDurabilityTest < Minitest::Test
       reader.close
       begin
         Marshal.dump([:ok, yield], writer)
-      rescue Exception => error
-        Marshal.dump([:error, error.class.name, error.message], writer)
+      rescue Exception => e # rubocop:disable Lint/RescueException -- Report Interrupt and fatal exceptions from the child process.
+        Marshal.dump([:error, e.class.name, e.message], writer)
       ensure
         writer.close
       end
       exit! 0
     end
     writer.close
-    result = Timeout.timeout(5) { Marshal.load(reader) }
+    result = Timeout.timeout(5) { Marshal.load(reader) } # rubocop:disable Security/MarshalLoad -- The private pipe contains only our forked child's result.
     _, status = Timeout.timeout(5) { Process.wait2(pid) }
     pid = nil
     assert status.success?
@@ -367,8 +390,16 @@ class PublicDurabilityTest < Minitest::Test
     result.last
   ensure
     if pid
-      Process.kill("KILL", pid) rescue Errno::ESRCH
-      Process.wait(pid) rescue Errno::ECHILD
+      begin
+        Process.kill("KILL", pid)
+      rescue StandardError
+        Errno::ESRCH
+      end
+      begin
+        Process.wait(pid)
+      rescue StandardError
+        Errno::ECHILD
+      end
     end
     [reader, writer].compact.each { |io| io.close unless io.closed? }
   end

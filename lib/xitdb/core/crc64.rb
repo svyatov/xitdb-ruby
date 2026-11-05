@@ -2,6 +2,7 @@
 
 module XitDB
   module Core
+    # Calculates the checksum used by root trailers.
     module CRC64
       MASK = 0xffffffffffffffff
       POLYNOMIAL = 0xc96c5795d7870f42

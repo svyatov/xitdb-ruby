@@ -34,14 +34,15 @@ module BoundedWorkload
     Dir.mktmpdir("xitdb-#{mode}-") do |directory|
       output, status = Open3.capture2("df", "-Pk", directory)
       raise "disk-space check failed" unless status.success?
+
       available = Integer(output.lines.last.split.fetch(3)) * 1024
-      required = (data_mib || 1) * MIB * 4 + 64 * MIB
+      required = ((data_mib || 1) * MIB * 4) + (64 * MIB)
       raise "need #{required} free bytes, found #{available}" if available < required
 
       name = "xitdb-#{SecureRandom.hex(8)}"
       command = ["docker", "run", "--pull=never", "--network=none", "--rm", "--name", name,
                  "--memory", "#{limit_mib}m", "--memory-swap", "#{limit_mib}m", "--read-only",
-                 "--mount", "type=bind,src=#{File.expand_path('../..', __dir__)},dst=/repo,readonly",
+                 "--mount", "type=bind,src=#{File.expand_path("../..", __dir__)},dst=/repo,readonly",
                  "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/repo",
                  "--env", "TMPDIR=/work", "ruby:4.0.9-slim", "ruby", "test/stress/workload.rb",
                  mode, "/work", (limit_mib * MIB).to_s, (data_mib || 1).to_s]
@@ -65,8 +66,8 @@ module BoundedWorkload
     swap = Integer(File.read("/sys/fs/cgroup/memory.swap.max"))
     raise "Linux hard memory budget does not match request" unless maximum == limit && swap.zero?
 
-    {"hard_limit_mechanism" => "cgroup_v2", "memory_limit_bytes" => maximum, "swap_limit_bytes" => swap,
-     "ruby_description" => RUBY_DESCRIPTION, "platform" => RUBY_PLATFORM}
+    { "hard_limit_mechanism" => "cgroup_v2", "memory_limit_bytes" => maximum, "swap_limit_bytes" => swap,
+      "ruby_description" => RUBY_DESCRIPTION, "platform" => RUBY_PLATFORM }
   end
 
   def self.measure
@@ -82,7 +83,7 @@ module BoundedWorkload
   end
 
   def self.key(index)
-    "row-%08d" % index
+    format("row-%08d", index)
   end
 
   def self.fixture(database, bytes:, rows:)
@@ -173,14 +174,19 @@ module BoundedWorkload
         when "stream" then check_stream(database, bytes, digest)
         end
       end
-      measurements[operation] = {"seconds" => elapsed, "allocations" => allocated}
+      measurements[operation] = { "seconds" => elapsed, "allocations" => allocated }
     end
     %w[conversion compaction].each do |operation|
       path = File.join(directory, "#{operation}.xit")
       target = nil
       begin
         target, elapsed, allocated = measure do
-          operation == "conversion" ? database.convert(to: path, profile: profile == "ruby" ? :portable : :ruby) : database.compact(to: path)
+          if operation == "conversion"
+            database.convert(to: path,
+                             profile: profile == "ruby" ? :portable : :ruby)
+          else
+            database.compact(to: path)
+          end
         end
         expected_history = operation == "conversion" ? 2 : 1
         _, verification, = measure do
@@ -193,12 +199,12 @@ module BoundedWorkload
           check_pages(target, rows)
           check_stream(target, bytes, digest, converted: operation == "conversion")
         end
-        measurements[operation] = {"seconds" => elapsed, "allocations" => allocated,
-                                   "verification_seconds" => verification, "destination_bytes" => File.size(path),
-                                   "history_count" => target.history.size}
+        measurements[operation] = { "seconds" => elapsed, "allocations" => allocated,
+                                    "verification_seconds" => verification, "destination_bytes" => File.size(path),
+                                    "history_count" => target.history.size }
       ensure
         target&.close
-        File.unlink(path) if File.exist?(path)
+        FileUtils.rm_f(path)
       end
     end
     measurements
@@ -215,15 +221,16 @@ module BoundedWorkload
 
         bound_reads(database)
         OffsetPeak.entries = 0
-        measured = operations(database, profile: profile, bytes: bytes, rows: 8192, digest: digest, directory: directory)
-        {"profile" => profile, "dataset_bytes" => size, "payload_bytes" => bytes, "rows" => 8192,
-         "fixture_seconds" => creation, "fixture_allocated_objects" => allocations, "operations" => measured,
-         "completed" => measured.keys, "offset_cache_peak_entries" => OffsetPeak.entries,
-         "conversion_history_count" => measured.fetch("conversion").fetch("history_count"),
-         "compaction_history_count" => measured.fetch("compaction").fetch("history_count")}
+        measured = operations(database, profile: profile, bytes: bytes, rows: 8192, digest: digest,
+                                        directory: directory)
+        { "profile" => profile, "dataset_bytes" => size, "payload_bytes" => bytes, "rows" => 8192,
+          "fixture_seconds" => creation, "fixture_allocated_objects" => allocations, "operations" => measured,
+          "completed" => measured.keys, "offset_cache_peak_entries" => OffsetPeak.entries,
+          "conversion_history_count" => measured.fetch("conversion").fetch("history_count"),
+          "compaction_history_count" => measured.fetch("compaction").fetch("history_count") }
       ensure
         database.close
-        File.unlink(path) if File.exist?(path)
+        FileUtils.rm_f(path)
       end
     end
   end
@@ -234,8 +241,8 @@ module BoundedWorkload
       %w[file memory].each do |storage|
         states = storage == "file" ? %w[fresh_handle warm_handle] : %w[first_handle warm_handle]
         states.each do |state|
-          entry = {"profile" => profile, "storage" => storage, "handle_state" => state,
-                   "payload_bytes" => MIB, "rows" => 256, "history_length" => 2, "operations" => {}}
+          entry = { "profile" => profile, "storage" => storage, "handle_state" => state,
+                    "payload_bytes" => MIB, "rows" => 256, "history_length" => 2, "operations" => {} }
           database = nil
           digest = nil
           path = storage == "file" ? File.join(directory, "source.xit") : nil
@@ -248,20 +255,26 @@ module BoundedWorkload
                 entry["fixture_seconds"] << creation
                 entry["dataset_bytes"] = path ? File.size(path) : database.core.root_cursor.bound
                 bound_reads(database)
-                operations(database, profile: profile, bytes: MIB, rows: 256, digest: digest, directory: directory) if state == "warm_handle"
+                if state == "warm_handle"
+                  operations(database, profile: profile, bytes: MIB, rows: 256, digest: digest,
+                                       directory: directory)
+                end
               end
               if state == "fresh_handle"
                 database.close
                 database = open_database(profile, path)
                 bound_reads(database)
               end
-              measured = operations(database, profile: profile, bytes: MIB, rows: 256, digest: digest, directory: directory)
+              measured = operations(database, profile: profile, bytes: MIB, rows: 256, digest: digest,
+                                              directory: directory)
               measured.each do |name, sample|
-                aggregate = entry["operations"][name] ||= {"elapsed_seconds" => [], "allocated_objects" => []}
+                aggregate = entry["operations"][name] ||= { "elapsed_seconds" => [], "allocated_objects" => [] }
                 aggregate["elapsed_seconds"] << sample.fetch("seconds")
                 aggregate["allocated_objects"] << sample.fetch("allocations")
                 aggregate["destination_bytes"] = sample["destination_bytes"] if sample.key?("destination_bytes")
-                (aggregate["verification_seconds"] ||= []) << sample["verification_seconds"] if sample.key?("verification_seconds")
+                if sample.key?("verification_seconds")
+                  (aggregate["verification_seconds"] ||= []) << sample["verification_seconds"]
+                end
               end
               if state == "first_handle"
                 database.close
@@ -270,7 +283,8 @@ module BoundedWorkload
             end
             entry["operations"].each_value do |sample|
               sorted = sample.fetch("elapsed_seconds").sort
-              sample.merge!("minimum_seconds" => sorted.first, "median_seconds" => sorted[1], "maximum_seconds" => sorted.last)
+              sample.merge!("minimum_seconds" => sorted.first, "median_seconds" => sorted[1],
+                            "maximum_seconds" => sorted.last)
             end
             workloads << entry
           ensure
@@ -301,9 +315,9 @@ module BoundedWorkload
             end
             24.times { |index| database.transaction { |root| root["revision"] = index + 1 } }
           end
-          entry = {"profile" => profile, "depth" => depth, "history_length" => 25,
-                   "shared_array_length" => depth.zero? ? 128 : 64, "fixture_seconds" => creation,
-                   "source_bytes" => File.size(source_path), "timeout_seconds" => 10}
+          entry = { "profile" => profile, "depth" => depth, "history_length" => 25,
+                    "shared_array_length" => depth.zero? ? 128 : 64, "fixture_seconds" => creation,
+                    "source_bytes" => File.size(source_path), "timeout_seconds" => 10 }
           started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
           begin
             target, elapsed, allocated = measure do
@@ -315,16 +329,18 @@ module BoundedWorkload
 
               target.history.each do |snapshot|
                 raise "shared array mismatch" unless snapshot["shared"][-1] == (depth.zero? ? 127 : 63)
-                if depth.positive?
-                  value = snapshot["deep"]
-                  depth.times { value = value[0] }
-                  raise "deep leaf mismatch" unless value == "leaf"
-                end
+
+                next unless depth.positive?
+
+                value = snapshot["deep"]
+                depth.times { value = value[0] }
+                raise "deep leaf mismatch" unless value == "leaf"
               end
             end
             entry["verification_seconds"] = verification
           rescue Timeout::Error
-            entry.merge!("status" => "timeout", "conversion_seconds" => Process.clock_gettime(Process::CLOCK_MONOTONIC) - started,
+            elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+            entry.merge!("status" => "timeout", "conversion_seconds" => elapsed,
                          "verification_seconds" => nil)
           end
           entry["destination_bytes"] = File.size(destination)
@@ -333,7 +349,7 @@ module BoundedWorkload
         ensure
           target&.close
           database.close
-          [source_path, destination].each { |path| File.unlink(path) if File.exist?(path) }
+          [source_path, destination].each { |path| FileUtils.rm_f(path) }
         end
       end
     end
@@ -352,6 +368,9 @@ if $PROGRAM_NAME == __FILE__
   else raise ArgumentError, "unknown workload: #{mode}"
   end
   report["memory_peak_bytes"] = Integer(File.read("/sys/fs/cgroup/memory.peak"))
-  report["memory_events"] = File.read("/sys/fs/cgroup/memory.events").lines.to_h { |line| name, value = line.split; [name, Integer(value)] }
+  report["memory_events"] = File.read("/sys/fs/cgroup/memory.events").lines.to_h do |line|
+    name, value = line.split
+    [name, Integer(value)]
+  end
   puts JSON.generate(report)
 end

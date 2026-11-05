@@ -28,7 +28,7 @@ class FormatTest < Minitest::Test
   end
 
   def test_malformed_header_width_and_magic_are_corrupt
-    ["", "xit", "x" * 19, "x" * 21, "bad\0\0\1\0\24sha1" + "\0" * 8].each do |bytes|
+    ["", "xit", "x" * 19, "x" * 21, "bad\0\0\1\0\24sha1#{"\0" * 8}"].each do |bytes|
       assert_raises(XitDB::CorruptionError) { XitDB::Core::Header.parse(bytes) }
     end
   end
@@ -66,9 +66,9 @@ class FormatTest < Minitest::Test
     [
       [:int, -(2**63), "098000000000000000"],
       [:int, -1, "09ffffffffffffffff"],
-      [:int, 2**63 - 1, "097fffffffffffffff"],
+      [:int, (2**63) - 1, "097fffffffffffffff"],
       [:uint, 0, "080000000000000000"],
-      [:uint, 2**64 - 1, "08ffffffffffffffff"]
+      [:uint, (2**64) - 1, "08ffffffffffffffff"]
     ].each do |kind, value, hex|
       slot = XitDB::Core::Slot.public_send(kind, value)
       assert_equal hex, slot.to_bytes.unpack1("H*")
@@ -135,11 +135,9 @@ class FormatTest < Minitest::Test
     path = [+"profile", +"status", 2]
     original = RuntimeError.new("codec failed")
     error = assert_raises(XitDB::UnsupportedValueError) do
-      begin
-        raise original
-      rescue RuntimeError
-        raise XitDB::UnsupportedValueError.new("unsupported value", path: path)
-      end
+      raise original
+    rescue RuntimeError
+      raise XitDB::UnsupportedValueError.new("unsupported value", path: path)
     end
     path[0].replace("changed")
     path << "extra"

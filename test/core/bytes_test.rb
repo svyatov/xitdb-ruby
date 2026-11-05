@@ -98,8 +98,8 @@ class BytesTest < Minitest::Test
       tag = "xy".encode(Encoding::UTF_16BE).byteslice(0, 2)
       begin
         slot = Core::Bytes.append(root.transaction, size: 1, format_tag: tag) { "a" }
-      rescue Encoding::CompatibilityError => error
-        flunk "valid binary tag rejected: #{error.message}"
+      rescue Encoding::CompatibilityError => e
+        flunk "valid binary tag rejected: #{e.message}"
       end
       assert_equal "\0x".b, Core::Bytes.open(core, slot, bound: root.transaction.length).format_tag
       assert_equal Encoding::UTF_16BE, tag.encoding
@@ -189,7 +189,7 @@ class BytesTest < Minitest::Test
       store.fault = ->(name, _) { raise original if name == :append }
       error = assert_raises(IOError) { Core::Bytes.append(root.transaction, size: 9) { flunk "source read after failed header" } }
       assert_same original, error
-      assert_equal [:append], store.events.map(&:first).reject { |name| name == :closed? }
+      assert_equal([:append], store.events.map(&:first).reject { |name| name == :closed? })
       store.fault = nil
     end
   end
@@ -208,7 +208,7 @@ class BytesTest < Minitest::Test
       assert_equal "89", source.read(7, 2)
       assert_equal 9, source.size
       assert_equal "xy", source.format_tag
-      reads = store.events.select { |name, _| name == :read_at }.map(&:last)
+      reads = store.events.select { |event| event.first == :read_at }.map(&:last)
       assert_equal [[slot.value + 8, 2], [slot.value + 15, 2]], reads
     end
   end
@@ -294,7 +294,7 @@ class BytesTest < Minitest::Test
     core.transaction do |root|
       store.events.clear
       assert_raises(ArgumentError) { Core::Bytes.append(root.transaction, size: 9) { "x" * 10 } }
-      appends = store.events.select { |name, _| name == :append }.map { |_, args| args.first }
+      appends = store.events.select { |event| event.first == :append }.map { |_, args| args.first }
       assert_equal [[9].pack("Q>")], appends
       root.transaction.cancel_publication
     end
@@ -317,7 +317,8 @@ class BytesTest < Minitest::Test
     calls = []
     core.transaction do |root|
       store.events.clear
-      slot = Core::Bytes.append(root.transaction, size: payload.bytesize, prefix: prefix, format_tag: "xy") do |position, length|
+      slot = Core::Bytes.append(root.transaction, size: payload.bytesize, prefix: prefix,
+                                                  format_tag: "xy") do |position, length|
         calls << [position, length]
         payload.byteslice(position, length)
       end
@@ -326,7 +327,7 @@ class BytesTest < Minitest::Test
       assert_equal prefix + payload, source.read(0, source.size)
       assert_equal "xy", source.format_tag
       assert_equal [[0, 65_536], [65_536, 3]], calls
-      assert store.events.select { |name, _| name == :append }.all? { |_, args| args.first.bytesize <= 65_536 }
+      assert(store.events.select { |event| event.first == :append }.all? { |_, args| args.first.bytesize <= 65_536 })
     end
     assert_equal "p" * 65_537, prefix
     assert_equal "q" * 65_539, payload

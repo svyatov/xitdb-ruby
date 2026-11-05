@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "test_helper"
 require "stringio"
 require "tmpdir"
@@ -7,7 +8,8 @@ require_relative "../support/fault_store"
 
 class ReplicationTest < Minitest::Test
   Core = XitDB::Core
-  EMPTY = ["7869740000010014736861310000000000000001000000000000000000000000000000003e0000000000000000000000000000000000d95e2cd540a1ea38"].pack("H*").freeze
+  EMPTY = ["7869740000010014736861310000000000000001000000000000000000000000000000003e" \
+           "0000000000000000000000000000000000d95e2cd540a1ea38"].pack("H*").freeze
   # Independent MSB-first CRC-64/XZ vectors, with distinct explicit commit IDs.
   FIRST = ["08000000000000000711223344556677885cc74b2820289d85"].pack("H*").freeze
   DIVERGED = ["0800000000000000078877665544332211bd45d60798aeec1e"].pack("H*").freeze
@@ -77,7 +79,7 @@ class ReplicationTest < Minitest::Test
           assert_equal image(FIRST), File.binread(path)
           refute replica.needs_reopen?
         end
-        input = StringIO.new(SECOND + "next frame")
+        input = StringIO.new("#{SECOND}next frame")
         input.define_singleton_method(:read) { |length| super([length, 2].min) }
         replica.apply_replicated(87, input, 25)
         assert_equal 25, input.pos
@@ -103,7 +105,7 @@ class ReplicationTest < Minitest::Test
       assert_equal EMPTY, File.binread(empty_path)
       invalid = image(FIRST).dup
       invalid[29, 8] = [62].pack("Q>")
-      [image(FIRST).byteslice(0, 80), invalid, image(FIRST) + "extra"].each_with_index do |bytes, i|
+      [image(FIRST).byteslice(0, 80), invalid, "#{image(FIRST)}extra"].each_with_index do |bytes, i|
         failed = File.join(dir, "failed-#{i}")
         assert_raises(EOFError, XitDB::CorruptionError) do
           Core::Database.copy_replica(to: failed, source_io: StringIO.new(bytes), length: [87, bytes.bytesize].max)
@@ -122,7 +124,7 @@ class ReplicationTest < Minitest::Test
       File.link(source_path, hardlink)
       File.symlink(source_path, symlink)
       [source_path, hardlink, symlink].each do |target|
-        input = File.open(source_path, "rb")
+        input = File.open(source_path, "rb") # rubocop:disable Style/FileOpen -- The ensure block closes the descriptor after the assertion.
         assert_raises(ArgumentError) { Core::Database.copy_replica(to: target, source_io: input, length: 87) }
         assert_equal 0, input.pos
         assert_equal image(FIRST), File.binread(source_path)
@@ -234,8 +236,8 @@ class ReplicationTest < Minitest::Test
         end
         store.release_fault = -> { raise IOError, "release failed" } if point == :release
         error = assert_raises(XitDB::CommitError) { replica.apply_replicated(87, StringIO.new(SECOND), 25) }
-        outcome = {append: :not_committed, data_sync: :not_committed, header_write: :unknown,
-                   header_sync: :unknown, release: :committed}.fetch(point)
+        outcome = { append: :not_committed, data_sync: :not_committed, header_write: :unknown,
+                    header_sync: :unknown, release: :committed }.fetch(point)
         assert_equal outcome, error.outcome
         assert_instance_of IOError, error.cause
         store.fault = nil
@@ -247,7 +249,7 @@ class ReplicationTest < Minitest::Test
         else
           assert replica.needs_reopen?
           assert_raises(XitDB::TransactionStateError) { replica.apply_replicated(112, StringIO.new, 0) }
-          assert_raises(XitDB::TransactionStateError) { replica.transaction {} }
+          assert_raises(XitDB::TransactionStateError) { replica.transaction { nil } }
         end
         replica.close
         Core::Database.open(path, readonly: true) do |reopened|
@@ -315,15 +317,16 @@ class ReplicationTest < Minitest::Test
         end
         with_target_store(path, configure) do
           action = -> { Core::Database.copy_replica(to: path, source_io: input, length: 87) }
-          if point == :throw
+          case point
+          when :throw
             catch(:stop) { action.call }
-          elsif point == :throw_in_rescue
+          when :throw_in_rescue
             begin
               raise "enclosing rescue"
             rescue RuntimeError
               catch(:stop) { action.call }
             end
-          elsif point == :interrupt
+          when :interrupt
             assert_raises(Interrupt, &action)
           else
             error = assert_raises(XitDB::CommitError, &action)
@@ -353,17 +356,15 @@ class ReplicationTest < Minitest::Test
           attempts = 0
           file.define_singleton_method(:pwrite) do |bytes, offset|
             attempts += 1
-            if attempts == 1 && prefix_length.positive?
-              write.call(bytes.byteslice(0, prefix_length), offset)
-            else
-              raise storage_error
-            end
+            raise storage_error unless attempts == 1 && prefix_length.positive?
+
+            write.call(bytes.byteslice(0, prefix_length), offset)
           end
           lock = store.method(:with_exclusive_lock)
           store.define_singleton_method(:with_exclusive_lock) do |**options, &block|
             lock.call(**options, &block)
-          rescue XitDB::CommitError => error
-            original_error = error
+          rescue XitDB::CommitError => e
+            original_error = e
             retained_bytes = File.binread(path)
             raise
           end
@@ -469,7 +470,11 @@ class ReplicationTest < Minitest::Test
       second = Core::Database.open(path, lock_timeout: 0.01)
       snapshot = second.root_cursor
       first.transaction do |_root|
-        error = Thread.new { second.apply_replicated(87, StringIO.new(SECOND), 25) rescue $! }.value
+        error = Thread.new do
+          second.apply_replicated(87, StringIO.new(SECOND), 25)
+        rescue StandardError
+          $ERROR_INFO
+        end.value
         assert_instance_of XitDB::BusyError, error
         assert_raises(XitDB::TransactionStateError) { first.apply_replicated(87, StringIO.new(SECOND), 25) }
       end
@@ -493,12 +498,18 @@ class ReplicationTest < Minitest::Test
       source.transaction { |root| root.replace(source.bytes(payload, format_tag: "\xff\x00".b)) }
       output = StringIO.new("".b)
       writes = []
-      output.define_singleton_method(:write) { |bytes| writes << bytes.bytesize; super(bytes) }
+      output.define_singleton_method(:write) do |bytes|
+        writes << bytes.bytesize
+        super(bytes)
+      end
       source.read_committed(0, source.committed_size, output)
       assert_operator writes.max, :<=, 65_536
       output.rewind
       reads = []
-      output.define_singleton_method(:read) { |length| reads << length; super([length, 997].min) }
+      output.define_singleton_method(:read) do |length|
+        reads << length
+        super([length, 997].min)
+      end
       copy = Core::Database.copy_replica(to: File.join(dir, "copy"), source_io: output, length: output.size)
       assert_operator reads.max, :<=, 65_536
       assert_equal "rb01", copy.header.hash_id

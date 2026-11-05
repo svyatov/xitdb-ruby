@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+# Persistent collections with immutable snapshots and explicit transactions.
 module XitDB
+  # Explicit unsigned storage for an integer.
   class UInt
     attr_reader :value
 
@@ -10,8 +12,10 @@ module XitDB
     end
   end
 
+  # Describes the storage layout of a new empty collection.
   class CollectionDeclaration
-    KINDS = %i[hash_map counted_hash_map hash_set counted_hash_set array_list linked_array_list sorted_map sorted_set].freeze
+    KINDS = %i[hash_map counted_hash_map hash_set counted_hash_set array_list linked_array_list sorted_map
+               sorted_set].freeze
 
     attr_reader :kind, :key_kind
 
@@ -27,7 +31,7 @@ module XitDB
     end
 
     def counted?
-      kind == :counted_hash_map || kind == :counted_hash_set
+      %i[counted_hash_map counted_hash_set].include?(kind)
     end
   end
 
@@ -40,17 +44,13 @@ module XitDB
   end
 
   def self.map(counted: false)
-    unless counted.equal?(true) || counted.equal?(false)
-      raise ArgumentError, "counted must be true or false"
-    end
+    raise ArgumentError, "counted must be true or false" unless counted.equal?(true) || counted.equal?(false)
 
     CollectionDeclaration.new(counted ? :counted_hash_map : :hash_map)
   end
 
   def self.set(counted: false)
-    unless counted.equal?(true) || counted.equal?(false)
-      raise ArgumentError, "counted must be true or false"
-    end
+    raise ArgumentError, "counted must be true or false" unless counted.equal?(true) || counted.equal?(false)
 
     CollectionDeclaration.new(counted ? :counted_hash_set : :hash_set)
   end

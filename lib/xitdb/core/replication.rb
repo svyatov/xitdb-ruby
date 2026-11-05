@@ -4,6 +4,7 @@ module XitDB
   module Core
     ReplicaState = Data.define(:committed_size, :checksum)
 
+    # Transfers committed byte ranges while retaining commit outcome semantics.
     module Replication
       CHUNK_SIZE = 64 * 1024
 
@@ -63,6 +64,7 @@ module XitDB
         raise ArgumentError, "full replacement requires Database.copy_replica" if start.zero?
         raise TransactionStateError, "database requires reopening" if @needs_reopen
 
+        # @type var outcome: :not_committed | :committed | :unknown
         outcome = :not_committed
         completed = false
         @store.with_exclusive_lock(timeout: @lock_timeout, on_release_error: ->(_error) { @needs_reopen = true }) do
@@ -72,10 +74,7 @@ module XitDB
           raise ArgumentError, "replication start must equal committed size" unless start == size
 
           begin
-            Replication.storage_write { @store.truncate(size) } if @store.length > size
-            Replication.read_chunks(io, length) do |chunk|
-              Replication.storage_write { @store.append(chunk) }
-            end
+            append_replica_chunks(io, length, size)
             if length.positive?
               finish = start + length
               slot, = Replication.trailer(@store, header, finish, finish)
@@ -89,72 +88,101 @@ module XitDB
             end
             completed = true
           ensure
-            @needs_reopen = true if outcome == :unknown
-            if !completed && outcome == :not_committed
-              begin
-                @store.truncate(size)
-              rescue Exception
-                @needs_reopen = true
-              end
-            end
+            recover_replica_application(size, completed, outcome)
           end
         end
         nil
-      rescue Exception => error
+      rescue Exception => e # rubocop:disable Lint/RescueException -- Preserve durability reporting for interrupts and fatal errors.
         # A release failure after successful application cannot undo durability.
-        if completed && !error.is_a?(CommitError)
-          raise CommitError.new(error.message, outcome: outcome), cause: error
+        if completed && !e.is_a?(CommitError)
+          raise CommitError.new(e.message, outcome: outcome || :not_committed), cause: e
         end
+
         raise
       end
+
+      def append_replica_chunks(io, length, size)
+        Replication.storage_write { @store.truncate(size) } if @store.length > size
+        Replication.read_chunks(io, length) do |chunk|
+          Replication.storage_write { @store.append(chunk) }
+        end
+      end
+
+      def recover_replica_application(size, completed, outcome)
+        @needs_reopen = true if outcome == :unknown
+        return if completed || outcome != :not_committed
+
+        begin
+          @store.truncate(size)
+        rescue Exception # rubocop:disable Lint/RescueException -- Rollback failure requires reopening even after an interrupt.
+          @needs_reopen = true
+        end
+      end
+      private :append_replica_chunks, :recover_replica_application
 
       def self.copy_replica(to:, source_io:, length:)
         position(length)
         raise ArgumentError, "full replica is shorter than a database" if length < Database::MINIMUM_SIZE
 
         store = FileStore.open(to)
+        # @type var outcome: :not_committed | :committed | :unknown
         outcome = :not_committed
         completed = false
         begin
           store.with_exclusive_lock do
-            raise ArgumentError, "replica staging target must be empty" unless store.length.zero?
+            # FileStore measures bytes and has no collection #empty? method.
+            unless store.length.zero? # rubocop:disable Style/ZeroLengthPredicate
+              raise ArgumentError, "replica staging target must be empty"
+            end
 
             begin
               read_chunks(source_io, length) { |chunk| storage_write { store.append(chunk) } }
-              header = Header.parse(store.read_at(0, Header::SIZE))
-              root = store.read_at(Database::ROOT_OFFSET, 17)
-              unless root.byteslice(9, 8).unpack1("Q>") == length
-                raise CorruptionError, "full replica length does not match its root header"
-              end
-              slot, = trailer(store, header, length, length)
-              raise CorruptionError, "full replica root does not match its trailer" unless root.byteslice(0, 9) == slot.to_bytes
+              validate_replica(store, length)
 
               outcome = :unknown
               storage_write(outcome: outcome) { store.sync }
               outcome = :committed
               completed = true
             ensure
-              if !completed && outcome == :not_committed
-                begin
-                  store.truncate(0)
-                rescue Exception
-                  nil
-                end
-              end
+              cleanup_staged_replica(store, completed, outcome)
             end
           end
           database = Database.new(store: store, initialize_empty: false)
           returned = true
           database
-        rescue Exception => error
-          if completed && !error.is_a?(CommitError)
-            raise CommitError.new(error.message, outcome: outcome), cause: error
-          end
+        rescue Exception => e # rubocop:disable Lint/RescueException -- Report durable commits even when cleanup is interrupted.
+          raise CommitError.new(e.message, outcome: outcome), cause: e if completed && !e.is_a?(CommitError)
+
           raise
         ensure
           store.send(:close_unreturned) unless returned
         end
       end
+
+      def self.cleanup_staged_replica(store, completed, outcome)
+        return if completed || outcome != :not_committed
+
+        begin
+          store.truncate(0)
+        rescue Exception # rubocop:disable Lint/RescueException -- Preserve the original failure if staging cleanup fails.
+          nil
+        end
+      end
+      private_class_method :cleanup_staged_replica
+
+      def self.validate_replica(store, length)
+        header = Header.parse(store.read_at(0, Header::SIZE))
+        root = store.read_at(Database::ROOT_OFFSET, 17)
+        unless Format.unsigned(Format.slice(root, 9, 8)) == length
+          raise CorruptionError, "full replica length does not match its root header"
+        end
+
+        slot, = trailer(store, header, length, length)
+        return if root.byteslice(0, 9) == slot.to_bytes
+
+        raise CorruptionError, "full replica root does not match its trailer"
+      end
+      private_class_method :validate_replica
 
       def self.position(value)
         raise TypeError, "offset and length must be Integers" unless value.is_a?(Integer)
@@ -162,22 +190,20 @@ module XitDB
       end
 
       def self.trailer(store, header, finish, bound)
-        unless finish >= Database::MINIMUM_SIZE && finish <= bound
-          raise CorruptionError, "invalid root trailer position"
-        end
+        raise CorruptionError, "invalid root trailer position" unless finish.between?(Database::MINIMUM_SIZE, bound)
 
         position = finish - Database::TRAILER_SIZE
         bytes = store.read_at(position, Database::TRAILER_SIZE)
-        slot = Slot.parse(bytes.byteslice(0, 9))
+        slot = Slot.parse(Format.slice(bytes, 0, 9))
         raise CorruptionError, "unknown root slot tag" unless Slot::TAGS.include?(slot.tag)
 
-        checksum = bytes.byteslice(17, 8).unpack1("Q>")
-        expected = CRC64.call([header.file_id, position].pack("Q>Q>") + bytes.byteslice(0, 17))
+        checksum = Format.unsigned(Format.slice(bytes, 17, 8))
+        expected = CRC64.call([header.file_id, position].pack("Q>Q>") + Format.slice(bytes, 0, 17))
         raise CorruptionError, "invalid root trailer checksum" unless checksum == expected
 
         [slot, checksum]
-      rescue EOFError => error
-        raise CorruptionError, error.message
+      rescue EOFError => e
+        raise CorruptionError, e.message
       end
 
       def self.read_chunks(io, length)
@@ -197,7 +223,7 @@ module XitDB
       def self.write_all(io, bytes)
         offset = 0
         while offset < bytes.bytesize
-          count = io.write(bytes.byteslice(offset..))
+          count = io.write(Format.slice(bytes, offset..))
           unless count.is_a?(Integer) && count.positive? && count <= bytes.bytesize - offset
             raise IOError, "replication writer made invalid progress"
           end
@@ -208,8 +234,8 @@ module XitDB
 
       def self.storage_write(outcome: :not_committed)
         yield
-      rescue Exception => error
-        raise CommitError.new(error.message, outcome: outcome), cause: error
+      rescue Exception => e # rubocop:disable Lint/RescueException -- Every storage failure must retain its commit outcome.
+        raise CommitError.new(e.message, outcome: outcome), cause: e
       end
     end
   end

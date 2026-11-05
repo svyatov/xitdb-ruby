@@ -2,6 +2,7 @@
 
 module XitDB
   module Core
+    # A persistent hash trie with optional entry counts.
     class HashMap
       BLOCK_SIZE = 16 * Slot::SIZE
       EMPTY_BLOCK = ("\0".b * BLOCK_SIZE).freeze
@@ -11,15 +12,16 @@ module XitDB
 
       def initialize(cursor, counted: false, set: false)
         @cursor = cursor
-        @tag = counted ? (set ? :counted_hash_set : :counted_hash_map) : (set ? :hash_set : :hash_map)
+        @tag = collection_tag(counted, set)
         slot = cursor.slot
-        unless slot.tag == :none || TAGS.include?(slot.tag) && counted == counted_tag?(slot.tag)
+        unless slot.tag == :none || (TAGS.include?(slot.tag) && counted == counted_tag?(slot.tag))
           raise InvalidValueError, "slot does not contain the requested hash collection"
         end
+
         @tag = slot.tag unless slot.tag == :none
-        if slot.tag == :none && cursor.transaction
-          mutate { |tx| publish(writable_root(tx)) }
-        end
+        return unless slot.tag == :none && cursor.transaction
+
+        mutate { |transaction| publish(writable_root(transaction)) }
       end
 
       def self.from_cursor(cursor)
@@ -42,7 +44,7 @@ module XitDB
         start = root_pointer
         return 0 unless start
 
-        counted? ? read(start, 8).unpack1("Q>") : each_entry.count
+        counted? ? Format.unsigned(read(start, 8)) : each_entry.count
       end
 
       def put(hash_bytes, key:, value:)
@@ -81,39 +83,29 @@ module XitDB
         self
       end
 
-      def remove(hash_bytes)
+      def remove(hash_bytes) # rubocop:disable Naming/PredicateMethod -- This public method removes an entry.
         hash_bytes = validate_hash(hash_bytes)
         writable!
         return false unless include?(hash_bytes)
 
-        mutate do |tx|
-          start = writable_root(tx)
+        mutate do |transaction|
+          start = writable_root(transaction)
           pointer = start + count_bytes
           depth = 0
+          # @type var path: Array[[Integer, String, Integer]]
           path = []
           loop do
             block = read(pointer, BLOCK_SIZE)
             index = nibble(hash_bytes, depth)
-            slot = parse_slot(block.byteslice(index * Slot::SIZE, Slot::SIZE))
+            slot = parse_slot(Format.slice(block, index * Slot::SIZE, Slot::SIZE))
             path << [pointer, block, index]
             break unless slot.tag == :index
 
             pointer = slot.value
             depth += 1
           end
-          replacement = Slot.new
-          path.reverse_each do |old_pointer, block, index|
-            block[index * Slot::SIZE, Slot::SIZE] = replacement.to_bytes
-            entries = 16.times.map { |i| parse_slot(block.byteslice(i * Slot::SIZE, Slot::SIZE)) }.reject(&:empty?)
-            if old_pointer != start + count_bytes && entries.size <= 1 && entries.none? { |s| s.tag == :index }
-              replacement = entries.first || Slot.new
-            else
-              new_pointer = old_pointer < tx.mutable_start ? tx.append(block) : old_pointer
-              tx.write_at(new_pointer, block)
-              replacement = Slot.new(tag: :index, value: new_pointer)
-            end
-          end
-          adjust_count(tx, start, -1)
+          collapse_path(transaction, start, path)
+          adjust_count(transaction, start, -1)
           publish(start)
           cursor.invalidate_children(index: hash_bytes)
         end
@@ -121,20 +113,22 @@ module XitDB
       end
 
       def each_entry
-        return enum_for(__method__) unless block_given?
+        return enum_for(:each_entry) unless block_given?
 
         start = root_pointer
         return self unless start
 
+        # @type var stack: Array[[Integer, Integer]]
         stack = [[start + count_bytes, 0]]
         until stack.empty?
-          pointer, depth = stack.pop
+          pointer, depth = stack.pop || raise(CorruptionError, "missing hash branch")
           raise CorruptionError, "hash trie exceeds hash width" if depth >= hash_size * 2
 
           block = read(pointer, BLOCK_SIZE)
+          # @type var children: Array[[Integer, Integer]]
           children = []
           16.times do |i|
-            slot = parse_slot(block.byteslice(i * Slot::SIZE, Slot::SIZE))
+            slot = parse_slot(Format.slice(block, i * Slot::SIZE, Slot::SIZE))
             if slot.tag == :index
               children << [slot.value, depth + 1]
             elsif slot.tag == :kv_pair
@@ -150,6 +144,33 @@ module XitDB
       end
 
       private
+
+      def collection_tag(counted, set)
+        if counted
+          set ? :counted_hash_set : :counted_hash_map
+        else
+          set ? :hash_set : :hash_map
+        end
+      end
+
+      def collapsible?(pointer, start, entries)
+        pointer != start + count_bytes && entries.size <= 1 && entries.none? { |slot| slot.tag == :index }
+      end
+
+      def collapse_path(transaction, start, path)
+        replacement = Slot.new
+        path.reverse_each do |old_pointer, block, index|
+          block[index * Slot::SIZE, Slot::SIZE] = replacement.to_bytes
+          entries = 16.times.map { |i| parse_slot(Format.slice(block, i * Slot::SIZE, Slot::SIZE)) }.reject(&:empty?)
+          if collapsible?(old_pointer, start, entries)
+            replacement = entries.first || Slot.new
+          else
+            new_pointer = old_pointer < transaction.mutable_start ? transaction.append(block) : old_pointer
+            transaction.write_at(new_pointer, block)
+            replacement = Slot.new(tag: :index, value: new_pointer)
+          end
+        end
+      end
 
       def counted_tag?(tag)
         %i[counted_hash_map counted_hash_set].include?(tag)
@@ -183,7 +204,10 @@ module XitDB
       def nibble(hash, depth)
         raise CorruptionError, "hash trie exceeds hash width" if depth >= hash_size * 2
 
-        (hash.getbyte(hash_size - 1 - depth / 2) >> (depth % 2 * 4)) & 15
+        byte = hash.getbyte(hash_size - 1 - (depth / 2))
+        raise CorruptionError, "hash trie exceeds hash width" unless byte
+
+        (byte >> (depth % 2 * 4)) & 15
       end
 
       def root_pointer
@@ -207,12 +231,12 @@ module XitDB
       end
 
       def read_record(slot)
-        bytes = read(slot.value, hash_size + Slot::SIZE * 2)
-        key = parse_slot(bytes.byteslice(hash_size, Slot::SIZE))
-        value = parse_slot(bytes.byteslice(hash_size + Slot::SIZE, Slot::SIZE))
+        bytes = read(slot.value, hash_size + (Slot::SIZE * 2))
+        key = parse_slot(Format.slice(bytes, hash_size, Slot::SIZE))
+        value = parse_slot(Format.slice(bytes, hash_size + Slot::SIZE, Slot::SIZE))
         raise CorruptionError, "index slot in hash record" if key.tag == :index || value.tag == :index
 
-        [bytes.byteslice(0, hash_size).freeze, key, value]
+        [Format.slice(bytes, 0, hash_size).freeze, key, value]
       end
 
       def entry(hash)
@@ -224,8 +248,9 @@ module XitDB
         depth = 0
         loop do
           block = read(pointer, BLOCK_SIZE)
-          slot = parse_slot(block.byteslice(nibble(hash, depth) * Slot::SIZE, Slot::SIZE))
+          slot = parse_slot(Format.slice(block, nibble(hash, depth) * Slot::SIZE, Slot::SIZE))
           return nil if slot.empty?
+
           if slot.tag == :kv_pair
             stored_hash, key, value = read_record(slot)
             return stored_hash == hash ? [key, value] : nil
@@ -244,66 +269,58 @@ module XitDB
 
       def mutate
         writable!
-        tx = cursor.transaction
-        checkpoint = tx.checkpoint
+        transaction = cursor.transaction
+        raise ReadOnlyError, "hash collection is read-only" unless transaction
+
+        checkpoint = transaction.checkpoint
         begin
-          yield tx
-        rescue Exception
-          tx.restore(checkpoint)
+          yield transaction
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+          transaction.restore(checkpoint)
           raise
         else
-          tx.release_checkpoint(checkpoint)
+          transaction.release_checkpoint(checkpoint)
         end
       end
 
-      def writable_root(tx)
+      def writable_root(transaction)
         start = root_pointer
-        return tx.append("\0".b * count_bytes + EMPTY_BLOCK) unless start
+        return transaction.append(("\0".b * count_bytes) + EMPTY_BLOCK) unless start
 
         bytes = read(start, count_bytes + BLOCK_SIZE)
-        start < tx.mutable_start ? tx.append(bytes) : start
+        start < transaction.mutable_start ? transaction.append(bytes) : start
       end
 
       def publish(start, propagate: true)
         cursor.update_collection(Slot.new(tag: @tag, value: start), propagate: propagate)
       end
 
-      def adjust_count(tx, start, delta)
+      def adjust_count(transaction, start, delta)
         return unless counted?
 
-        count = read(start, 8).unpack1("Q>") + delta
+        count = Format.unsigned(read(start, 8)) + delta
         Format.integer(count, 0..Format::UINT64_MAX)
-        tx.write_at(start, [count].pack("Q>"))
+        transaction.write_at(start, [count].pack("Q>"))
       end
 
       def write_entry(hash, key:, value:, owner: nil, collection: false, propagate: true)
-        mutate do |tx|
-          start = writable_root(tx)
+        mutate do |transaction|
+          start = writable_root(transaction)
           pointer = start + count_bytes
           depth = 0
           loop do
-            position = pointer + nibble(hash, depth) * Slot::SIZE
+            position = pointer + (nibble(hash, depth) * Slot::SIZE)
             slot = parse_slot(read(position, Slot::SIZE))
             if slot.empty? || slot.tag == :kv_pair
-              stored_hash, stored_key, stored_value = slot.empty? ? [nil, Slot.new, Slot.new] : read_record(slot)
-              if stored_hash.nil? || stored_hash == hash
-                next_key = stored_key.empty? && key ? key : stored_key
-                next_value = value || stored_value
-                record = tx.append(hash.b + next_key.to_bytes + next_value.to_bytes)
-                tx.write_at(position, Slot.new(tag: :kv_pair, value: record).to_bytes)
-                adjust_count(tx, start, 1) if stored_hash.nil?
-                break
-              end
-              next_pointer = tx.append(EMPTY_BLOCK)
-              previous_position = next_pointer + nibble(stored_hash, depth + 1) * Slot::SIZE
-              tx.write_at(previous_position, slot.to_bytes)
+              next_pointer = write_leaf(transaction, position, slot, hash, depth, start, key, value)
+              break unless next_pointer
             elsif slot.tag == :index
               bytes = read(slot.value, BLOCK_SIZE)
-              next_pointer = slot.value < tx.mutable_start ? tx.append(bytes) : slot.value
+              next_pointer = slot.value < transaction.mutable_start ? transaction.append(bytes) : slot.value
             else
               raise CorruptionError, "invalid hash trie entry"
             end
-            tx.write_at(position, Slot.new(tag: :index, value: next_pointer).to_bytes)
+            transaction.write_at(position, Slot.new(tag: :index, value: next_pointer).to_bytes)
             pointer = next_pointer
             depth += 1
           end
@@ -311,20 +328,40 @@ module XitDB
           cursor.invalidate_children(index: hash, except: owner) unless collection || value.nil?
         end
       end
+
+      def write_leaf(transaction, position, slot, hash, depth, start, key, value)
+        stored_hash, stored_key, stored_value = slot.empty? ? [nil, Slot.new, Slot.new] : read_record(slot)
+        if stored_hash.nil? || stored_hash == hash
+          next_key = stored_key.empty? && key ? key : stored_key
+          next_value = value || stored_value
+          record = transaction.append(hash.b + next_key.to_bytes + next_value.to_bytes)
+          transaction.write_at(position, Slot.new(tag: :kv_pair, value: record).to_bytes)
+          adjust_count(transaction, start, 1) if stored_hash.nil?
+          return nil
+        end
+
+        next_pointer = transaction.append(EMPTY_BLOCK)
+        previous_position = next_pointer + (nibble(stored_hash, depth + 1) * Slot::SIZE)
+        transaction.write_at(previous_position, slot.to_bytes)
+        next_pointer
+      end
     end
 
+    # A hash trie that stores keys without values.
     class HashSet < HashMap
       def initialize(cursor, counted: false)
         super(cursor, counted: counted, set: true)
       end
     end
 
+    # A hash trie with a stored entry count.
     class CountedHashMap < HashMap
       def initialize(cursor)
         super(cursor, counted: true)
       end
     end
 
+    # A hash set with a stored entry count.
     class CountedHashSet < HashSet
       def initialize(cursor)
         super(cursor, counted: true)

@@ -6,6 +6,7 @@ require_relative "replication"
 
 module XitDB
   module Core
+    # Coordinates core storage, transactions, and committed roots.
     class Database
       include Replication
 
@@ -16,11 +17,11 @@ module XitDB
 
       attr_reader :header
 
-      def self.open(path, readonly: false, **options)
+      def self.open(path, readonly: false, **)
         store = FileStore.open(path, readonly: readonly)
         begin
-          database = new(store: store, **options)
-        rescue Exception
+          database = new(store: store, **)
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
           store.send(:close_unreturned)
           raise
         end
@@ -41,50 +42,22 @@ module XitDB
         Replication.copy_replica(to: to, source_io: source_io, length: length)
       end
 
-      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true, require_empty: false)
+      def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true,
+                     require_empty: false)
         @store = store
         @lock_timeout = lock_timeout
         @needs_reopen = false
         @transaction = nil
         initialize_file = lambda do
-          raise ArgumentError, "compaction target must be empty" if require_empty && !store.length.zero?
-
-          if store.length.zero?
-            raise CorruptionError, "empty read-only database" if store.readonly?
-            raise CorruptionError, "existing empty database" unless initialize_empty
-
-            @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id)
-            begin
-              store.write_at(0, @header.to_bytes + "\0".b * 17)
-              publish(Slot.new, 0)
-            rescue Exception
-              # The exclusive initialization lock still owns this empty target.
-              if require_empty && !@needs_reopen
-                begin
-                  store.truncate(0)
-                rescue Exception
-                  nil
-                end
-              end
-              raise
-            end
-          else
-            @header = Header.parse(store.read_at(0, Header::SIZE))
-            {hash_size: hash_size, hash_id: hash_id, file_id: file_id}.each do |name, value|
-              if !value.nil? && value != @header.public_send(name)
-                raise ProfileMismatchError, "#{name} does not match the database header"
-              end
-            end
-            committed_state
-          end
+          prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty)
         end
         if store.readonly?
           initialize_file.call
         else
           store.with_exclusive_lock(timeout: lock_timeout, &initialize_file)
         end
-      rescue EOFError => error
-        raise CorruptionError, error.message
+      rescue EOFError => e
+        raise CorruptionError, e.message
       end
 
       def close
@@ -95,8 +68,8 @@ module XitDB
         @store.closed?
       end
 
-      def with_operation(&block)
-        @store.with_operation(&block)
+      def with_operation(&)
+        @store.with_operation(&)
       end
 
       def storage_identity
@@ -118,6 +91,10 @@ module XitDB
 
       def compact(to:)
         with_operation do
+          # @type var offsets_for_cleanup: OffsetMap?
+          offsets_for_cleanup = nil
+          # @type var target_for_cleanup: Database?
+          target_for_cleanup = nil
           source = root_cursor
           slot = source.slot
           history = slot.tag == :array_list
@@ -130,37 +107,19 @@ module XitDB
             file_id = random_id while file_id == header.file_id
             target = Database.new(store: store, hash_id: header.hash_id, hash_size: header.hash_size, file_id: file_id,
                                   lock_timeout: @lock_timeout, require_empty: true)
+            target_for_cleanup = target
             offsets = OffsetMap.new
+            offsets_for_cleanup = offsets
             unless slot.empty?
-              target.transaction do |root|
-                current = Header.parse(store.read_at(0, Header::SIZE))
-                unless current.file_id == file_id && root.bound == MINIMUM_SIZE && root.slot.empty?
-                  raise ArgumentError, "compaction target changed before copying"
-                end
-
-                copier = Compaction.new(self, source, root.transaction, offsets)
-                if history
-                  ArrayList.new(root).append(copier.copy(slot))
-                else
-                  root.replace(copier.copy(slot))
-                end
-              end
+              copy_compacted_root(target, store, file_id, source, slot, history, offsets)
               published = true
             end
             offsets.close
-            offsets = nil
+            offsets_for_cleanup = nil
             completed = true
             target
           ensure
-            unless completed
-              begin
-                offsets&.close
-              rescue Exception
-                nil
-              end
-              target&.send(:restore_empty_target) unless published
-              store.send(:close_unreturned)
-            end
+            cleanup_compaction(store, target_for_cleanup, offsets_for_cleanup, published) unless completed
           end
         end
       end
@@ -175,61 +134,55 @@ module XitDB
         raise TransactionStateError, "database requires reopening" if @needs_reopen
 
         callback_completed = false
+        # @type var callback_error: Exception?
         callback_error = nil
+        # @type var outcome: :not_committed | :committed | :unknown
         outcome = :not_committed
         @store.with_exclusive_lock(timeout: @lock_timeout, on_release_error: ->(_error) { @needs_reopen = true }) do
           raise TransactionStateError, "database requires reopening" if @needs_reopen
 
           size, slot = committed_state
           @store.truncate(size) if @store.length > size
-          tx = Transaction.new(self, @store, slot)
-          @transaction = tx
+          transaction = Transaction.new(self, @store, slot)
+          @transaction = transaction
           begin
             begin
-              yield tx.root
-            rescue Exception => error
-              callback_error = error
+              yield transaction.root
+            rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+              callback_error = e
               raise
             end
             callback_completed = true
-            unless tx.cancelled?
-              publish(tx.root.slot, random_id)
+            unless transaction.cancelled?
+              publish(transaction.root.slot, random_id)
               outcome = :committed
             end
           ensure
-            pending_error = $!
-            tx.expire!
-            @transaction = nil
-            # Cleanup must preserve caller exceptions and nonlocal exits.
-            if outcome == :not_committed && !@needs_reopen
-              begin
-                @store.truncate(size)
-              rescue Exception => cleanup_error
-                @needs_reopen = true
-                if callback_completed && pending_error.nil?
-                  raise CommitError.new(cleanup_error.message, outcome: :not_committed), cause: cleanup_error
-                end
-              end
-            end
+            finish_transaction(transaction, size, outcome, callback_completed, $!) # rubocop:disable Style/SpecialGlobalVars -- Preserve the pending exception during cleanup.
           end
           root_cursor
         end
-      rescue Exception => error
+      rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+        handle_transaction_error(e, callback_error, callback_completed, outcome || :not_committed)
+      end
+
+      def handle_transaction_error(error, callback_error, callback_completed, outcome)
         if callback_error && !error.equal?(callback_error)
           @needs_reopen = true
           raise callback_error, cause: callback_error.cause
         end
-        raise if error.is_a?(CommitError) || !callback_completed
+        raise error if error.is_a?(CommitError) || !callback_completed
 
         @needs_reopen = true
         raise CommitError.new(error.message, outcome: outcome), cause: error
       end
+      private :handle_transaction_error
 
       def bytes(data, format_tag: nil)
-        tx = active_transaction
+        transaction = active_transaction
         value = ByteValue.new(data, format_tag: format_tag)
-        Bytes.append(tx, size: value.bytes.bytesize, format_tag: value.format_tag) do |position, length|
-          value.bytes.byteslice(position, length)
+        Bytes.append(transaction, size: value.bytes.bytesize, format_tag: value.format_tag) do |position, length|
+          Format.slice(value.bytes, position, length)
         end
       end
 
@@ -244,11 +197,95 @@ module XitDB
         check_open!
         check_range!(offset, size, bound)
         @store.read_at(offset, size)
-      rescue EOFError => error
-        raise CorruptionError, error.message
+      rescue EOFError => e
+        raise CorruptionError, e.message
       end
 
       private
+
+      def copy_compacted_root(target, store, file_id, source, slot, history, offsets)
+        target.transaction do |root|
+          current = Header.parse(store.read_at(0, Header::SIZE))
+          unless current.file_id == file_id && root.bound == MINIMUM_SIZE && root.slot.empty?
+            raise ArgumentError, "compaction target changed before copying"
+          end
+
+          transaction = root.transaction
+          raise TransactionStateError, "missing compaction transaction" unless transaction
+
+          copier = Compaction.new(self, source, transaction, offsets)
+          if history
+            ArrayList.new(root).append(copier.copy(slot))
+          else
+            root.replace(copier.copy(slot))
+          end
+        end
+      end
+
+      def cleanup_compaction(store, target, offsets, published)
+        begin
+          offsets&.close
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+          nil
+        end
+        target&.restore_empty_target unless published
+        store.send(:close_unreturned)
+      end
+
+      def finish_transaction(transaction, size, outcome, callback_completed, pending_error)
+        transaction.expire!
+        @transaction = nil
+        # Cleanup must preserve caller exceptions and nonlocal exits.
+        return unless outcome == :not_committed && !@needs_reopen
+
+        begin
+          @store.truncate(size)
+        rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+          @needs_reopen = true
+          if callback_completed && pending_error.nil?
+            raise CommitError.new(e.message, outcome: :not_committed), cause: e
+          end
+        end
+      end
+
+      def prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty)
+        raise ArgumentError, "compaction target must be empty" if require_empty && !@store.empty?
+
+        if @store.empty?
+          raise CorruptionError, "empty read-only database" if @store.readonly?
+          raise CorruptionError, "existing empty database" unless initialize_empty
+
+          initialize_empty_file(hash_size, hash_id, file_id, require_empty)
+        else
+          @header = Header.parse(@store.read_at(0, Header::SIZE))
+          check_header(:hash_size, hash_size, @header.hash_size)
+          check_header(:hash_id, hash_id, @header.hash_id)
+          check_header(:file_id, file_id, @header.file_id)
+          committed_state
+        end
+      end
+
+      def initialize_empty_file(hash_size, hash_id, file_id, require_empty)
+        @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id)
+        @store.write_at(0, @header.to_bytes + ("\0".b * 17))
+        publish(Slot.new, 0)
+      rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+        reset_failed_initialization(require_empty)
+        raise
+      end
+
+      def reset_failed_initialization(require_empty)
+        # The exclusive initialization lock still owns this empty target.
+        @store.truncate(0) if require_empty && !@needs_reopen
+      rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+        nil
+      end
+
+      def check_header(name, expected, actual)
+        return if expected.nil? || expected == actual
+
+        raise ProfileMismatchError, "#{name} does not match the database header"
+      end
 
       def close_unreturned
         @store.send(:close_unreturned)
@@ -264,17 +301,20 @@ module XitDB
           size, slot = committed_state
           @store.truncate(0) if size == MINIMUM_SIZE && slot.empty?
         end
-      rescue Exception
+      rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         # Cleanup must preserve the original failure or nonlocal exit. A new
         # generation or committed root belongs to its writer and is retained.
         nil
       end
 
-      def active_transaction
-        raise TransactionStateError, "allocation requires a transaction" unless @transaction
+      protected :restore_empty_target
 
-        @transaction.check_active!
-        @transaction
+      def active_transaction
+        transaction = @transaction
+        raise TransactionStateError, "allocation requires a transaction" unless transaction
+
+        transaction.check_active!
+        transaction
       end
 
       def check_range!(offset, size, bound)
@@ -286,16 +326,17 @@ module XitDB
 
       def committed_state
         check_open!
-        size = @store.read_at(ROOT_OFFSET + Slot::SIZE, 8).unpack1("Q>")
+        size = Format.unsigned(@store.read_at(ROOT_OFFSET + Slot::SIZE, 8))
         raise CorruptionError, "invalid committed file size" if size < MINIMUM_SIZE || size > @store.length
 
         slot, = Replication.trailer(@store, header, size, size)
         [size, slot]
-      rescue EOFError => error
-        raise CorruptionError, error.message
+      rescue EOFError => e
+        raise CorruptionError, e.message
       end
 
       def publish(slot, commit_id)
+        # @type var outcome: :not_committed | :committed | :unknown
         outcome = :not_committed
         position = @store.length
         body = slot.to_bytes + [commit_id].pack("Q>")
@@ -305,13 +346,13 @@ module XitDB
         outcome = :unknown
         @store.write_at(ROOT_OFFSET, slot.to_bytes + [position + TRAILER_SIZE].pack("Q>"))
         @store.sync
-      rescue Exception => error
+      rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         @needs_reopen = true if outcome == :unknown
-        raise CommitError.new(error.message, outcome: outcome), cause: error
+        raise CommitError.new(e.message, outcome: outcome || :not_committed), cause: e
       end
 
       def random_id
-        SecureRandom.random_bytes(8).unpack1("Q>")
+        Format.unsigned(SecureRandom.random_bytes(8))
       end
     end
   end

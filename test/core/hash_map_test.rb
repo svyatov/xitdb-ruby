@@ -9,8 +9,8 @@ class HashMapTest < Minitest::Test
   Core = XitDB::Core
 
   def test_shared_hash_prefixes_and_exact_counts
-    first_hash = ["1" + "a" * 39].pack("H*")
-    second_hash = ["2" + "a" * 39].pack("H*")
+    first_hash = ["1#{"a" * 39}"].pack("H*")
+    second_hash = ["2#{"a" * 39}"].pack("H*")
     core = Core::Database.memory
     core.transaction do |root|
       map = Core::HashMap.new(root, counted: true)
@@ -168,8 +168,8 @@ class HashMapTest < Minitest::Test
   def test_configured_hash_width_controls_the_deepest_split
     [[1, "test"], [32, "sha2"]].each do |width, id|
       core = Core::Database.memory(hash_size: width, hash_id: id)
-      first = ["1" + "a" * (width * 2 - 1)].pack("H*")
-      second = ["2" + "a" * (width * 2 - 1)].pack("H*")
+      first = ["1#{"a" * ((width * 2) - 1)}"].pack("H*")
+      second = ["2#{"a" * ((width * 2) - 1)}"].pack("H*")
       core.transaction do |root|
         map = Core::CountedHashMap.new(root)
         map.put(first, key: Core::Slot.uint(1), value: Core::Slot.uint(7))
@@ -185,7 +185,7 @@ class HashMapTest < Minitest::Test
 
   def test_many_shared_branches_collapse_after_removal_without_changing_snapshots
     core = Core::Database.memory
-    hashes = 100.times.map { |i| [format("%04x", i) + "a" * 36].pack("H*") }
+    hashes = 100.times.map { |i| [format("%04x", i) + ("a" * 36)].pack("H*") }
     core.transaction do |root|
       map = Core::CountedHashMap.new(root)
       hashes.each_with_index { |h, i| map.put(h, key: Core::Slot.uint(i), value: Core::Slot.uint(i + 1)) }
@@ -234,11 +234,11 @@ class HashMapTest < Minitest::Test
     core = Core::Database.memory
     core.transaction do |root|
       tx = root.transaction
-      block = tx.append(Core::Slot.new(tag: :index, value: tx.length).to_bytes + "\0" * 135)
+      block = tx.append(Core::Slot.new(tag: :index, value: tx.length).to_bytes + ("\0" * 135))
       root.replace(Core::Slot.new(tag: :hash_map, value: block))
       assert_raises(XitDB::CorruptionError) { Core::HashMap.new(root).get(hash(0)) }
       assert_raises(XitDB::CorruptionError) { Core::HashMap.new(root).each_entry.to_a }
-      block = tx.append(Core::Slot.uint(1).to_bytes + "\0" * 135)
+      block = tx.append(Core::Slot.uint(1).to_bytes + ("\0" * 135))
       root.replace(Core::Slot.new(tag: :hash_map, value: block))
       assert_raises(XitDB::CorruptionError) { Core::HashMap.new(root).get(hash(0)) }
       root.replace(Core::Slot.new)
@@ -252,7 +252,7 @@ class HashMapTest < Minitest::Test
   def test_empty_physical_types_survive_reopening
     Dir.mktmpdir do |dir|
       [Core::HashMap, Core::HashSet, Core::CountedHashMap, Core::CountedHashSet].each do |klass|
-        path = File.join(dir, "#{klass.name.split('::').last}.xit")
+        path = File.join(dir, "#{klass.name.split("::").last}.xit")
         Core::Database.open(path) { |db| db.transaction { |root| klass.new(root) } }
         Core::Database.open(path, readonly: true) do |db|
           refute db.root_cursor.slot.empty?

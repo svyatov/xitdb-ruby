@@ -7,9 +7,9 @@ require "tmpdir"
 class RubySortedTest < RubyProfileTest
   def test_ordered_bytes_match_exact_numeric_and_time_order
     numbers = [-(2**200), -1, 0, 1, 2**200]
-    assert_equal numbers, numbers.shuffle.sort_by { |n| ordered(n, :integer) }
+    assert_equal(numbers, numbers.shuffle.sort_by { |n| ordered(n, :integer) })
     times = [Rational(-1, 3), 0, Rational(1, 10**12), Rational(1, 3)]
-    assert_equal times, times.shuffle.sort_by { |t| ordered(Time.at(t), :time) }
+    assert_equal(times, times.shuffle.sort_by { |t| ordered(Time.at(t), :time) })
   end
 
   def test_wire_vectors_and_prefix_order
@@ -28,21 +28,22 @@ class RubySortedTest < RubyProfileTest
       assert_equal hex, ordered(Time.at(number), :time).unpack1("H*")
     end
     strings = ["", "a", "a\0", "aa", "b", "é"]
-    assert_equal strings, strings.reverse.sort_by { |s| ordered(s, :string) }
+    assert_equal(strings, strings.reverse.sort_by { |s| ordered(s, :string) })
     assert_equal "c3a9", ordered("é".encode("ISO-8859-1"), :string).unpack1("H*")
     assert_equal Encoding::BINARY, ordered("é", :string).encoding
   end
 
   def test_exact_time_order_with_large_denominators_and_long_continued_fractions
-    a, b = 1, 1
+    a = 1
+    b = 1
     2500.times { a, b = b, a + b }
     values = [-Rational(b, a), -Rational(1, 10**100), 0, Rational(1, 10**100), Rational(a, b), Rational(b, a)]
-    assert_equal values, values.reverse.sort_by { |r| ordered(Time.at(r), :time) }
+    assert_equal(values, values.reverse.sort_by { |r| ordered(Time.at(r), :time) })
     assert_operator ordered(Time.at(Rational(1, 10**100)), :time).bytesize, :<, 100
   end
 
   def test_ordered_key_validation_precedes_input_hooks
-    {string: "a", integer: 1, float: 1.0, time: Time.at(0)}.each do |kind, value|
+    { string: "a", integer: 1, float: 1.0, time: Time.at(0) }.each do |kind, value|
       assert_raises(XitDB::UnsupportedValueError) { ordered(nil, kind) }
       assert_raises(XitDB::UnsupportedValueError) { ordered(value, :unknown) }
     end
@@ -51,8 +52,14 @@ class RubySortedTest < RubyProfileTest
     assert_raises(XitDB::UnsupportedEncodingError) { ordered("\xff".dup.force_encoding("UTF-8"), :string) }
     calls = []
     klass = Class.new(String) do
-      define_method(:is_a?) { |*| calls << :type; true }
-      define_method(:encode) { |*| calls << :encode; "a" }
+      define_method(:is_a?) do |*|
+        calls << :type
+        true
+      end
+      define_method(:encode) do |*|
+        calls << :encode
+        "a"
+      end
     end
     assert_raises(XitDB::UnsupportedValueError) { ordered(klass.new("a"), :string) }
     assert_empty calls
@@ -87,14 +94,18 @@ class RubySortedTest < RubyProfileTest
     end
     calls = []
     kind = Object.new
-    kind.define_singleton_method(:nil?) { calls << :nil; true }
+    kind.define_singleton_method(:nil?) do
+      calls << :nil
+      true
+    end
     assert_raises(ArgumentError) { XitDB.sorted_map(key: kind) }
     assert_empty calls
   end
 
   def test_typed_maps_and_sets_order_rank_and_snapshot_pages
-    {integer: [-(2**200), -1, 0, 1, 2**200], float: [-Float::INFINITY, -1.0, 0.0, 1.0, Float::INFINITY],
-     string: ["", "a", "a\0", "aa", "é"], time: [-1, 0, Rational(1, 10**12), Rational(1, 3), 1].map { |r| Time.at(r) }}.each do |kind, keys|
+    { integer: [-(2**200), -1, 0, 1, 2**200], float: [-Float::INFINITY, -1.0, 0.0, 1.0, Float::INFINITY],
+      string: ["", "a", "a\0", "aa", "é"],
+      time: [-1, 0, Rational(1, 10**12), Rational(1, 3), 1].map { |r| Time.at(r) } }.each do |kind, keys|
       XitDB::Ruby.memory do |db|
         before = db.transaction do |root|
           root[:map] = XitDB.sorted_map(key: kind)
@@ -110,7 +121,7 @@ class RubySortedTest < RubyProfileTest
             assert_equal index, root[:set].rank(key)
             assert_equal key, root[:map][key][0]
           end
-          assert_equal keys.drop(2), root[:map].from(keys[2]).map { |key, _| key }
+          assert_equal(keys.drop(2), root[:map].from(keys[2]).map { |key, _| key })
           assert_equal keys.last(2), root[:set].from_index(-2).to_a
         end
         db.transaction do |root|
@@ -119,7 +130,7 @@ class RubySortedTest < RubyProfileTest
           iterator.next
           root[:map][keys[2]] = [:changed]
           assert_raises(XitDB::ExpiredViewError) { child.size }
-          assert_equal [keys[1], [keys[1]]], iterator.next.then { |key, view| [key, view.to_ruby] }
+          assert_equal([keys[1], [keys[1]]], iterator.next.then { |key, view| [key, view.to_ruby] })
           child = root[:map][keys[2]]
           removed = root[:map].delete(keys[2])
           assert_raises(XitDB::ExpiredViewError) { child.size }
@@ -129,7 +140,7 @@ class RubySortedTest < RubyProfileTest
           assert_equal 4, root[:map].size
           assert_equal 4, root[:set].size
         end
-        assert_equal keys[1, 2], before[:map].page(offset: 1, limit: 2).map { |key, _| key }
+        assert_equal(keys[1, 2], before[:map].page(offset: 1, limit: 2).map { |key, _| key })
         assert_equal keys[1, 2], before[:set].page(offset: 1, limit: 2).to_a
         assert_equal keys, before[:map].keys
       end
@@ -137,20 +148,21 @@ class RubySortedTest < RubyProfileTest
   end
 
   def test_comparison_aliases_retain_original_keys_and_invalidate_descendants
-    {string: ["é".encode("ISO-8859-1"), "é"],
-     time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).getlocal(-7200)],
-     float: [-0.0, 0.0]}.each do |kind, (original, other)|
+    { string: ["é".encode("ISO-8859-1"), "é"],
+      time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).getlocal(-7200)],
+      float: [-0.0, 0.0] }.each do |kind, (original, other)|
       XitDB::Ruby.memory do |db|
         db.transaction do |root|
           root[:map] = XitDB.sorted_map(key: kind)
           root[:set] = XitDB.sorted_set(key: kind)
-          map, set = root[:map], root[:set]
-          map[original] = {child: [1]}
+          map = root[:map]
+          set = root[:set]
+          map[original] = { child: [1] }
           set.add(original).add(other)
           child = map[other][:child]
           child.push(2)
           assert_equal [1, 2], map[original][:child].to_ruby
-          map[other] = {child: [3]}
+          map[other] = { child: [3] }
           assert_raises(XitDB::ExpiredViewError) { child.size }
           assert_equal 1, map.size
           assert_equal 1, set.size
@@ -170,8 +182,9 @@ class RubySortedTest < RubyProfileTest
   end
 
   def test_streams_use_sorted_identity_and_allow_unrelated_writes
-    {string: ["é".encode("ISO-8859-1"), "é", "z"],
-     time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).utc, Time.at(2)]}.each do |kind, (key, other, adjacent)|
+    { string: ["é".encode("ISO-8859-1"), "é", "z"],
+      time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).utc,
+             Time.at(2)] }.each do |kind, (key, other, adjacent)|
       XitDB::Ruby.memory do |db|
         db.transaction do |root|
           root[:map] = XitDB.sorted_map(key: kind)
@@ -200,13 +213,13 @@ class RubySortedTest < RubyProfileTest
   end
 
   def test_descendant_streams_block_replacement_through_sorted_aliases
-    {string: ["é".encode("ISO-8859-1"), "é"],
-     time: [Time.at(Rational(-1, 3)).getlocal(3600), Time.at(Rational(-1, 3)).utc]}.each do |kind, (key, other)|
+    { string: ["é".encode("ISO-8859-1"), "é"],
+      time: [Time.at(Rational(-1, 3)).getlocal(3600), Time.at(Rational(-1, 3)).utc] }.each do |kind, (key, other)|
       XitDB::Ruby.memory do |db|
         db.transaction do |root|
           root[:map] = XitDB.sorted_map(key: kind)
           map = root[:map]
-          map[key] = {data: XitDB.bytes("kept")}
+          map[key] = { data: XitDB.bytes("kept") }
           map[other].open_bytes(:data) do |reader|
             assert_raises(XitDB::ConcurrentModificationError) { map[key] = 1 }
             assert_raises(XitDB::ConcurrentModificationError) { map.delete(key) }
@@ -223,11 +236,20 @@ class RubySortedTest < RubyProfileTest
   def test_public_sorted_keys_and_merge_reject_hooks_before_any_mutation
     calls = []
     bad_key = Class.new(String) do
-      define_method(:is_a?) { |*| calls << :type; raise "key hook ran" }
-      define_method(:encode) { |*| calls << :encode; raise "key hook ran" }
+      define_method(:is_a?) do |*|
+        calls << :type
+        raise "key hook ran"
+      end
+      define_method(:encode) do |*|
+        calls << :encode
+        raise "key hook ran"
+      end
     end.new("bad")
     bad_hash = Class.new(Hash) do
-      define_method(:instance_of?) { |*| calls << :type; true }
+      define_method(:instance_of?) do |*|
+        calls << :type
+        true
+      end
     end.new
     singleton = {}
     singleton.define_singleton_method(:each_pair) { |*| calls << :each }
@@ -235,7 +257,8 @@ class RubySortedTest < RubyProfileTest
       db.transaction do |root|
         root[:map] = XitDB.sorted_map(key: :string)
         root[:set] = XitDB.sorted_set(key: :string)
-        map, set = root[:map], root[:set]
+        map = root[:map]
+        set = root[:set]
         map["kept"] = XitDB.bytes("value")
         map.open_bytes("kept") do |reader|
           assert_raises(TypeError) { map.merge!(bad_hash) }
@@ -260,7 +283,8 @@ class RubySortedTest < RubyProfileTest
       db.transaction do |root|
         root[:map] = XitDB.sorted_map(key: :time)
         map = root[:map]
-        first, second = Time.at(1), Time.at(2)
+        first = Time.at(1)
+        second = Time.at(2)
         map[first] = [1]
         child = map[first]
         iterator = map.each
@@ -273,7 +297,7 @@ class RubySortedTest < RubyProfileTest
         assert_equal [first], map.keys
         map.merge!(second => [2], first => [3])
         assert_raises(XitDB::ExpiredViewError) { child.size }
-        assert_equal({first => [3], second => [2]}, map.to_ruby)
+        assert_equal({ first => [3], second => [2] }, map.to_ruby)
         [Hash.new(0), {}.compare_by_identity].each do |input|
           assert_raises(XitDB::UnsupportedValueError) { map.merge!(input) }
         end
@@ -298,7 +322,8 @@ class RubySortedTest < RubyProfileTest
         assert_raises(XitDB::ExpiredViewError) { child.size }
         assert_raises(StopIteration) { iterator.next }
         assert_equal [3], map[latin].to_ruby
-        root[latin], root["é"] = 1, 2
+        root[latin] = 1
+        root["é"] = 2
         assert_equal 1, root[latin]
         assert_equal 2, root["é"]
       end
@@ -313,7 +338,8 @@ class RubySortedTest < RubyProfileTest
         root[:map][1] = nil
         root[:set].add("é".encode("ISO-8859-1"))
       end
-      map, set = db.snapshot[:map], db.snapshot[:set]
+      map = db.snapshot[:map]
+      set = db.snapshot[:set]
       [[map, 0x52420105, 2], [set, 0x52420106, 1]].each do |view, marker, key_kind|
         envelope = XitDB::Core::ArrayList.new(view.context.cursor(view.slot))
         assert_equal 3, envelope.size
@@ -351,7 +377,7 @@ class RubySortedTest < RubyProfileTest
             end
           end
         end
-        [:wrong_key, :wrong_size, :container_key, :raw_record].each do |defect|
+        %i[wrong_key wrong_size container_key raw_record].each do |defect|
           assert_raises(XitDB::InvalidValueError) do
             context.mutate([:map]) do |cursor|
               envelope = XitDB::Core::ArrayList.new(cursor)
@@ -369,7 +395,7 @@ class RubySortedTest < RubyProfileTest
             end
           end
         end
-        assert_equal({1 => [1]}, root[:map].to_ruby)
+        assert_equal({ 1 => [1] }, root[:map].to_ruby)
       end
     end
   end
@@ -407,7 +433,8 @@ class RubySortedTest < RubyProfileTest
       db.transaction do |root|
         root[:map] = XitDB.sorted_map(key: :integer)
         map = root[:map]
-        map[1], map[2] = [1], [2]
+        map[1] = [1]
+        map[2] = [2]
         child = map[1]
         iterator = map.each
         iterator.next
@@ -417,6 +444,7 @@ class RubySortedTest < RubyProfileTest
         transaction.define_singleton_method(:append) do |bytes|
           result = append.call(bytes)
           raise IOError, "injected sorted publication failure" if failing
+
           result
         end
         bound = transaction.length
@@ -442,7 +470,8 @@ class RubySortedTest < RubyProfileTest
       db.transaction do |root|
         root[:map] = XitDB.sorted_map(key: :integer)
         map = root[:map]
-        map[1], map[2] = [1], [2]
+        map[1] = [1]
+        map[2] = [2]
         child = map[1]
         transaction = root.context.transaction
         append = transaction.method(:append)
@@ -450,6 +479,7 @@ class RubySortedTest < RubyProfileTest
         transaction.define_singleton_method(:append) do |bytes|
           result = append.call(bytes)
           raise IOError, "injected sorted count failure" if failing && bytes.bytesize == 16
+
           result
         end
         bound = transaction.length

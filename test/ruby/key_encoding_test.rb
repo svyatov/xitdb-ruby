@@ -46,12 +46,18 @@ class RubyKeyEncodingTest < RubyProfileTest
       assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
     end
     value = +"name"
-    def value.special = true
+    def value.special = :singleton_behavior
     assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
   end
 
   def test_fresh_processes_produce_literal_canonical_bytes
-    script = 'require "xitdb/ruby/key_encoding"; puts [nil, false, true, 1, "name", :name, -0.0, 2**64].map { |v| XitDB::Ruby::KeyEncoding.dump(v).unpack1("H*") }'
+    script = <<~RUBY
+      require "xitdb/ruby/key_encoding"
+      encoded = [nil, false, true, 1, "name", :name, -0.0, 2**64].map do |v|
+        XitDB::Ruby::KeyEncoding.dump(v).unpack1("H*")
+      end
+      puts encoded
+    RUBY
     expected = "00\n01\n02\n03000101\n0500046e616d65\n0600046e616d65\n040000000000000000\n030009010000000000000000\n"
     2.times do
       output, errors, status = Open3.capture3(RbConfig.ruby, "-Ilib", "-e", script)
@@ -77,7 +83,7 @@ class RubyKeyEncodingTest < RubyProfileTest
       assert_empty calls
       assert_equal "text", value
     end
-    assert_equal "05000474657874", key_bytes("text".freeze).unpack1("H*")
+    assert_equal "05000474657874", key_bytes("text").unpack1("H*")
   end
 
   def test_rejects_removed_encoding_unrelated_and_private_inherited_methods

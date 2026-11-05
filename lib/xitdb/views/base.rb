@@ -2,10 +2,18 @@
 
 module XitDB
   module Views
+    # Distinguishes omitted arguments from stored nil values.
+    class MissingArgument
+      def initialize
+        freeze
+      end
+    end
+
+    # Tracks a collection location and its owning snapshot or transaction.
     class Base
       include Enumerable
 
-      LONG_MAX = (1 << ([0].pack("l!").bytesize * 8 - 1)) - 1
+      LONG_MAX = (1 << (([0].pack("l!").bytesize * 8) - 1)) - 1
       private_constant :LONG_MAX
 
       attr_reader :context, :path, :kind
@@ -19,9 +27,9 @@ module XitDB
 
       def check!
         context.check!
-        if @location&.expired
-          raise ExpiredViewError, "view ancestor was replaced"
-        end
+        return unless @location&.expired
+
+        raise ExpiredViewError, "view ancestor was replaced"
       end
 
       def slot
@@ -32,7 +40,7 @@ module XitDB
       end
 
       def adapter
-        context.profile.container(slot, context: context, path: path)
+        context.collection(slot, path: path)
       end
 
       def size
@@ -44,12 +52,18 @@ module XitDB
       end
 
       def each
-        return enum_for(__method__) unless block_given?
+        return enum_for(:each) unless block_given?
 
-        each_entries(-> { adapter.each_entry }) { |*entry| yield(*entry) }
+        each_entries(-> { adapter.each_entry }) do |*entry|
+          if %i[map sorted_map].include?(kind)
+            yield entry[0], entry[1]
+          else
+            yield entry[0]
+          end
+        end
       end
 
-      def slot_for_assignment(context:, path:)
+      def slot_for_assignment(**)
         slot
       end
 
@@ -59,7 +73,9 @@ module XitDB
 
       def ==(other)
         context.read do
-          other = other.to_ruby if other.is_a?(Base)
+          case other
+          when Base then other = other.to_ruby
+          end
           to_ruby == other
         end
       end
@@ -73,12 +89,15 @@ module XitDB
       def open_bytes(key)
         raise ArgumentError, "open_bytes requires a block" unless block_given?
 
-        reader = registration = nil
+        # @type var reader: Streams::Reader?
+        reader = nil
+        registration = nil
         reader = context.read do
           selector = stream_selector(key)
-          if %i[array linked_array].include?(kind) && (selector.negative? || selector >= size)
+          if %i[array linked_array].include?(kind) && !integer_argument(selector).between?(0, size - 1)
             raise KeyError, "byte value not found"
           end
+
           registration = context.register_stream(entry_path(selector), write: false)
           stored = adapter.lookup(selector)
           raise KeyError, "byte value not found" unless stored
@@ -98,6 +117,7 @@ module XitDB
         context.writable!
         selector = stream_selector(key)
         if %i[array linked_array].include?(kind)
+          selector = integer_argument(selector)
           raise IndexError, "array index outside list" if selector.negative?
 
           validate_growth(selector + 1)
@@ -116,9 +136,10 @@ module XitDB
           edit(**stream_mutation(selector)) do |collection|
             spool.rewind
             stored = Core::Bytes.copy(spool, size: spool.size, database: context.database.core,
-                                      transaction: context.transaction)
+                                             transaction: context.writable_transaction)
             if %i[array linked_array].include?(kind)
-              collection.assign(collection.size, Core::Slot.null) while collection.size < selector
+              position = integer_argument(selector)
+              collection.assign(collection.size, Core::Slot.null) while collection.size < position
             end
             collection.assign(selector, stored)
           end
@@ -130,13 +151,17 @@ module XitDB
 
       protected
 
-      def clear_entries
+      def clear_entries?
         collection = adapter
-        needed = collection.respond_to?(:clear_needed?) ? collection.clear_needed? : !collection.size.zero?
+        needed = if defined?(Ruby::Containers) && collection.is_a?(Ruby::Containers)
+                   collection.clear_needed?
+                 else
+                   !collection.empty?
+                 end
         return false unless needed
 
         edit do |current|
-          if current.respond_to?(:clear)
+          if defined?(Ruby::Containers) && current.is_a?(Ruby::Containers)
             current.clear
           else
             current.each_entry { |selector, _| current.delete(selector) }
@@ -147,7 +172,7 @@ module XitDB
 
       def edit(**options)
         context.mutate(path, **options) do |cursor|
-          collection = context.profile.container(cursor.slot, context: context, path: path)
+          collection = context.collection(cursor.slot, path: path)
           yield collection
           cursor.replace(collection.slot)
         end
@@ -158,8 +183,15 @@ module XitDB
         case kind
         when :map, :sorted_map
           collection = adapter
-          collection.respond_to?(:selector_identity) ? collection.selector_identity(key) : context.profile.key_bytes(key)
-          String === key || Time === key ? key.dup.freeze : key
+          if defined?(Ruby::Containers) && collection.is_a?(Ruby::Containers)
+            collection.selector_identity(key)
+          else
+            context.profile.key_bytes(key)
+          end
+          case key
+          when String, Time then key.dup.freeze
+          else key
+          end
         when :array, :linked_array then normalize_index(key)
         else raise TypeError, "byte streams require a map or array view"
         end
@@ -167,17 +199,17 @@ module XitDB
 
       def stream_mutation(selector)
         if %i[array linked_array].include?(kind)
-          {positions: [size, selector].min..selector}
+          position = integer_argument(selector)
+          { positions: [size, position].min..position }
         else
-          {targets: [entry_path(selector)]}
+          { targets: [entry_path(selector)] }
         end
       end
 
       def integer_argument(value)
-        result = ::Integer.try_convert(value) || raise(TypeError, "no implicit conversion of #{value.class} into Integer")
-        unless result >= -LONG_MAX - 1 && result <= LONG_MAX
-          raise RangeError, "integer too big to convert into long"
-        end
+        result = ::Integer.try_convert(value) || raise(TypeError, "no implicit conversion into Integer")
+        raise RangeError, "integer too big to convert into long" unless result.between?(-LONG_MAX - 1, LONG_MAX)
+
         result
       end
 
@@ -193,10 +225,11 @@ module XitDB
       end
 
       def each_entries(entries, selectors_only: false)
+        # @type var iterator: Enumerator[entry, adapter]?
         iterator = nil
         generation = nil
         exhausted = false
-        while true
+        while true # rubocop:disable Style/InfiniteLoop -- Consumer StopIteration must propagate.
           values = context.read do
             check!
             unless iterator
@@ -206,26 +239,32 @@ module XitDB
             if @location&.membership != generation
               raise ConcurrentModificationError, "collection membership changed during iteration"
             end
+
             begin
-              selector, stored = iterator.next
+              active_iterator = iterator || raise(ConcurrentModificationError, "missing collection iterator")
+              selector, stored = active_iterator.next
             rescue StopIteration
               exhausted = true
               next
             end
-            if selectors_only || %i[set sorted_set].include?(kind)
-              [selector]
-            else
-              # Transaction entries resolve again so replacement values stay live.
-              stored = adapter.lookup(selector) if context.transaction
-              value = context.profile.decode(stored, context: context, path: entry_path(selector))
-              %i[map sorted_map].include?(kind) ? [selector, value] : [value]
-            end
+            decode_entry(selector, stored, selectors_only: selectors_only == true)
           end
           break if exhausted
 
           yield(*values)
         end
         self
+      end
+
+      def decode_entry(selector, stored, selectors_only:)
+        return [selector] if selectors_only || %i[set sorted_set].include?(kind)
+
+        # Transaction entries resolve again so replacement values stay live.
+        if context.transaction
+          stored = adapter.lookup(selector) || raise(ExpiredViewError, "view location no longer exists")
+        end
+        value = context.profile.decode(stored, context: context, path: entry_path(selector))
+        %i[map sorted_map].include?(kind) ? [selector, value] : [value]
       end
     end
   end

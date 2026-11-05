@@ -69,7 +69,7 @@ class ArrayListTest < Minitest::Test
       assert list.get(0).empty?
       assert list.get(-2).full
       assert_nil list.get(-4)
-      assert_equal [:none, :none, :uint], list.each.map(&:tag)
+      assert_equal %i[none none uint], list.each.map(&:tag)
       list.put(-1, Core::Slot.uint(3))
       assert_equal 3, list.get(2).value
       assert_raises(IndexError) { list.put(3, Core::Slot.uint(4)) }
@@ -250,9 +250,9 @@ class ArrayListTest < Minitest::Test
     core = Core::Database.memory
     core.transaction do |root|
       tx = root.transaction
-      leaf = tx.append(Core::Slot.uint(256).to_bytes + "\0" * 135)
-      branch = tx.append(Core::Slot.new(tag: :index, value: leaf).to_bytes + "\0" * 135)
-      top = tx.append("\0" * 9 + Core::Slot.new(tag: :index, value: branch).to_bytes + "\0" * 126)
+      leaf = tx.append(Core::Slot.uint(256).to_bytes + ("\0" * 135))
+      branch = tx.append(Core::Slot.new(tag: :index, value: leaf).to_bytes + ("\0" * 135))
+      top = tx.append(("\0" * 9) + Core::Slot.new(tag: :index, value: branch).to_bytes + ("\0" * 126))
       header = tx.append([257, top].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :array_list, value: header))
     end

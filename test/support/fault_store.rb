@@ -9,10 +9,10 @@ class FaultStore
     @events = []
   end
 
-  def method_missing(name, *args, **kwargs, &block)
+  def method_missing(name, *args, **, &)
     @events << [name, args]
     @fault&.call(name, args)
-    @store.public_send(name, *args, **kwargs, &block)
+    @store.public_send(name, *args, **, &)
   end
 
   def release_fault=(fault)

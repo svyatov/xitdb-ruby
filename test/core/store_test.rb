@@ -47,7 +47,7 @@ class StoreTest < Minitest::Test
     assert_equal original.storage_identity, aliased.storage_identity
     first = XitDB::Core::MemoryStore.new("kept")
     second = XitDB::Core::MemoryStore.new("kept")
-    @stores.concat([first, second])
+    @stores.push(first, second)
     refute_equal first.storage_identity, second.storage_identity
   end
 
@@ -161,7 +161,7 @@ class StoreTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { readonly.write_at(0, "z") }
     assert_raises(XitDB::ReadOnlyError) { readonly.append("z") }
     assert_raises(XitDB::ReadOnlyError) { readonly.truncate(0) }
-    assert_raises(XitDB::ReadOnlyError) { readonly.with_exclusive_lock(timeout: 0) {} }
+    assert_raises(XitDB::ReadOnlyError) { readonly.with_exclusive_lock(timeout: 0) { nil } }
     assert_equal "abcd", File.binread(@path)
     assert_raises(Errno::ENOENT) { XitDB::Core::FileStore.open(File.join(@directory, "missing"), readonly: true) }
   end
@@ -188,7 +188,7 @@ class StoreTest < Minitest::Test
       assert_raises(XitDB::ClosedError) { store.truncate(0) }
       assert_raises(XitDB::ClosedError) { store.flush }
       assert_raises(XitDB::ClosedError) { store.sync }
-      assert_raises(XitDB::ClosedError) { store.with_exclusive_lock(timeout: 0) {} }
+      assert_raises(XitDB::ClosedError) { store.with_exclusive_lock(timeout: 0) { nil } }
     end
     assert_raises(ArgumentError) { file_store(buffer_limit: 0) }
     assert_raises(TypeError) { file_store(buffer_limit: 1.0) }
@@ -294,7 +294,12 @@ class StoreTest < Minitest::Test
       store.write_at(0, "abc")
       entered = Queue.new
       release = Queue.new
-      writer = Thread.new { store.with_exclusive_lock { entered << true; release.pop } }
+      writer = Thread.new do
+        store.with_exclusive_lock do
+          entered << true
+          release.pop
+        end
+      end
       Timeout.timeout(2) { entered.pop }
       assert_equal "abc", store.read_at(0, 3)
       ran = false
@@ -364,13 +369,13 @@ class StoreTest < Minitest::Test
     each_store do |store|
       store.with_exclusive_lock do
         assert_raises(XitDB::TransactionStateError) { store.close }
-        assert_raises(XitDB::TransactionStateError) { store.with_exclusive_lock(timeout: 0) {} }
+        assert_raises(XitDB::TransactionStateError) { store.with_exclusive_lock(timeout: 0) { nil } }
       end
       [-1, Float::INFINITY, Float::NAN].each do |timeout|
-        assert_raises(ArgumentError) { store.with_exclusive_lock(timeout: timeout) {} }
+        assert_raises(ArgumentError) { store.with_exclusive_lock(timeout: timeout) { nil } }
       end
-      assert_raises(TypeError) { store.with_exclusive_lock(timeout: "1") {} }
-      assert_raises(TypeError) { store.with_exclusive_lock(timeout: Complex(1, 1)) {} }
+      assert_raises(TypeError) { store.with_exclusive_lock(timeout: "1") { nil } }
+      assert_raises(TypeError) { store.with_exclusive_lock(timeout: Complex(1, 1)) { nil } }
       entered = Queue.new
       release = Queue.new
       writer = Thread.new do
@@ -382,7 +387,10 @@ class StoreTest < Minitest::Test
       end
       Timeout.timeout(2) { entered.pop }
       closing = Queue.new
-      closer = Thread.new { closing << true; store.close }
+      closer = Thread.new do
+        closing << true
+        store.close
+      end
       Timeout.timeout(2) { closing.pop }
       refute_predicate store, :closed?
       release << true
@@ -401,7 +409,12 @@ class StoreTest < Minitest::Test
     each_store do |store|
       entered = Queue.new
       release = Queue.new
-      writer = Thread.new { store.with_exclusive_lock { entered << true; release.pop } }
+      writer = Thread.new do
+        store.with_exclusive_lock do
+          entered << true
+          release.pop
+        end
+      end
       Timeout.timeout(2) { entered.pop }
       closers = Array.new(2) { Thread.new { store.close } }
       Timeout.timeout(2) { Thread.pass until closers.all? { |thread| thread.status == "sleep" } }
@@ -424,9 +437,9 @@ class StoreTest < Minitest::Test
     store.append("b")
     assert_equal 2 * 1024 * 1024, File.size(@path)
     store.truncate(0)
-    store.write_at(0, "c" * (2 * 1024 * 1024 + 1))
-    assert_equal 2 * 1024 * 1024 + 1, File.size(@path)
-    assert_equal "cc", store.read_at(2 * 1024 * 1024 - 1, 2)
+    store.write_at(0, "c" * ((2 * 1024 * 1024) + 1))
+    assert_equal (2 * 1024 * 1024) + 1, File.size(@path)
+    assert_equal "cc", store.read_at((2 * 1024 * 1024) - 1, 2)
   end
 
   def test_unlock_failure_preserves_pending_exit_and_disables_writes
@@ -476,16 +489,19 @@ class StoreTest < Minitest::Test
       raise IOError, "release failed" unless Thread.current[:waiting_writer]
     end
     first = Thread.new do
-      store.with_exclusive_lock { entered << true; finish.pop }
-    rescue IOError => error
-      error
+      store.with_exclusive_lock do
+        entered << true
+        finish.pop
+      end
+    rescue IOError => e
+      e
     end
     entered.pop
     second = Thread.new do
       Thread.current[:waiting_writer] = true
       store.with_exclusive_lock { :incorrectly_entered }
-    rescue XitDB::TransactionStateError => error
-      error
+    rescue XitDB::TransactionStateError => e
+      e
     end
     waiting.pop
     finish << true
@@ -505,8 +521,8 @@ class StoreTest < Minitest::Test
     yield file_store
   end
 
-  def file_store(**options)
-    store = XitDB::Core::FileStore.open(@path, **options)
+  def file_store(**)
+    store = XitDB::Core::FileStore.open(@path, **)
     @stores << store
     store
   end

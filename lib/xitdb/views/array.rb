@@ -2,8 +2,9 @@
 
 module XitDB
   module Views
+    # Provides indexed reads and writes for persistent arrays.
     class Array < Base
-      UNSET = Object.new.freeze
+      UNSET = MissingArgument.new.freeze
       private_constant :UNSET
 
       alias length size
@@ -13,25 +14,28 @@ module XitDB
       end
 
       def read_index(index, count)
-        unless count.equal?(UNSET)
-          return read_slice(integer_argument(index), integer_argument(count))
-        end
-        if index.is_a?(Range)
-          start = index.begin.nil? ? 0 : integer_argument(index.begin)
-          finish = index.end.nil? ? size : integer_argument(index.end)
-          start += size if start.negative?
-          return nil if start.negative? || start > size
+        return read_slice(integer_argument(index), integer_argument(count)) unless count.equal?(UNSET)
+        return read_range(index) if index.is_a?(Range)
 
-          finish += size if finish.negative?
-          finish += 1 unless index.exclude_end? || index.end.nil?
-          return read_slice(start, [finish - start, 0].max)
-        end
         index = normalize_index(index)
         return nil unless index >= 0 && index < size
 
-        context.profile.decode(adapter.lookup(index), context: context, path: entry_path(index))
+        stored = adapter.lookup(index) || raise(IndexError, "array index outside list")
+        context.profile.decode(stored, context: context, path: entry_path(index))
       end
       private :read_index
+
+      def read_range(index)
+        start = index.begin.nil? ? 0 : integer_argument(index.begin)
+        finish = index.end.nil? ? size : integer_argument(index.end)
+        start += size if start.negative?
+        return nil if start.negative? || start > size
+
+        finish += size if finish.negative?
+        finish += 1 unless index.exclude_end? || index.end.nil?
+        read_slice(start, [finish - start, 0].max)
+      end
+      private :read_range
 
       def fetch(index, default = UNSET)
         found, value = context.read do
@@ -41,7 +45,11 @@ module XitDB
         end
         return value if found
         return yield index if block_given?
-        return default unless default.equal?(UNSET)
+
+        case default
+        when MissingArgument then nil
+        else return default
+        end
 
         raise IndexError, "array index outside list"
       end
@@ -51,8 +59,8 @@ module XitDB
           check!
           return self[0] if count.equal?(UNSET)
 
-          count = nonnegative_count(count)
-          each.take(count)
+          requested = nonnegative_count(count)
+          each.take(requested)
         end
       end
 
@@ -60,8 +68,8 @@ module XitDB
         context.read do
           return self[-1] if count.equal?(UNSET)
 
-          count = [nonnegative_count(count), size].min
-          ((size - count)...size).map { |index| self[index] }
+          requested = [nonnegative_count(count), size].min
+          ((size - requested)...size).map { |index| self[index] }
         end
       end
 
@@ -70,6 +78,7 @@ module XitDB
         context.writable!
         index = normalize_index(index)
         raise IndexError, "array index outside list" if index.negative?
+
         validate_growth(index + 1)
 
         previous_size = size
@@ -127,7 +136,8 @@ module XitDB
         value = nil
         edit(positions: index..) do |collection|
           captured = captured_context
-          value = context.profile.decode(collection.lookup(index), context: captured, path: [index])
+          stored = collection.lookup(index) || raise(IndexError, "array index outside list")
+          value = context.profile.decode(stored, context: captured, path: [index])
           collection.delete(index)
         end
         invalidate_positions(index)
@@ -148,7 +158,8 @@ module XitDB
         edit(positions: (previous_size - count)..) do |collection|
           captured = captured_context
           values = ((previous_size - count)...previous_size).map do |index|
-            context.profile.decode(collection.lookup(index), context: captured, path: [index])
+            stored = collection.lookup(index) || raise(IndexError, "array index outside list")
+            context.profile.decode(stored, context: captured, path: [index])
           end
           collection.truncate(previous_size - count)
         end
@@ -162,14 +173,15 @@ module XitDB
         added = false
         edit(positions: size..) do |collection|
           inputs = others.map do |other|
-            unless Array === other
-              other = ::Array.try_convert(other) || raise(TypeError, "concat requires an array")
+            case other
+            when Array then nil
+            else other = ::Array.try_convert(other) || raise(TypeError, "concat requires an array")
             end
             stored = context.profile.encode(other, context: context, path: path)
-            context.profile.container(stored, context: context, path: path)
+            context.collection(stored, path: path)
           end
           inputs.each do |input|
-            next if input.size.zero?
+            next if input.empty?
 
             validate_growth(collection.size + input.size)
             added = true
@@ -228,9 +240,10 @@ module XitDB
       end
     end
 
+    # A captured, read-only range of an array.
     class Slice < Array
-      def initialize(offset:, count:, **options)
-        super(**options)
+      def initialize(offset:, count:, **)
+        super(**)
         @offset = offset
         @count = count
       end
@@ -240,7 +253,7 @@ module XitDB
       end
 
       def slot_for_assignment(context:, path:)
-        context.profile.container(slot, context: context, path: path).slice(@offset, @count)
+        context.collection(slot, path: path).slice(@offset, @count)
       end
 
       protected
@@ -253,6 +266,7 @@ module XitDB
         path + [@offset + selector]
       end
 
+      # Limits the adapter's visible entries to the captured range.
       class Selection
         attr_reader :size
 
@@ -271,7 +285,7 @@ module XitDB
         end
 
         def each_entry
-          return enum_for(__method__) unless block_given?
+          return enum_for(:each_entry) unless block_given?
           return self if size.zero?
 
           index = 0

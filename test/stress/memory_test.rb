@@ -33,7 +33,8 @@ class MemoryStressTest < Minitest::Test
           source.transaction { |root| root.write_bytes("blob") { |writer| writer.write("abc") } }
           target = source.convert(to: File.join(directory, profile), profile: profile == "ruby" ? :portable : :ruby)
           BoundedWorkload.bound_reads(target)
-          assert_nil BoundedWorkload.check_stream(target, 3, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", converted: true)
+          digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+          assert_nil BoundedWorkload.check_stream(target, 3, digest, converted: true)
           assert_raises(RuntimeError) { BoundedWorkload.check_stream(target, 4, "invalid", converted: true) }
         ensure
           target&.close
@@ -45,19 +46,21 @@ class MemoryStressTest < Minitest::Test
 
   def test_lookup_pagination_conversion_and_compaction_below_dataset_size
     output = if ENV["XITDB_STRESS_REPORT"]
-      File.read(ENV.fetch("XITDB_STRESS_REPORT"))
-    else
-      stdout, error, status = Open3.capture3("ruby", "script/stress.rb", "--limit-mib", "256", "--data-mib", "768", chdir: ROOT)
-      assert status.success?, error
-      stdout
-    end
+               File.read(ENV.fetch("XITDB_STRESS_REPORT"))
+             else
+               stdout, error, status = Open3.capture3(
+                 "ruby", "script/stress.rb", "--limit-mib", "256", "--data-mib", "768", chdir: ROOT
+               )
+               assert status.success?, error
+               stdout
+             end
     FileUtils.mkdir_p(File.join(ROOT, "pkg"))
     File.write(File.join(ROOT, "pkg/stress.json"), output)
     report = JSON.parse(output)
     assert_equal "cgroup_v2", report.fetch("hard_limit_mechanism")
     assert_equal 268_435_456, report.fetch("memory_limit_bytes")
     assert_equal 0, report.fetch("swap_limit_bytes")
-    assert_equal %w[portable ruby], report.fetch("profiles").map { |entry| entry.fetch("profile") }
+    assert_equal(%w[portable ruby], report.fetch("profiles").map { |entry| entry.fetch("profile") })
     report.fetch("profiles").each do |entry|
       assert_operator entry.fetch("dataset_bytes"), :>, report.fetch("memory_limit_bytes")
       assert_equal 805_306_368, entry.fetch("payload_bytes")

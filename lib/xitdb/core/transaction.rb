@@ -2,8 +2,9 @@
 
 module XitDB
   module Core
+    # Owns writable cursors and their rollback checkpoints.
     class Transaction
-      Checkpoint = Struct.new(:owner, :slots, :length, :cancelled, keyword_init: true)
+      Checkpoint = Struct.new(:owner, :slots, :length, :cancelled, keyword_init: true) # rubocop:disable Lint/StructNewOverride -- Length is the saved store boundary.
       private_constant :Checkpoint
 
       attr_reader :root, :mutable_start
@@ -90,6 +91,7 @@ module XitDB
 
       def checkpoint
         check_active!
+        # @type var slots: Hash[Cursor, cursor_state]
         slots = {}
         @cursors.each_key { |cursor| slots[cursor] = cursor.checkpoint_state }
         checkpoint = Checkpoint.new(owner: self, slots: slots, length: freeze, cancelled: @cancelled).freeze
@@ -112,7 +114,7 @@ module XitDB
         end
         @mutable_start = checkpoint.length
         @cancelled = checkpoint.cancelled
-        @checkpoints.slice!(index..).each { |item| item.slots.clear }
+        (@checkpoints.slice!(index..) || []).each { |item| item.slots.clear }
         nil
       end
 

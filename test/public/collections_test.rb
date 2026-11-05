@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "test_helper"
 require "timeout"
 
@@ -31,17 +32,20 @@ class PublicCollectionsTest < Minitest::Test
     sorted = @db.snapshot["sorted"]
     assert_equal 1, sorted.rank("b")
     assert_equal 2, sorted.rank("bb")
-    assert_equal %w[b c], sorted.from("b").map { |key, _| key }
-    assert_equal ["c"], sorted.from_index(-1).map { |key, _| key }
-    assert_equal ["b"], sorted.page(offset: 1, limit: 1).map { |key, _| key }
+    assert_equal(%w[b c], sorted.from("b").map { |key, _| key })
+    assert_equal(["c"], sorted.from_index(-1).map { |key, _| key })
+    assert_equal(["b"], sorted.page(offset: 1, limit: 1).map { |key, _| key })
     assert_kind_of XitDB::Views::Base, sorted.values.first
-    assert_kind_of ::Array, sorted.map { |key, _| key }
+    assert_kind_of(::Array, sorted.map { |key, _| key })
   end
 
   def test_portable_string_subclass_keys_do_not_call_type_hooks
     calls = []
     klass = Class.new(String) do
-      define_method(:is_a?) { |*| calls << :type; raise "key type hook ran" }
+      define_method(:is_a?) do |*|
+        calls << :type
+        raise "key type hook ran"
+      end
     end
     key = klass.new("stream")
     assert_equal "stream".b, @db.profile.key_bytes(key)
@@ -77,7 +81,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_equal [0, 1], items.first(2)
     assert_equal [2, 3], items.last(2)
     assert_equal :missing, items.fetch(8, :missing)
-    assert_equal 16, items.fetch(8, :ignored) { |index| index * 2 }
+    assert_equal 16, items.fetch(8, :ignored) { |index| index * 2 } # rubocop:disable Lint/UselessDefaultValueArgument -- Verify block precedence over the explicit default.
     assert_raises(IndexError) { items.fetch(-5) }
     assert_raises(TypeError) { items["1"] }
     assert_raises(ArgumentError) { items.first(-1) }
@@ -90,7 +94,7 @@ class PublicCollectionsTest < Minitest::Test
       retained = nil
       @db.transaction do |root|
         root["items"] = declaration
-        root["items"].push({"name" => "first"}, {"name" => ["last"]}, nil)
+        root["items"].push({ "name" => "first" }, { "name" => ["last"] }, nil)
         root["slice"] = root["items"][1, 2]
         assert_equal "first", root.dig("items", 0, "name")
         assert_equal "last", root.dig("items", -2, "name", 0)
@@ -105,7 +109,10 @@ class PublicCollectionsTest < Minitest::Test
         assert_raises(TypeError) { root.dig("items", 0, "name", 0) }
         index = Object.new
         database = @db
-        index.define_singleton_method(:to_int) { database.close; 0 }
+        index.define_singleton_method(:to_int) do
+          database.close
+          0
+        end
         assert_raises(XitDB::TransactionStateError) { root.dig("items", index, "name") }
         assert_equal 3, root["items"].size
         retained = root
@@ -147,8 +154,8 @@ class PublicCollectionsTest < Minitest::Test
             count = random.rand(4)
             assert_equal ruby.pop(count), items.pop(count)
           when 6
-            ruby.concat([value])
-            assert_same items, items.concat([value])
+            ruby.push(value)
+            assert_same items, items.concat([value]) # rubocop:disable Style/ConcatArrayLiterals -- Exercise the collection's concat API.
           end
           assert_equal ruby, items.to_ruby
         end
@@ -168,21 +175,25 @@ class PublicCollectionsTest < Minitest::Test
       @db.transaction do |root|
         root["items"] = declaration
         items = root["items"]
-        items.push({"v" => [1]}, 2, 3, 4)
+        items.push({ "v" => [1] }, 2, 3, 4)
         captured = items[0, 2]
         nested = captured[0]["v"]
         assert_raises(XitDB::ReadOnlyError) { captured[0] = 9 }
         assert_raises(XitDB::ReadOnlyError) { nested.push(9) }
         items[0]["v"].push(5)
         items.delete_at(0)
-        assert_equal [{"v" => [1]}, 2], captured.to_ruby
+        assert_equal [{ "v" => [1] }, 2], captured.to_ruby
         root["copy"] = captured[1..]
         root["empty"] = captured[2, 0]
         assert_equal [2], root["copy"].to_ruby
         assert_equal [], root["empty"].to_ruby
         root["copy"].push(7)
         assert_equal [2], captured[1..].to_ruby
-        error = Thread.new { captured.size rescue $! }.value
+        error = Thread.new do
+          captured.size
+        rescue StandardError
+          $ERROR_INFO
+        end.value
         assert_kind_of XitDB::TransactionStateError, error
       end
       assert_raises(XitDB::ExpiredViewError) { captured.size }
@@ -194,12 +205,12 @@ class PublicCollectionsTest < Minitest::Test
 
   def test_removed_nested_values_survive_position_changes
     @db.transaction do |root|
-      root["items"] = [{"a" => [1]}, [2], [3]]
+      root["items"] = [{ "a" => [1] }, [2], [3]]
       items = root["items"]
       removed = items.delete_at(0)
-      assert_equal({"a" => [1]}, removed.to_ruby)
+      assert_equal({ "a" => [1] }, removed.to_ruby)
       assert_equal [[2], [3]], items.pop(2).map(&:to_ruby)
-      assert_equal({"a" => [1]}, removed.to_ruby)
+      assert_equal({ "a" => [1] }, removed.to_ruby)
     end
   end
 
@@ -278,7 +289,7 @@ class PublicCollectionsTest < Minitest::Test
         assert_raises(XitDB::UnsupportedValueError) { items.push(7, Object.new) }
         assert_equal before, items.to_ruby
         assert_equal length, items.context.transaction.length
-        assert_raises(XitDB::UnsupportedValueError) { items.concat([8], [Object.new]) }
+        assert_raises(XitDB::UnsupportedValueError) { items.concat([8], [Object.new]) } # rubocop:disable Style/ConcatArrayLiterals -- Exercise rollback across multiple concat arguments.
         assert_equal before, items.to_ruby
         assert_equal length, items.context.transaction.length
         assert_raises(ArgumentError) { items.pop(-1) }
@@ -309,9 +320,9 @@ class PublicCollectionsTest < Minitest::Test
       assert_equal 0, linked[0, 4097].each.next
     end
     assert_operator reads, :<, 100
-    reads = count_reads { assert_equal [4095, 4096], sorted.page(offset: 4095, limit: 2).map { |_key, value| value } }
+    reads = count_reads { assert_equal([4095, 4096], sorted.page(offset: 4095, limit: 2).map { |_key, value| value }) }
     assert_operator reads, :<, 100
-    reads = count_reads { assert_equal [4095, 4096], sorted.from("00004095").map { |_key, value| value } }
+    reads = count_reads { assert_equal([4095, 4096], sorted.from("00004095").map { |_key, value| value }) }
     assert_operator reads, :<, 150
     @db.transaction do |root|
       items = root["linked"]
@@ -334,7 +345,7 @@ class PublicCollectionsTest < Minitest::Test
     @db.transaction do |root|
       root["items"] = XitDB.sorted_map
       items = root["items"]
-      items.merge!({"a" => [1], "b" => [2], "c" => [3]})
+      items.merge!({ "a" => [1], "b" => [2], "c" => [3] })
       iterator = items.page(offset: 0, limit: 3)
       assert_equal [1], iterator.next.last.to_ruby
       items["b"] = [9]
@@ -345,7 +356,7 @@ class PublicCollectionsTest < Minitest::Test
     snapshot = @db.snapshot
     page = snapshot["items"].page(offset: 0, limit: 3)
     @db.transaction { |root| root["items"].clear }
-    assert_equal [["b", [9]], ["c", [3]]], page.map { |key, value| [key, value.to_ruby] }
+    assert_equal([["b", [9]], ["c", [3]]], page.map { |key, value| [key, value.to_ruby] })
     assert_raises(XitDB::ReadOnlyError) { snapshot["items"].delete("missing") }
     @db.close
     assert_raises(XitDB::ClosedError) { page.to_a }
@@ -403,7 +414,7 @@ class PublicCollectionsTest < Minitest::Test
     @db.transaction do |root|
       root["items"] = []
       items = root["items"]
-      index = (1 << ([0].pack("l!").bytesize * 8 - 1)) - 1
+      index = (1 << (([0].pack("l!").bytesize * 8) - 1)) - 1
       [[:[]=, index, 1], [:insert, index, 1]].each do |args|
         assert_raises(IndexError) { [].public_send(*args) }
         Timeout.timeout(1) { assert_raises(IndexError) { items.public_send(*args) } }
@@ -424,18 +435,29 @@ class PublicCollectionsTest < Minitest::Test
       root["items"] = [1]
       calls = []
       hash_class = Class.new(Hash)
-      hash_class.define_method(:instance_of?) { |*| calls << :hash; root.clear; raise "hash hook ran" }
+      hash_class.define_method(:instance_of?) do |*|
+        calls << :hash
+        root.clear
+        raise "hash hook ran"
+      end
       array_class = Class.new(Array)
-      array_class.define_method(:is_a?) { |*| calls << :array; root.clear; raise "array hook ran" }
-      array_class.define_method(:class) { calls << :class; raise "class hook ran" }
+      array_class.define_method(:is_a?) do |*|
+        calls << :array
+        root.clear
+        raise "array hook ran"
+      end
+      array_class.define_method(:class) do
+        calls << :class
+        raise "class hook ran"
+      end
       assert_raises(TypeError) { root.merge!(hash_class.new) }
       assert_raises(XitDB::UnsupportedValueError) { root["items"].concat(array_class.new) }
       assert_empty calls
-      assert_equal({"items" => [1]}, root.to_ruby)
-      root.merge!({"other" => [2]})
+      assert_equal({ "items" => [1] }, root.to_ruby)
+      root.merge!({ "other" => [2] })
       root["items"].concat(root["other"], [3])
     end
-    assert_equal({"items" => [1, 2, 3], "other" => [2]}, @db.snapshot.to_ruby)
+    assert_equal({ "items" => [1, 2, 3], "other" => [2] }, @db.snapshot.to_ruby)
   end
 
   def test_coercion_callbacks_can_read_but_cannot_start_logical_writes
@@ -448,14 +470,20 @@ class PublicCollectionsTest < Minitest::Test
         assert_equal [1], iterator.next.to_ruby
         before = root.to_ruby
         coercer = Object.new
-        coercer.define_singleton_method(:to_ary) { root.clear; raise "callback failed" }
+        coercer.define_singleton_method(:to_ary) do
+          root.clear
+          raise "callback failed"
+        end
         assert_raises(XitDB::TransactionStateError) { items.concat(coercer) }
         assert_equal before, root.to_ruby
         assert_equal [2], iterator.next.to_ruby
         assert_equal [1], child.to_ruby
         callback_reads = []
         coercer = Object.new
-        coercer.define_singleton_method(:to_ary) { callback_reads << root["items"].size; [3] }
+        coercer.define_singleton_method(:to_ary) do
+          callback_reads << root["items"].size
+          [3]
+        end
         items.concat(coercer)
         assert_equal [2], callback_reads
         assert_equal [[1], [2], 3], items.to_ruby
@@ -470,12 +498,12 @@ class PublicCollectionsTest < Minitest::Test
     expected.nil? ? assert_nil(actual) : assert_equal(expected, actual)
   end
 
-  def count_reads
+  def count_reads(&)
     count = 0
     trace = TracePoint.new(:call) do |event|
       count += 1 if event.defined_class == XitDB::Core::Database && event.method_id == :read_at
     end
-    trace.enable { yield }
+    trace.enable(&)
     count
   end
 end

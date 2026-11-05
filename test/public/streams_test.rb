@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "test_helper"
 require "digest"
 require "stringio"
@@ -103,18 +104,26 @@ class StreamsTest < Minitest::Test
       assert_equal :stopped, result
       assert_equal "before", root["blob"]
       assert_equal 1, root["sibling"]
-      catch(:stop) { root.write_bytes("absent") { |io| io.write("no"); throw :stop } }
+      catch(:stop) do
+        root.write_bytes("absent") do |io|
+          io.write("no")
+          throw :stop
+        end
+      end
       refute root.key?("absent")
       root.write_bytes("blob") { |io| io.write("done") }
     end
-    assert_equal :stopped, @db.snapshot.open_bytes("blob") { |io| reader = io; break :stopped }
+    assert_equal :stopped, @db.snapshot.open_bytes("blob") { |io|
+      reader = io
+      break :stopped
+    }
     assert_raises(XitDB::ExpiredViewError) { reader.size }
     assert_raises(XitDB::ExpiredViewError) { writer.pos }
   end
 
   def test_overlapping_keys_ancestors_and_merges_reject_before_changes
     @db.transaction do |root|
-      root["nested"] = {"blob" => "old", "sibling" => 0}
+      root["nested"] = { "blob" => "old", "sibling" => 0 }
       child = root["nested"]
       child.write_bytes("blob") do |io|
         assert_raises(XitDB::ConcurrentModificationError) { child["blob".b] = "old" }
@@ -122,13 +131,13 @@ class StreamsTest < Minitest::Test
         assert_raises(XitDB::ConcurrentModificationError) { child.clear }
         assert_raises(XitDB::ConcurrentModificationError) { root["nested"] = {} }
         assert_raises(XitDB::ConcurrentModificationError) { root.delete("nested") }
-        assert_raises(XitDB::ConcurrentModificationError) { child.merge!({"sibling" => 9, "blob" => "bad"}) }
+        assert_raises(XitDB::ConcurrentModificationError) { child.merge!({ "sibling" => 9, "blob" => "bad" }) }
         assert_raises(XitDB::ConcurrentModificationError) { child.write_bytes("blob") { flunk "overlap callback ran" } }
         child["sibling"] = 1
         child.write_bytes("second") { |second| second.write("two") }
         io.write("new")
       end
-      assert_equal({"blob" => "new", "sibling" => 1, "second" => "two"}, child.to_ruby)
+      assert_equal({ "blob" => "new", "sibling" => 1, "second" => "two" }, child.to_ruby)
       child.open_bytes("blob") do |io|
         assert_raises(XitDB::ConcurrentModificationError) { child["blob"] = "bad" }
         child["sibling"] = 2
@@ -155,7 +164,7 @@ class StreamsTest < Minitest::Test
           items.delete_at(2)
           io.write("stream")
         end
-        assert_equal ["changed", "stream", "last"], items.to_ruby
+        assert_equal %w[changed stream last], items.to_ruby
         items.open_bytes(-2) { |io| assert_equal "stream", io.read }
         items[1, 2].open_bytes(0) { |io| assert_equal "stream", io.read }
         items.write_bytes(4) { |io| io.write("gap") }
@@ -226,7 +235,7 @@ class StreamsTest < Minitest::Test
       assert_raises(ArgumentError) { io.read(-1) }
       assert_raises(RangeError) { io.read(1 << 100) }
       assert_raises(TypeError) { io.read(1, Object.new) }
-      assert_raises(FrozenError) { io.read(1, "".freeze) }
+      assert_raises(FrozenError) { io.read(1, "") }
       assert_equal 0, io.pos
       count = Object.new
       count.define_singleton_method(:to_int) { 1 }
@@ -281,18 +290,26 @@ class StreamsTest < Minitest::Test
       assert_equal "kept", root["sibling"]
       root.write_bytes("blob") { |io| io.write("after") }
     end
-    assert_equal({"blob" => "after", "sibling" => "kept"}, @db.snapshot.to_ruby)
+    assert_equal({ "blob" => "after", "sibling" => "kept" }, @db.snapshot.to_ruby)
   end
 
   def test_transaction_streams_reject_other_threads
     @db.transaction do |root|
       root["blob"] = "data"
       root.open_bytes("blob") do |io|
-        error = Thread.new { io.read rescue $! }.value
+        error = Thread.new do
+          io.read
+        rescue StandardError
+          $ERROR_INFO
+        end.value
         assert_instance_of XitDB::TransactionStateError, error
       end
       root.write_bytes("blob") do |io|
-        error = Thread.new { io.write("bad") rescue $! }.value
+        error = Thread.new do
+          io.write("bad")
+        rescue StandardError
+          $ERROR_INFO
+        end.value
         assert_instance_of XitDB::TransactionStateError, error
         io.write("good")
       end
@@ -303,7 +320,8 @@ class StreamsTest < Minitest::Test
   def test_close_waits_for_the_complete_chunked_read
     data = "x" * 200_000
     @db.transaction { |root| root["blob"] = data }
-    entered, release = Queue.new, Queue.new
+    entered = Queue.new
+    release = Queue.new
     core = @db.core
     original = core.method(:read_at)
     blocked = false
@@ -328,13 +346,17 @@ class StreamsTest < Minitest::Test
     assert_equal data, Timeout.timeout(2) { reader.value }
     Timeout.timeout(2) { closer.value }
   ensure
-    [reader, closer].compact.each { |thread| thread.kill if thread.alive?; thread.join }
+    [reader, closer].compact.each do |thread|
+      thread.kill if thread.alive?
+      thread.join
+    end
   end
 
   def test_reader_setup_pins_array_index_resolution_and_byte_metadata
     @db.transaction { |root| root["items"] = ["value"] }
     items = @db.snapshot["items"]
-    entered, release = Queue.new, Queue.new
+    entered = Queue.new
+    release = Queue.new
     core = @db.core
     original = core.method(:read_at)
     blocked = false
@@ -347,7 +369,7 @@ class StreamsTest < Minitest::Test
       end
       result
     end
-    reader = Thread.new { items.open_bytes(-1) { |io| io.class } }
+    reader = Thread.new { items.open_bytes(-1, &:class) }
     reader.report_on_exception = false
     Timeout.timeout(2) { entered.pop }
     closer = Thread.new { @db.close }
@@ -358,7 +380,14 @@ class StreamsTest < Minitest::Test
     assert_equal XitDB::Streams::Reader, Timeout.timeout(2) { reader.value }
     Timeout.timeout(2) { closer.value }
   ensure
-    [reader, closer].compact.each { |thread| thread.kill if thread.alive?; thread.join rescue nil }
+    [reader, closer].compact.each do |thread|
+      thread.kill if thread.alive?
+      begin
+        thread.join
+      rescue StandardError
+        nil
+      end
+    end
   end
 
   def test_corrupt_byte_length_rejects_before_the_reader_callback
@@ -464,7 +493,7 @@ class StreamsTest < Minitest::Test
             reader.read
           end
         end
-        assert_equal ["left", "middle", "right"], items.to_ruby
+        assert_equal %w[left middle right], items.to_ruby
         items.open_bytes(-1) do |reader|
           assert_raises(XitDB::ConcurrentModificationError) { items[2] = "changed" }
           assert_equal "right", reader.read

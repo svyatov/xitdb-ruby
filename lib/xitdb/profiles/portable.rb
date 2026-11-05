@@ -4,6 +4,7 @@ require_relative "../input_guard"
 
 module XitDB
   module Profiles
+    # Maps portable values to native xitdb storage layouts.
     class Portable
       KINDS = {
         hash_map: :map, counted_hash_map: :map, sorted_map: :sorted_map,
@@ -31,7 +32,7 @@ module XitDB
         when String then core.bytes(value)
         when Core::ByteValue then core.bytes(value.bytes, format_tag: value.format_tag)
         else
-          raise UnsupportedValueError, "unsupported portable scalar: #{value.class}"
+          raise UnsupportedValueError, "unsupported portable scalar: #{Object.instance_method(:class).bind_call(value)}"
         end
       end
 
@@ -55,9 +56,10 @@ module XitDB
 
       def key_bytes(value)
         InputGuard.check!(value)
-        raise UnsupportedValueError, "portable keys must be strings" unless String === value
-
-        value.b.freeze
+        case value
+        when String then value.b.freeze
+        else raise UnsupportedValueError, "portable keys must be strings"
+        end
       end
 
       def encode(value, context:, path:)
@@ -79,6 +81,7 @@ module XitDB
       end
 
       def empty_container(kind, context:, path:)
+        kind = kind.first if kind.is_a?(Array)
         Adapter.new(self, context.cursor(Core::Slot.new), context: context, path: path, tag: kind)
       end
 
@@ -87,8 +90,8 @@ module XitDB
       end
 
       def conversion_container(kind, context:, path:)
-        kind = kind.first if Array === kind
-        tag = {map: :hash_map, set: :hash_set, array: :array_list, linked_array: :linked_array_list}.fetch(kind, kind)
+        kind = kind.first if kind.is_a?(Array)
+        tag = { map: :hash_map, set: :hash_set, array: :array_list, linked_array: :linked_array_list }.fetch(kind, kind)
         empty_container(tag, context: context, path: path)
       end
 
@@ -101,33 +104,46 @@ module XitDB
 
       def copy_conversion_bytes(source, encoding, context:, path:)
         source.write_to(context, format_tag: encoding ? nil : source.format_tag)
+      rescue ValueError => e
+        raise e.class.new(e.message, path: path), cause: e
       end
 
       def input_kind(value, path:)
         InputGuard.check!(value, path: path)
         klass = Object.instance_method(:class).bind_call(value)
-        if Hash === value || Array === value || Set === value
-          unless [Hash, Array, Set].include?(klass)
-            raise UnsupportedValueError.new("container subclasses and singleton behavior are unsupported", path: path)
-          end
-          if value.is_a?(Hash) && (value.default_proc || !value.default.nil? || value.compare_by_identity?)
-            raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
-          end
-          if value.is_a?(Set) && value.compare_by_identity?
-            raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
-          end
-          return {Hash => :hash_map, Array => :array_list, Set => :hash_set}.fetch(klass)
-        end
-        if CollectionDeclaration === value
+        case value
+        when Hash, Array, Set
+          validate_container(value, klass, path)
+          { Hash => :hash_map, Array => :array_list, Set => :hash_set }.fetch(klass)
+        when CollectionDeclaration
           if value.key_kind
             raise UnsupportedValueError.new("typed sorted declarations require the Ruby profile", path: path)
           end
+
           value.kind
         end
       end
 
+      def hash_defaults?(value)
+        default = !BasicObject.instance_method(:equal?).bind_call(value.default, nil)
+        !value.default_proc.nil? || default || value.compare_by_identity?
+      end
+
+      def validate_container(value, klass, path)
+        unless [Hash, Array, Set].include?(klass)
+          raise UnsupportedValueError.new("container subclasses and singleton behavior are unsupported", path: path)
+        end
+        if value.is_a?(Hash) && hash_defaults?(value)
+          raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
+        end
+        return unless value.is_a?(Set) && value.compare_by_identity?
+
+        raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+      end
+
       def input_entries(value, path:)
         Enumerator.new do |output|
+          # @type var seen: Hash[String, bool]
           seen = {}
           case value
           when Hash, Set
@@ -135,12 +151,13 @@ module XitDB
             entries.each do |key, child|
               begin
                 bytes = key_bytes(key)
-              rescue ValueError => error
-                raise error.class.new(error.message, path: path + [key]), cause: error
+              rescue ValueError => e
+                raise e.class.new(e.message, path: path + [key]), cause: e
               end
               if seen.key?(bytes)
                 raise KeyCollisionError.new("distinct input keys have equal portable bytes", path: path + [key])
               end
+
               seen[bytes] = true
               output << [key, child]
             end
@@ -162,13 +179,13 @@ module XitDB
           tag ||= cursor.slot.tag == :none ? :hash_map : cursor.slot.tag
           @kind = KINDS.fetch(tag)
           @collection = case tag
-          when :hash_map, :hash_set, :counted_hash_map, :counted_hash_set
-            Core::HashMap.new(cursor, counted: %i[counted_hash_map counted_hash_set].include?(tag),
-                             set: %i[hash_set counted_hash_set].include?(tag))
-          when :array_list then Core::ArrayList.new(cursor)
-          when :linked_array_list then Core::LinkedArrayList.new(cursor)
-          when :sorted_map, :sorted_set then Core::SortedMap.new(cursor, set: tag == :sorted_set)
-          end
+                        when :hash_map, :hash_set, :counted_hash_map, :counted_hash_set
+                          Core::HashMap.new(cursor, counted: %i[counted_hash_map counted_hash_set].include?(tag),
+                                                    set: %i[hash_set counted_hash_set].include?(tag))
+                        when :array_list then Core::ArrayList.new(cursor)
+                        when :linked_array_list then Core::LinkedArrayList.new(cursor)
+                        when :sorted_map, :sorted_set then Core::SortedMap.new(cursor, set: tag == :sorted_set)
+                        end
         end
 
         def slot
@@ -179,23 +196,39 @@ module XitDB
           @collection.size
         end
 
+        def empty?
+          size.zero?
+        end
+
         def lookup(selector)
-          @collection.get(storage_selector(selector))
+          collection = @collection
+          if collection.is_a?(Core::ArrayList) || collection.is_a?(Core::LinkedArrayList)
+            collection.get(index_selector(selector))
+          elsif collection.is_a?(Core::SortedMap)
+            collection.get(key_bytes(selector))
+          else
+            collection.get(@profile.hasher.digest(key_bytes(selector)))
+          end
         end
 
         def assign(selector, stored)
           case kind
           when :array, :linked_array
-            selector == size ? @collection.append(stored) : @collection.put(selector, stored)
+            if selector == size
+              sequence_collection.append(stored)
+            else
+              sequence_collection.put(index_selector(selector),
+                                      stored)
+            end
           when :sorted_map
-            @collection.put(@profile.key_bytes(selector), value: stored)
+            sorted_collection.put(key_bytes(selector), value: stored)
           when :sorted_set
-            @collection.add(@profile.key_bytes(selector))
+            sorted_collection.add(key_bytes(selector))
           when :map, :set
-            bytes = @profile.key_bytes(selector)
+            bytes = key_bytes(selector)
             digest = @profile.hasher.digest(bytes)
             key = @context.database.core.bytes(bytes)
-            kind == :map ? @collection.put(digest, key: key, value: stored) : @collection.add(digest, key: key)
+            kind == :map ? hash_collection.put(digest, key: key, value: stored) : hash_collection.add(digest, key: key)
           end
           self
         end
@@ -207,10 +240,13 @@ module XitDB
             count = size
             raise IndexError, "array index outside list" unless index.is_a?(Integer) && index >= 0 && index < count
 
-            (index...(count - 1)).each { |position| @collection.put(position, @collection.get(position + 1)) }
-            @collection.truncate(count - 1)
-          when :linked_array then @collection.delete_at(selector)
-          else @collection.remove(storage_selector(selector))
+            (index...(count - 1)).each do |position|
+              array_collection.put(position, required_slot(array_collection.get(position + 1)))
+            end
+            array_collection.truncate(count - 1)
+          when :linked_array then linked_collection.delete_at(index_selector(selector))
+          when :map, :set then hash_collection.remove(@profile.hasher.digest(key_bytes(selector)))
+          else sorted_collection.remove(key_bytes(selector))
           end
         end
 
@@ -221,33 +257,35 @@ module XitDB
             Core::BTree.new(cursor).insert(index, stored)
           else
             count = size
-            @collection.append(stored)
-            (count - 1).downto(index) { |position| @collection.put(position + 1, @collection.get(position)) }
-            @collection.put(index, stored)
+            array_collection.append(stored)
+            (count - 1).downto(index) do |position|
+              array_collection.put(position + 1, required_slot(array_collection.get(position)))
+            end
+            array_collection.put(index, stored)
           end
           self
         end
 
         def truncate(count)
           if kind == :linked_array
-            cursor.replace(@collection.slice(0, count).cursor.slot)
+            cursor.replace(linked_collection.slice(0, count).cursor.slot)
           else
-            @collection.truncate(count)
+            array_collection.truncate(count)
           end
           self
         end
 
         def slice(start, count)
-          return @collection.slice(start, count).cursor.slot if kind == :linked_array
+          return linked_collection.slice(start, count).cursor.slot if kind == :linked_array
 
           output = @profile.empty_container(:array_list, context: @context, path: @path)
-          count.times { |index| output.assign(index, lookup(start + index)) }
+          count.times { |index| output.assign(index, required_slot(lookup(start + index))) }
           output.slot
         end
 
         def concat(other)
           if kind == :linked_array && other.kind == :linked_array
-            cursor.replace(@collection.concat(Core::LinkedArrayList.new(other.cursor)).cursor.slot)
+            cursor.replace(linked_collection.concat(Core::LinkedArrayList.new(other.cursor)).cursor.slot)
           else
             other.each_entry { |_index, stored| assign(size, stored) }
           end
@@ -255,43 +293,43 @@ module XitDB
         end
 
         def rank(key)
-          @collection.rank(@profile.key_bytes(key))
+          sorted_collection.rank(@profile.key_bytes(key))
         end
 
         def each_from(key)
-          return enum_for(__method__, key) unless block_given?
+          return enum_for(:each_from, key) unless block_given?
 
-          @collection.each_from(@profile.key_bytes(key)) { |bytes, stored| yield decode_key(bytes), stored }
+          sorted_collection.each_from(@profile.key_bytes(key)) { |bytes, stored| yield decode_key(bytes), stored }
           self
         end
 
         def each_from_index(index)
-          return enum_for(__method__, index) unless block_given?
+          return enum_for(:each_from_index, index) unless block_given?
 
           index += size if index.negative?
           return self unless index >= 0 && index < size
 
           case kind
           when :array
-            (index...size).each { |position| yield position, lookup(position) }
+            (index...size).each { |position| yield position, required_slot(lookup(position)) }
           when :linked_array
-            @collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
+            linked_collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
           else
-            @collection.each_from_index(index) { |bytes, stored| yield decode_key(bytes), stored }
+            sorted_collection.each_from_index(index) { |bytes, stored| yield decode_key(bytes), stored }
           end
           self
         end
 
         def each_entry
-          return enum_for(__method__) unless block_given?
+          return enum_for(:each_entry) unless block_given?
 
           case kind
           when :array, :linked_array
-            @collection.each.with_index { |stored, index| yield index, stored }
+            sequence_collection.each.with_index { |stored, index| yield index, stored }
           when :sorted_map, :sorted_set
-            @collection.each { |bytes, stored| yield decode_key(bytes), stored }
+            sorted_collection.each { |bytes, stored| yield decode_key(bytes), stored }
           else
-            @collection.each_entry do |_digest, key, stored|
+            hash_collection.each_entry do |_digest, key, stored|
               value = @profile.decode_scalar(key, core: @context.database.core, bound: @context.read_bound)
               raise CorruptionError, "portable map key is not an untagged string" unless value.is_a?(String)
 
@@ -303,13 +341,59 @@ module XitDB
 
         private
 
-        def storage_selector(selector)
-          return selector if %i[array linked_array].include?(kind)
+        def index_selector(selector)
+          raise TypeError, "index must be an Integer" unless selector.is_a?(Integer)
 
-          bytes = @profile.key_bytes(selector)
-          %i[map set].include?(kind) ? @profile.hasher.digest(bytes) : bytes
-        rescue ValueError => error
-          raise error.class.new(error.message, path: @path + [selector]), cause: error
+          selector
+        end
+
+        def required_slot(slot)
+          raise CorruptionError, "missing collection slot" unless slot
+
+          slot
+        end
+
+        def array_collection
+          collection = @collection
+          raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::ArrayList)
+
+          collection
+        end
+
+        def linked_collection
+          collection = @collection
+          raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::LinkedArrayList)
+
+          collection
+        end
+
+        def sorted_collection
+          collection = @collection
+          raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::SortedMap)
+
+          collection
+        end
+
+        def hash_collection
+          collection = @collection
+          raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::HashMap)
+
+          collection
+        end
+
+        def sequence_collection
+          collection = @collection
+          unless collection.is_a?(Core::ArrayList) || collection.is_a?(Core::LinkedArrayList)
+            raise CorruptionError, "unexpected sequence layout"
+          end
+
+          collection
+        end
+
+        def key_bytes(selector)
+          @profile.key_bytes(selector)
+        rescue ValueError => e
+          raise e.class.new(e.message, path: @path + [selector]), cause: e
         end
 
         def decode_key(bytes)

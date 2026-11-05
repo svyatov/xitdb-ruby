@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 module XitDB
+  # Enumerates the committed snapshots of a database.
   class History
     include Enumerable
 
@@ -30,17 +31,21 @@ module XitDB
     end
 
     def each
-      return enum_for(__method__) unless block_given?
+      return enum_for(:each) unless block_given?
 
-      cursor = count = nil
+      # @type var cursor: Core::Cursor?
+      cursor = nil
+      count = 0
       index = 0
-      while count.nil? || index < count
+      while cursor.nil? || index < count
         snapshot = @database.core.with_operation do
-          unless cursor
-            cursor = @database.core.root_cursor
-            count = @database.history_array(cursor).size
+          captured = cursor
+          unless captured
+            captured = @database.core.root_cursor
+            cursor = captured
+            count = @database.history_array(captured).size
           end
-          @database.snapshot_from_history(cursor, index) if index < count
+          @database.snapshot_from_history(captured, index) if index < count
         end
         break unless snapshot
 

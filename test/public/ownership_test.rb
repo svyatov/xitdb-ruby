@@ -39,7 +39,7 @@ class PublicOwnershipTest < Minitest::Test
     class << input
       private
 
-      def hidden = true
+      def hidden = :singleton_behavior
       def singleton_methods(*) = raise("must not call singleton_methods")
       def singleton_class = raise("must not call singleton_class")
       def class = raise("must not call class")
@@ -59,7 +59,7 @@ class PublicOwnershipTest < Minitest::Test
       value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = input }
       assert_equal ["value"], value_error.path
       assert_equal bound, root.context.read_bound
-      assert_equal({"kept" => 1}, root.to_ruby)
+      assert_equal({ "kept" => 1 }, root.to_ruby)
     end
     refute Object.instance_method(:frozen?).bind_call(input)
     assert_equal "text", input
@@ -77,7 +77,7 @@ class PublicOwnershipTest < Minitest::Test
       value_error = assert_raises(XitDB::UnsupportedValueError) { root["value"] = BasicObject.new }
       assert_equal ["value"], value_error.path
       assert_equal bound, root.context.read_bound
-      assert_equal({"kept" => 1}, root.to_ruby)
+      assert_equal({ "kept" => 1 }, root.to_ruby)
     end
   end
 
@@ -88,14 +88,14 @@ class PublicOwnershipTest < Minitest::Test
       extension = Module.new do
         private
 
-        def hidden = true
+        def hidden = :singleton_behavior
       end
       extension.define_singleton_method(:equal?) do |*|
         calls << behavior
         input.replace("changed") if behavior == :mutate
         raise "identity hook ran" if behavior == :raise
 
-        behavior != :false
+        behavior != false
       end
       input.extend(extension)
       @db.transaction do |root|
@@ -106,7 +106,7 @@ class PublicOwnershipTest < Minitest::Test
         assert_empty root.to_ruby
       end
     end
-    @db.transaction { |root| root["frozen".freeze] = [nil, 1, 1.0, "text".freeze] }
+    @db.transaction { |root| root["frozen"] = [nil, 1, 1.0, "text"] }
     assert_equal [nil, 1, 1.0, "text"], @db.snapshot["frozen"].to_ruby
   end
 
@@ -122,13 +122,13 @@ class PublicOwnershipTest < Minitest::Test
         value_error = assert_raises(XitDB::UnsupportedValueError, method.to_s) { root["value"] = input }
         assert_equal ["value"], value_error.path
         assert_equal bound, root.context.read_bound
-        assert_equal({"kept" => 1}, root.to_ruby)
+        assert_equal({ "kept" => 1 }, root.to_ruby)
       end
     end
   end
 
   def test_rejects_removed_container_methods_before_consumption
-    [[[1], :each], [[1], :reverse], [{"key" => 1}, :each_pair], [Set[1], :each]].each do |input, method|
+    [[[1], :each], [[1], :reverse], [{ "key" => 1 }, :each_pair], [Set[1], :each]].each do |input, method|
       input.singleton_class.undef_method(method)
       @db.transaction do |root|
         root["kept"] = 1
@@ -136,7 +136,7 @@ class PublicOwnershipTest < Minitest::Test
         error = assert_raises(XitDB::UnsupportedValueError, method.to_s) { root["value"] = input }
         assert_equal ["value"], error.path
         assert_equal bound, root.context.read_bound
-        assert_equal({"kept" => 1}, root.to_ruby)
+        assert_equal({ "kept" => 1 }, root.to_ruby)
       end
     end
   end
@@ -148,9 +148,9 @@ class PublicOwnershipTest < Minitest::Test
       assert_raises(XitDB::UnsupportedValueError) { root["rejected"] = input }
       assert_empty root.to_ruby
       root["valid"] = [1]
-      assert_equal({"valid" => [1]}, root.to_ruby)
+      assert_equal({ "valid" => [1] }, root.to_ruby)
     end
-    assert_equal({"valid" => [1]}, @db.snapshot.to_ruby)
+    assert_equal({ "valid" => [1] }, @db.snapshot.to_ruby)
   end
 
   def test_rescued_assignment_is_atomic
@@ -214,7 +214,7 @@ class PublicOwnershipTest < Minitest::Test
             assert_raises(XitDB::ForeignValueError) { root["copy"] = source.snapshot["items"] }
             assert_raises(XitDB::ForeignValueError) { root["items"].concat(source.snapshot["items"]) }
             assert_equal bound, root.context.read_bound
-            assert_equal({"items" => [[1], [2]]}, root.to_ruby)
+            assert_equal({ "items" => [[1], [2]] }, root.to_ruby)
           end
           assert_equal 1, destination.history.size
         end
@@ -236,13 +236,13 @@ class PublicOwnershipTest < Minitest::Test
           assert_equal captured.context.read_bound, destination.snapshot.context.read_bound
           destination.transaction do |root|
             assert_raises(XitDB::ForeignValueError) { root["copy"] = captured }
-            assert_equal({"items" => [[3]]}, root.to_ruby)
+            assert_equal({ "items" => [[3]] }, root.to_ruby)
           end
         end
         source.transaction do |root|
           assert_raises(XitDB::ForeignValueError) { root["copy"] = captured }
           assert_raises(XitDB::ForeignValueError) { root["slice"] = captured[0, 1] }
-          assert_equal({"items" => [[3]]}, root.to_ruby)
+          assert_equal({ "items" => [[3]] }, root.to_ruby)
         end
       end
     end
@@ -258,7 +258,7 @@ class PublicOwnershipTest < Minitest::Test
       bound = root.context.read_bound
       assert_raises(XitDB::ExpiredViewError) { root["copy"] = expired }
       assert_equal bound, root.context.read_bound
-      assert_equal({"items" => [[1]]}, root.to_ruby)
+      assert_equal({ "items" => [[1]] }, root.to_ruby)
     end
     assert_equal 1, @db.history.size
   end

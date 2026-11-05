@@ -2,6 +2,7 @@
 
 module XitDB
   module Core
+    # A persistent vector with sixteen-way branches.
     class ArrayList
       include Enumerable
 
@@ -16,11 +17,12 @@ module XitDB
         unless %i[none array_list].include?(cursor.slot.tag)
           raise InvalidValueError, "slot does not contain an array list"
         end
-        if cursor.slot.tag == :none && cursor.transaction
-          mutate do |tx|
-            _count, _pointer, start = writable_header(tx)
-            cursor.update_collection(Slot.new(tag: :array_list, value: start))
-          end
+
+        return unless cursor.slot.tag == :none && cursor.transaction
+
+        mutate do |transaction|
+          _count, _pointer, start = writable_header(transaction)
+          cursor.update_collection(Slot.new(tag: :array_list, value: start))
         end
       end
 
@@ -32,6 +34,7 @@ module XitDB
         count, pointer = header
         index = resolve_index(index, count)
         return nil unless index
+        raise CorruptionError, "missing array pointer" unless pointer
 
         read_element(pointer, index, depth(count))
       end
@@ -47,21 +50,24 @@ module XitDB
         end
         return nil unless resolved
 
-        cursor.array_child(resolved, get(resolved))
+        slot = get(resolved)
+        raise CorruptionError, "missing array element" unless slot
+
+        cursor.array_child(resolved, slot)
       end
 
       def append(slot)
         validate_slot(slot)
-        mutate do |tx|
-          count, pointer, start = writable_header(tx)
+        mutate do |transaction|
+          count, pointer, start = writable_header(transaction)
           raise RangeError, "array size exceeds unsigned 64-bit range" if count == Format::UINT64_MAX
 
           if depth(count + 1) > depth(count)
-            pointer = tx.append(Slot.new(tag: :index, value: pointer).to_bytes + EMPTY_BLOCK.byteslice(Slot::SIZE..))
+            pointer = transaction.append(Slot.new(tag: :index, value: pointer).to_bytes + Format.slice(EMPTY_BLOCK, Slot::SIZE..))
           end
-          position = writable_element(tx, pointer, count, depth(count + 1))
-          tx.write_at(position, slot.to_bytes)
-          tx.write_at(start, [count + 1, pointer].pack("Q>Q>"))
+          position = writable_element(transaction, pointer, count, depth(count + 1))
+          transaction.write_at(position, slot.to_bytes)
+          transaction.write_at(start, [count + 1, pointer].pack("Q>Q>"))
           cursor.update_collection(Slot.new(tag: :array_list, value: start))
         end
         self
@@ -78,10 +84,10 @@ module XitDB
         index = resolve_index(index, size)
         raise IndexError, "array index outside list" unless index
 
-        mutate do |tx|
-          count, pointer, start = writable_header(tx)
-          position = writable_element(tx, pointer, index, depth(count))
-          tx.write_at(position, slot.to_bytes)
+        mutate do |transaction|
+          count, pointer, start = writable_header(transaction)
+          position = writable_element(transaction, pointer, index, depth(count))
+          transaction.write_at(position, slot.to_bytes)
           cursor.update_collection(Slot.new(tag: :array_list, value: start), propagate: propagate)
           cursor.invalidate_children(index: index, except: owner) unless collection
         end
@@ -92,13 +98,13 @@ module XitDB
         Format.integer(count, 0..Format::UINT64_MAX)
         raise IndexError, "array size outside list" if count > size
 
-        mutate do |tx|
-          previous, pointer, start = writable_header(tx)
+        mutate do |transaction|
+          previous, pointer, start = writable_header(transaction)
           shift = depth(previous)
           while shift > depth(count)
             slot = read_slot(pointer)
             if slot.empty?
-              pointer = tx.append(EMPTY_BLOCK)
+              pointer = transaction.append(EMPTY_BLOCK)
               break
             end
             raise CorruptionError, "invalid array branch" unless slot.tag == :index
@@ -106,8 +112,8 @@ module XitDB
             pointer = slot.value
             shift -= 1
           end
-          pointer = copy_block(tx, pointer)
-          tx.write_at(start, [count, pointer].pack("Q>Q>"))
+          pointer = copy_block(transaction, pointer)
+          transaction.write_at(start, [count, pointer].pack("Q>Q>"))
           cursor.update_collection(Slot.new(tag: :array_list, value: start))
           cursor.invalidate_children(from: count)
         end
@@ -115,36 +121,29 @@ module XitDB
       end
 
       def each
-        return enum_for(__method__) unless block_given?
+        return enum_for(:each) unless block_given?
 
         count, pointer = header
         return self if count.zero?
 
+        # @type var stack: Array[[Integer?, Integer, Integer]]
         stack = [[pointer, depth(count), 0]]
         until stack.empty?
-          pointer, shift, base = stack.pop
+          pointer, shift, base = stack.pop || raise(CorruptionError, "missing array branch")
           if pointer.nil?
-            [16**(shift + 1), count - base].min.times { yield Slot.new }
+            [1 << ((shift + 1) * 4), count - base].min.times { yield Slot.new }
             next
           end
           block = read(pointer, BLOCK_SIZE)
           if shift.zero?
             [16, count - base].min.times do |i|
-              slot = parse_slot(block.byteslice(i * Slot::SIZE, Slot::SIZE))
+              slot = parse_slot(Format.slice(block, i * Slot::SIZE, Slot::SIZE))
               raise CorruptionError, "index slot in array leaf" if slot.tag == :index
 
               yield slot
             end
           else
-            15.downto(0) do |i|
-              next_base = base + i * 16**shift
-              next if next_base >= count
-
-              slot = parse_slot(block.byteslice(i * Slot::SIZE, Slot::SIZE))
-              raise CorruptionError, "invalid array branch" unless slot.empty? || slot.tag == :index
-
-              stack << [slot.empty? ? nil : slot.value, shift - 1, next_base]
-            end
+            stack.concat(branches(block, shift, base, count))
           end
         end
         self
@@ -152,12 +151,27 @@ module XitDB
 
       private
 
+      def branches(block, shift, base, count)
+        # @type var result: Array[[Integer?, Integer, Integer]]
+        result = []
+        15.downto(0) do |index|
+          next_base = base + (index * (1 << (shift * 4)))
+          next if next_base >= count
+
+          slot = parse_slot(Format.slice(block, index * Slot::SIZE, Slot::SIZE))
+          raise CorruptionError, "invalid array branch" unless slot.empty? || slot.tag == :index
+
+          result << [slot.empty? ? nil : slot.value, shift - 1, next_base]
+        end
+        result
+      end
+
       def header
         slot = cursor.slot
         return [0, nil] if slot.tag == :none
         raise InvalidValueError, "slot does not contain an array list" unless slot.tag == :array_list
 
-        count, pointer = read(slot.value, HEADER_SIZE).unpack("Q>Q>")
+        count, pointer = Format.pair(read(slot.value, HEADER_SIZE), "Q>Q>")
         read(pointer, BLOCK_SIZE)
         [count, pointer]
       end
@@ -191,7 +205,7 @@ module XitDB
       def read_element(pointer, index, shift)
         loop do
           read(pointer, BLOCK_SIZE)
-          slot = read_slot(pointer + ((index >> (shift * 4)) & 15) * Slot::SIZE)
+          slot = read_slot(pointer + (((index >> (shift * 4)) & 15) * Slot::SIZE))
           if shift.zero?
             raise CorruptionError, "index slot in array leaf" if slot.tag == :index
 
@@ -213,52 +227,52 @@ module XitDB
 
       def mutate
         cursor.slot
-        tx = cursor.transaction
-        raise ReadOnlyError, "array list is read-only" unless tx
+        transaction = cursor.transaction
+        raise ReadOnlyError, "array list is read-only" unless transaction
 
-        checkpoint = tx.checkpoint
+        checkpoint = transaction.checkpoint
         begin
-          yield tx
-        rescue Exception
-          tx.restore(checkpoint)
+          yield transaction
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+          transaction.restore(checkpoint)
           raise
         else
-          tx.release_checkpoint(checkpoint)
+          transaction.release_checkpoint(checkpoint)
         end
       end
 
-      def writable_header(tx)
+      def writable_header(transaction)
         count, pointer = header
         if pointer.nil?
-          start = tx.length
+          start = transaction.length
           pointer = start + HEADER_SIZE
-          tx.append([0, pointer].pack("Q>Q>") + EMPTY_BLOCK)
+          transaction.append([0, pointer].pack("Q>Q>") + EMPTY_BLOCK)
         else
-          pointer = copy_block(tx, pointer)
-          start = tx.append([count, pointer].pack("Q>Q>"))
+          pointer = copy_block(transaction, pointer)
+          start = transaction.append([count, pointer].pack("Q>Q>"))
         end
         [count, pointer, start]
       end
 
-      def copy_block(tx, pointer)
-        block = tx.read_at(pointer, BLOCK_SIZE)
-        pointer < tx.mutable_start ? tx.append(block) : pointer
+      def copy_block(transaction, pointer)
+        block = transaction.read_at(pointer, BLOCK_SIZE)
+        pointer < transaction.mutable_start ? transaction.append(block) : pointer
       end
 
-      def writable_element(tx, pointer, index, shift)
+      def writable_element(transaction, pointer, index, shift)
         loop do
-          position = pointer + ((index >> (shift * 4)) & 15) * Slot::SIZE
+          position = pointer + (((index >> (shift * 4)) & 15) * Slot::SIZE)
           return position if shift.zero?
 
           slot = read_slot(position)
           next_pointer = if slot.empty?
-            tx.append(EMPTY_BLOCK)
-          elsif slot.tag == :index
-            copy_block(tx, slot.value)
-          else
-            raise CorruptionError, "invalid array branch"
-          end
-          tx.write_at(position, Slot.new(tag: :index, value: next_pointer).to_bytes)
+                           transaction.append(EMPTY_BLOCK)
+                         elsif slot.tag == :index
+                           copy_block(transaction, slot.value)
+                         else
+                           raise CorruptionError, "invalid array branch"
+                         end
+          transaction.write_at(position, Slot.new(tag: :index, value: next_pointer).to_bytes)
           pointer = next_pointer
           shift -= 1
         end

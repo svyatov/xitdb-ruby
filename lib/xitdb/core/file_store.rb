@@ -2,12 +2,13 @@
 
 module XitDB
   module Core
+    # A synchronized file store with bounded write buffering.
     class FileStore
       include Store
 
       attr_reader :storage_identity
 
-      WRITERS = {}
+      WRITERS = {} # rubocop:disable Style/MutableConstant -- Writer registry updates are protected by WRITERS_MUTEX.
       WRITERS_MUTEX = Mutex.new
       private_constant :WRITERS, :WRITERS_MUTEX
 
@@ -16,26 +17,29 @@ module XitDB
         raise ArgumentError, "buffer_limit must be positive" unless buffer_limit.positive?
         raise ArgumentError, "exclusive opening requires writable creation" if exclusive && (readonly || !create)
 
-        flags = readonly ? File::RDONLY : File::RDWR
-        if create && !readonly
-          begin
-            file = File.open(path, flags | File::CREAT | File::EXCL, 0o666)
-          rescue Errno::EEXIST
-            raise if exclusive
-
-            file = File.open(path, flags)
-          end
-        else
-          file = File.open(path, flags)
-        end
+        file = open_file(path, readonly, create, exclusive)
         begin
           directory = File.dirname(File.expand_path(path)) unless readonly
           new(file, readonly, buffer_limit, sync_directory: directory)
-        rescue Exception
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
           file.close
           raise
         end
       end
+
+      def self.open_file(path, readonly, create, exclusive)
+        flags = readonly ? File::RDONLY : File::RDWR
+        return File.open(path, flags) unless create && !readonly
+
+        begin
+          File.open(path, flags | File::CREAT | File::EXCL, 0o666)
+        rescue Errno::EEXIST
+          raise if exclusive
+
+          File.open(path, flags)
+        end
+      end
+      private_class_method :open_file
 
       def initialize(file, readonly, buffer_limit, sync_directory: nil)
         @file = file.binmode
@@ -73,14 +77,14 @@ module XitDB
         finish = offset + length
         if offset < @pending_offset
           count = [finish, @pending_offset].min - offset
-          disk_count = [count, [@file.stat.size - offset, 0].max].min
+          disk_count = (@file.stat.size - offset).clamp(0, count)
           result << read_file(offset, disk_count)
-          result << "\0".b * (count - disk_count)
+          result << ("\0".b * (count - disk_count))
           offset += count
         end
         if offset < finish && offset < @pending_offset + @pending.bytesize
           count = [finish - offset, @pending_offset + @pending.bytesize - offset].min
-          result << @pending.byteslice(offset - @pending_offset, count)
+          result << Format.slice(@pending, offset - @pending_offset, count)
           offset += count
         end
         result << read_file(offset, finish - offset) if offset < finish
@@ -105,7 +109,7 @@ module XitDB
           return
         end
 
-        unless @pending.empty? || (offset >= @pending_offset && offset <= @pending_offset + @pending.bytesize &&
+        unless @pending.empty? || (offset.between?(@pending_offset, @pending_offset + @pending.bytesize) &&
                offset + bytes.bytesize <= @pending_offset + @buffer_limit)
           flush_bytes
         end
@@ -116,7 +120,7 @@ module XitDB
       def write_file(offset, bytes)
         written = 0
         while written < bytes.bytesize
-          count = retry_interrupted { @file.pwrite(bytes.byteslice(written..), offset + written) }
+          count = retry_interrupted { @file.pwrite(Format.slice(bytes, written..), offset + written) }
           raise IOError, "file write made no progress" unless count.positive?
 
           written += count
@@ -128,7 +132,7 @@ module XitDB
         if length <= @pending_offset
           @pending.clear
         elsif length < @pending_offset + @pending.bytesize
-          @pending = @pending.byteslice(0, length - @pending_offset)
+          @pending = Format.slice(@pending, 0, length - @pending_offset)
         end
       end
 
@@ -142,8 +146,9 @@ module XitDB
 
       def sync_bytes
         retry_interrupted { @file.fsync }
-        if @sync_directory
-          File.open(@sync_directory, File::RDONLY) do |directory|
+        sync_directory = @sync_directory
+        if sync_directory
+          File.open(sync_directory, File::RDONLY) do |directory|
             retry_interrupted { directory.fsync }
           end
           @sync_directory = nil
@@ -161,15 +166,12 @@ module XitDB
       end
 
       def lock_writer(deadline)
-        if @writer_mutex.owned?
-          raise TransactionStateError, "writer lock for this file is already held by this thread"
-        end
+        raise TransactionStateError, "writer lock for this file is already held by this thread" if @writer_mutex.owned?
+
         super
         acquired = false
         begin
-          until retry_interrupted { @file.flock(File::LOCK_EX | File::LOCK_NB) }
-            wait_for_writer(deadline)
-          end
+          wait_for_writer(deadline) until retry_interrupted { @file.flock(File::LOCK_EX | File::LOCK_NB) }
           acquired = true
         ensure
           @writer_mutex.unlock unless acquired

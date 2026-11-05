@@ -11,11 +11,15 @@ class BTreeTest < Minitest::Test
   def test_root_collapse_rejects_a_cyclic_surviving_child
     Core::Database.memory.transaction do |root|
       tx = root.transaction
-      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + "\0" * 135)
+      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + ("\0" * 135))
       cyclic = tx.length
       child = Core::Slot.new(tag: :index, value: cyclic)
-      tx.append([1, 1].pack("CC") + child.to_bytes + "\0" * 135 + [1].pack("Q>") + "\0" * 120)
-      branch = tx.append([1, 2].pack("CC") + Core::Slot.new(tag: :index, value: leaf).to_bytes + child.to_bytes + "\0" * 126 + [1, 1].pack("Q>Q>") + "\0" * 112)
+      tx.append([1, 1].pack("CC") + child.to_bytes + ("\0" * 135) + [1].pack("Q>") + ("\0" * 120))
+      branch = tx.append([1,
+                          2].pack("CC") + Core::Slot.new(tag: :index,
+                                                         value: leaf).to_bytes + child.to_bytes + ("\0" * 126) + [
+                                                           1, 1
+                                                         ].pack("Q>Q>") + ("\0" * 112))
       header = tx.append([2, branch].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
       assert_raises(XitDB::CorruptionError) { Timeout.timeout(1) { Core::BTree.new(root).delete_at(0) } }
@@ -39,7 +43,7 @@ class BTreeTest < Minitest::Test
         index = [0, oracle.size / 2, -1][turn % 3]
         assert_equal oracle.delete_at(index), tree.delete_at(index).value
         assert_equal oracle.size, tree.size
-        assert_equal oracle.size, subtree_count(root, tree_root(root)) if turn % 128 == 0 || oracle.size <= 17
+        assert_equal oracle.size, subtree_count(root, tree_root(root)) if (turn % 128).zero? || oracle.size <= 17
         turn += 1
       end
       assert_equal [0, 0], root.database.read_at(tree_root(root), 2, bound: root.bound).unpack("CC")
@@ -104,7 +108,7 @@ class BTreeTest < Minitest::Test
       end
       Core::Database.open(path, readonly: true) do |db|
         tree = Core::BTree.new(db.root_cursor)
-        assert_equal oracle, oracle.each_index.map { |i| tree.at(i).value }
+        assert_equal(oracle, oracle.each_index.map { |i| tree.at(i).value })
         assert_equal oracle[500..], tree.each_from_index(500).map(&:value)
       end
     end
@@ -124,7 +128,7 @@ class BTreeTest < Minitest::Test
       assert_equal 2, list.get(-1).value
       assert_nil list.get(3)
       assert_nil list.get(-4)
-      assert_equal [:none, :none, :uint], list.map(&:tag)
+      assert_equal %i[none none uint], list.map(&:tag)
       assert_equal [], list.each_from_index(3).to_a
       assert_raises(TypeError) { list.get(1.5) }
       assert_raises(IndexError) { Core::BTree.new(root).insert(4, Core::Slot.null) }
@@ -210,11 +214,12 @@ class BTreeTest < Minitest::Test
   def test_corrupt_nodes_and_captured_bounds_are_rejected
     Core::Database.memory.transaction do |root|
       tx = root.transaction
-      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + "\0" * 135)
+      leaf = tx.append([0, 1].pack("CC") + Core::Slot.uint(7).to_bytes + ("\0" * 135))
       header = tx.append([2, leaf].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
       assert_raises(XitDB::CorruptionError) { Core::BTree.new(root).at(0) }
-      branch = tx.append([1, 1].pack("CC") + Core::Slot.new(tag: :index, value: tx.length).to_bytes + "\0" * 135 + [1].pack("Q>") + "\0" * 120)
+      branch_bytes = [1, 1].pack("CC") + Core::Slot.new(tag: :index, value: tx.length).to_bytes
+      branch = tx.append(branch_bytes + ("\0" * 135) + [1].pack("Q>") + ("\0" * 120))
       header = tx.append([1, branch].pack("Q>Q>"))
       root.replace(Core::Slot.new(tag: :linked_array_list, value: header))
       assert_raises(XitDB::CorruptionError) { Core::BTree.new(root).at(0) }

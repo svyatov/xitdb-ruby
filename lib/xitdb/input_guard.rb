@@ -3,9 +3,10 @@
 require_relative "errors"
 
 module XitDB
+  # Rejects objects with altered method behavior before encoding them.
   module InputGuard
     def self.check!(value, path: [])
-      unless Object === value
+      unless Object.instance_method(:is_a?).bind_call(value, Object)
         raise UnsupportedValueError.new("unsupported Ruby object", path: path)
       end
 
@@ -14,9 +15,12 @@ module XitDB
       end
 
       klass = Object.instance_method(:class).bind_call(value)
-      %i[public protected private].each do |visibility|
-        expected = Module.instance_method("#{visibility}_instance_methods").bind_call(klass)
-        actual = Object.instance_method("#{visibility}_methods").bind_call(value)
+      # @type var methods: ::Array[native_visibility_pair]
+      methods = [%i[public_instance_methods public_methods], %i[protected_instance_methods protected_methods],
+                 %i[private_instance_methods private_methods]]
+      methods.each do |instance_methods, object_methods|
+        expected = Module.instance_method(instance_methods).bind_call(klass)
+        actual = Object.instance_method(object_methods).bind_call(value)
         unless (expected - actual).empty? && (actual - expected).empty?
           raise UnsupportedValueError.new("singleton behavior or method removal is unsupported", path: path)
         end

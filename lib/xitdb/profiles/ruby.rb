@@ -4,6 +4,7 @@ require_relative "../ruby/codec"
 
 module XitDB
   module Profiles
+    # Preserves Ruby scalar types and collection ordering.
     class Ruby
       attr_reader :hasher, :codecs
 
@@ -27,7 +28,7 @@ module XitDB
           context.view(slot, path: path, kind: adapter.kind)
         else
           XitDB::Ruby::Scalars.decode(slot, core: context.database.core, bound: context.read_bound,
-                                    registry: @registry, immutable: immutable)
+                                            registry: @registry, immutable: immutable)
         end
       end
 
@@ -42,20 +43,24 @@ module XitDB
       end
 
       def empty_container(kind, context:, path:)
-        kind, key_kind = kind if ::Array === kind
+        kind, key_kind = kind if kind.is_a?(::Array)
         XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path,
-                                   kind: kind, key_kind: key_kind)
+                                                                          kind: kind, key_kind: key_kind)
       end
 
       def conversion_kind(adapter)
         return adapter.kind unless %i[sorted_map sorted_set].include?(adapter.kind)
 
-        key = Core::ArrayList.new(adapter.cursor).get(1).value
+        stored = Core::ArrayList.new(adapter.cursor).get(1)
+        raise InvalidValueError, "missing sorted key kind" unless stored
+
+        key = stored.value
         [adapter.kind, XitDB::Ruby::Containers::KEY_KINDS.key(key)]
       end
 
       def conversion_container(kind, context:, path:)
-        kind = [kind, :string] if %i[sorted_map sorted_set].include?(kind)
+        # @type var kind: Symbol | [Symbol, Symbol?]
+        kind = [kind, :string] if kind.is_a?(Symbol) && %i[sorted_map sorted_set].include?(kind)
         empty_container(kind, context: context, path: path)
       end
 
@@ -75,8 +80,8 @@ module XitDB
 
         begin
           encoding = Encoding.find(name)
-        rescue ArgumentError => error
-          raise UnsupportedEncodingError, error.message
+        rescue ArgumentError => e
+          raise UnsupportedEncodingError, e.message
         end
         size, position = source.unsigned(position + length)
         raise InvalidValueError, "trailing or truncated String bytes" unless position + size == source.size
@@ -102,29 +107,46 @@ module XitDB
         klass = Object.instance_method(:class).bind_call(value)
         case value
         when Hash, ::Array, ::Set
-          unless [Hash, ::Array, ::Set].include?(klass)
-            raise UnsupportedValueError.new("container subclasses are unsupported", path: path)
-          end
-          if value.is_a?(Hash) && (value.default_proc || !value.default.nil? || value.compare_by_identity?)
-            raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
-          end
-          if value.is_a?(::Set) && value.compare_by_identity?
-            raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
-          end
-          {Hash => :map, ::Array => :array, ::Set => :set}.fetch(klass)
+          validate_container(value, klass, path)
+          { Hash => :map, ::Array => :array, ::Set => :set }.fetch(klass)
         when CollectionDeclaration
-          unless CollectionDeclaration.equal?(klass)
-            raise UnsupportedValueError.new("collection declaration subclasses are unsupported", path: path)
+          declaration_kind(value, klass, path)
+        end
+      end
+
+      def hash_defaults?(value)
+        default = !BasicObject.instance_method(:equal?).bind_call(value.default, nil)
+        !value.default_proc.nil? || default || value.compare_by_identity?
+      end
+
+      def validate_container(value, klass, path)
+        unless [Hash, ::Array, ::Set].include?(klass)
+          raise UnsupportedValueError.new("container subclasses are unsupported", path: path)
+        end
+        if value.is_a?(Hash) && hash_defaults?(value)
+          raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
+        end
+        return unless value.is_a?(::Set) && value.compare_by_identity?
+
+        raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+      end
+
+      def declaration_kind(value, klass, path)
+        unless CollectionDeclaration.equal?(klass)
+          raise UnsupportedValueError.new("collection declaration subclasses are unsupported", path: path)
+        end
+
+        if %i[sorted_map sorted_set].include?(value.kind)
+          unless value.key_kind
+            raise UnsupportedValueError.new("Ruby sorted collections require an explicit key: kind", path: path)
           end
-          if %i[sorted_map sorted_set].include?(value.kind)
-            unless value.key_kind
-              raise UnsupportedValueError.new("Ruby sorted collections require an explicit key: kind", path: path)
-            end
-            return [value.kind, value.key_kind]
-          end
-          kinds = {hash_map: :map, counted_hash_map: :map, hash_set: :set, counted_hash_set: :set,
-                   array_list: :array, linked_array_list: :linked_array}
-          kinds.fetch(value.kind) { raise UnsupportedValueError.new("unsupported Ruby collection declaration", path: path) }
+
+          return [value.kind, value.key_kind]
+        end
+        kinds = { hash_map: :map, counted_hash_map: :map, hash_set: :set, counted_hash_set: :set,
+                  array_list: :array, linked_array_list: :linked_array }
+        kinds.fetch(value.kind) do
+          raise UnsupportedValueError.new("unsupported Ruby collection declaration", path: path)
         end
       end
 
@@ -136,8 +158,8 @@ module XitDB
             entries.each do |key, child|
               begin
                 key_bytes(key)
-              rescue ValueError => error
-                raise error.class.new(error.message, path: path + [key]), cause: error
+              rescue ValueError => e
+                raise e.class.new(e.message, path: path + [key]), cause: e
               end
               output << [key, child]
             end

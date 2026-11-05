@@ -35,7 +35,7 @@ class RubyProfileTest < Minitest::Test
     extension = Module.new do
       private
 
-      def hidden = true
+      def hidden = :singleton_behavior
     end
     values << (+"text").extend(extension)
     values << (+"text").extend(extension).freeze
@@ -65,14 +65,14 @@ class RubyProfileTest < Minitest::Test
       extension = Module.new do
         private
 
-        def hidden = true
+        def hidden = :singleton_behavior
       end
       extension.define_singleton_method(:equal?) do |*|
         calls << behavior
         value.replace("changed") if behavior == :mutate
         raise "identity hook ran" if behavior == :raise
 
-        behavior != :false
+        behavior != false
       end
       value.extend(extension)
       yield value, calls, behavior

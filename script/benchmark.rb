@@ -12,5 +12,5 @@ raise ArgumentError, "--output is required" unless output && ARGV.empty?
 
 report = BoundedWorkload.isolate("benchmark", limit_mib: 256)
 FileUtils.mkdir_p(File.dirname(output))
-File.write(output, JSON.pretty_generate(report) + "\n")
+File.write(output, "#{JSON.pretty_generate(report)}\n")
 puts output

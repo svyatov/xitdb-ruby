@@ -4,14 +4,15 @@ require "monitor"
 
 module XitDB
   module Core
+    # Coordinates store lifetime and exclusive writers.
     module Store
       # Only for owned stores whose construction or maintenance failed.
       def close_unreturned
         close
-      rescue Exception
+      rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         begin
           close(discard: true)
-        rescue Exception
+        rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
           nil
         end
       end
@@ -49,6 +50,10 @@ module XitDB
 
       def length
         synchronize { store_length }
+      end
+
+      def empty?
+        length.zero?
       end
 
       def truncate(length)
@@ -111,17 +116,7 @@ module XitDB
           result
         ensure
           begin
-            @state.synchronize do
-              @lock_owner = nil if locked
-              begin
-                unlock_writer if locked
-              rescue Exception => error
-                @release_failed = true
-                on_release_error&.call(error)
-                # Raising here would replace a pending exception or nonlocal exit.
-                raise if completed
-              end
-            end
+            release_writer(locked, completed, on_release_error)
           ensure
             @state.synchronize do
               @lock_users -= 1
@@ -158,6 +153,20 @@ module XitDB
       end
 
       private
+
+      def release_writer(locked, completed, on_release_error)
+        @state.synchronize do
+          @lock_owner = nil if locked
+          begin
+            unlock_writer if locked
+          rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
+            @release_failed = true
+            on_release_error&.call(e)
+            # Raising here would replace a pending exception or nonlocal exit.
+            raise if completed
+          end
+        end
+      end
 
       def initialize_state(writer_mutex = Mutex.new)
         @state = Monitor.new
@@ -216,6 +225,7 @@ module XitDB
     end
     private_constant :Store
 
+    # A synchronized store backed by a binary string.
     class MemoryStore
       include Store
 
@@ -239,19 +249,19 @@ module XitDB
       end
 
       def read_bytes(offset, length)
-        @bytes.byteslice(offset, length)
+        Format.slice(@bytes, offset, length)
       end
 
       def write_bytes(offset, bytes)
-        @bytes << "\0".b * (offset - store_length) if offset > store_length
+        @bytes << ("\0".b * (offset - store_length)) if offset > store_length
         @bytes[offset, bytes.bytesize] = bytes
       end
 
       def truncate_bytes(length)
         if length < store_length
-          @bytes = @bytes.byteslice(0, length)
+          @bytes = Format.slice(@bytes, 0, length)
         else
-          @bytes << "\0".b * (length - store_length)
+          @bytes << ("\0".b * (length - store_length))
         end
       end
 

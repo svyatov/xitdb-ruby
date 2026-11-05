@@ -17,7 +17,7 @@ class RubyStandardValuesTest < RubyProfileTest
 
   def test_time_exact_instants_and_presentation
     [Rational(-1, 10**12), Rational(1, 3), 2**80].each do |instant|
-      [-86399, 0, 86399].each do |offset|
+      [-86_399, 0, 86_399].each do |offset|
         value = round_trip(Time.at(instant).getlocal(offset))
         assert_equal instant, value.to_r
         assert_equal offset, value.utc_offset
@@ -49,7 +49,7 @@ class RubyStandardValuesTest < RubyProfileTest
   end
 
   def test_dates_preserve_calendar_start
-    [Date::GREGORIAN, Date::JULIAN, Date::ITALY, Date::ENGLAND, 2_298_874, 2_426_355, 2299161.5].each do |start|
+    [Date::GREGORIAN, Date::JULIAN, Date::ITALY, Date::ENGLAND, 2_298_874, 2_426_355, 2_299_161.5].each do |start|
       [-2**70, 0, 2_299_161, 2**70].each do |jd|
         date = round_trip(Date.jd(jd, start))
         assert_instance_of Date, date
@@ -81,11 +81,11 @@ class RubyStandardValuesTest < RubyProfileTest
       assert value.frozen?
     end
     assert_equal @core.read_bytes(store(BigDecimal("1.2300"))).bytes,
-      @core.read_bytes(store(BigDecimal("1.23"))).bytes
+                 @core.read_bytes(store(BigDecimal("1.23"))).bytes
   end
 
   def test_rationals_preserve_large_reduced_components
-    [Rational(0), Rational(-2, 3), Rational(2**2048 + 1, 2**2048)].each do |value|
+    [Rational(0), Rational(-2, 3), Rational((2**2048) + 1, 2**2048)].each do |value|
       assert_equal value, round_trip(value)
     end
   end
@@ -137,7 +137,7 @@ class RubyStandardValuesTest < RubyProfileTest
       (0...(payload.size / 2)).each do |length|
         assert_raises(XitDB::InvalidValueError) { decode_payload(payload[0, length * 2]) }
       end
-      assert_raises(XitDB::InvalidValueError) { decode_payload(payload + "00") }
+      assert_raises(XitDB::InvalidValueError) { decode_payload("#{payload}00") }
     end
   end
 

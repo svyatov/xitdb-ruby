@@ -2,6 +2,7 @@
 
 module XitDB
   module Core
+    # An indexed list backed by a counted B-tree.
     class LinkedArrayList
       include Enumerable
 
@@ -47,8 +48,8 @@ module XitDB
         self.class.new(@tree.concat(BTree.new(other.cursor)).cursor)
       end
 
-      def replace_child(index, slot, **options)
-        @tree.replace(index, slot, **options)
+      def replace_child(index, slot, **)
+        @tree.replace(index, slot, **)
         self
       end
 
@@ -67,14 +68,14 @@ module XitDB
       end
 
       def each(&block)
-        return enum_for(__method__) unless block
+        return enum_for(:each) unless block
 
         @tree.each_from_index(0, &block)
         self
       end
 
       def each_from_index(index, &block)
-        return enum_for(__method__, index) unless block
+        return enum_for(:each_from_index, index) unless block
 
         @tree.each_from_index(index, &block)
         self

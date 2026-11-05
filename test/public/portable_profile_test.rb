@@ -24,14 +24,14 @@ class PortableProfileTest < Minitest::Test
   def test_portable_types_and_strict_keys
     assert_raises(XitDB::UnsupportedValueError) { profile.key_bytes(:name) }
     assert_equal "name".b, profile.key_bytes("name")
-    assert_equal :uint, encode(2**64 - 1).tag
+    assert_equal :uint, encode((2**64) - 1).tag
     assert_raises(RangeError) { encode(2**64) }
   end
 
   def test_signed_and_unsigned_payloads_decode_exactly
     [[-(2**63), :int, 0x8000000000000000], [-1, :int, 0xffffffffffffffff],
-     [0, :int, 0], [2**63 - 1, :int, 0x7fffffffffffffff],
-     [2**63, :uint, 0x8000000000000000], [2**64 - 1, :uint, 0xffffffffffffffff]].each do |value, tag, bits|
+     [0, :int, 0], [(2**63) - 1, :int, 0x7fffffffffffffff],
+     [2**63, :uint, 0x8000000000000000], [(2**64) - 1, :uint, 0xffffffffffffffff]].each do |value, tag, bits|
       slot = encode(value)
       assert_equal tag, slot.tag
       assert_equal bits, slot.value
@@ -118,10 +118,11 @@ class PortableProfileTest < Minitest::Test
   end
 
   def test_all_collection_declarations_capture_immutable_metadata
-    [[XitDB.map, :hash_map, false], [XitDB.map(counted: true), :counted_hash_map, true],
-     [XitDB.set, :hash_set, false], [XitDB.set(counted: true), :counted_hash_set, true],
-     [XitDB.array, :array_list, false], [XitDB.linked_array, :linked_array_list, false],
-     [XitDB.sorted_map, :sorted_map, false], [XitDB.sorted_set, :sorted_set, false]].each do |declaration, kind, counted|
+    declarations = [[XitDB.map, :hash_map, false], [XitDB.map(counted: true), :counted_hash_map, true],
+                    [XitDB.set, :hash_set, false], [XitDB.set(counted: true), :counted_hash_set, true],
+                    [XitDB.array, :array_list, false], [XitDB.linked_array, :linked_array_list, false],
+                    [XitDB.sorted_map, :sorted_map, false], [XitDB.sorted_set, :sorted_set, false]]
+    declarations.each do |declaration, kind, counted|
       assert_equal kind, declaration.kind
       assert_equal counted, declaration.counted?
       assert declaration.frozen?
@@ -134,8 +135,11 @@ class PortableProfileTest < Minitest::Test
   def test_builtin_hashers_match_independent_vectors
     [[Core::Hasher.sha1, "sha1", 20, "a9993e364706816aba3e25717850c26c9cd0d89d"],
      [Core::Hasher.sha256, "sha2", 32, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],
-     [Core::Hasher.sha384, "sha2", 48, "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"],
-     [Core::Hasher.sha512, "sha2", 64, "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"]].each do |hasher, id, width, hex|
+     [Core::Hasher.sha384, "sha2", 48,
+      "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"],
+     [Core::Hasher.sha512, "sha2", 64,
+      "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a219" \
+      "2992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"]].each do |hasher, id, width, hex|
       assert_equal id.b, hasher.id
       assert_equal width, hasher.size
       assert_equal hex, hasher.digest("abc").unpack1("H*")
@@ -161,10 +165,10 @@ class PortableProfileTest < Minitest::Test
     assert_raises(FrozenError) { hasher.id.clear }
     assert_raises(ArgumentError) { hasher.digest("different") }
     assert_raises(TypeError) { hasher.digest(1) }
-    assert_raises(TypeError) { Core::Hasher.new(id: 1, size: 2) {} }
-    assert_raises(ArgumentError) { Core::Hasher.new(id: "short", size: 2) {} }
-    [0, -1, 65_536].each { |size| assert_raises(RangeError) { Core::Hasher.new(id: "test", size: size) {} } }
-    assert_raises(TypeError) { Core::Hasher.new(id: "test", size: 1.0) {} }
+    assert_raises(TypeError) { Core::Hasher.new(id: 1, size: 2) { nil } }
+    assert_raises(ArgumentError) { Core::Hasher.new(id: "short", size: 2) { nil } }
+    [0, -1, 65_536].each { |size| assert_raises(RangeError) { Core::Hasher.new(id: "test", size: size) { nil } } }
+    assert_raises(TypeError) { Core::Hasher.new(id: "test", size: 1.0) { nil } }
     assert_raises(ArgumentError) { Core::Hasher.new(id: "test", size: 2) }
     assert_raises(TypeError) { Core::Hasher.new(id: "test", size: 2) { 12 }.digest("abc") }
   end

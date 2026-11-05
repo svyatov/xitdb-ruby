@@ -11,7 +11,7 @@ class CompactionTest < Minitest::Test
     Dir.mktmpdir do |dir|
       source = Core::Database.memory
       source.transaction do |root|
-        pointer = root.transaction.append([3].pack("Q>") + "abczz")
+        pointer = root.transaction.append("#{[3].pack("Q>")}abczz")
         root.replace(Core::Slot.new(tag: :bytes, value: pointer, full: true))
       end
       compacted = source.compact(to: File.join(dir, "target"))
@@ -34,7 +34,7 @@ class CompactionTest < Minitest::Test
         history.append(Core::Slot.uint(10))
         tx = root.transaction
         pointer = tx.length
-        tx.append([3, pointer + 16].pack("Q>Q>") + "\0".b * Core::ArrayList::BLOCK_SIZE)
+        tx.append([3, pointer + 16].pack("Q>Q>") + ("\0".b * Core::ArrayList::BLOCK_SIZE))
         graph = Core::Slot.new(tag: :array_list, value: pointer, full: true)
         bytes = source.bytes("a\0b".b, format_tag: "\xff\0".b)
         tx.write_at(pointer + 16, graph.to_bytes + bytes.to_bytes + bytes.to_bytes)
@@ -106,7 +106,10 @@ class CompactionTest < Minitest::Test
         assert_equal 11, compacted.header.hash_size
         compacted.close
       end
-      source.transaction { |root| root.replace(Core::Slot.new); Core::ArrayList.new(root) }
+      source.transaction do |root|
+        root.replace(Core::Slot.new)
+        Core::ArrayList.new(root)
+      end
       compacted = source.compact(to: File.join(dir, "empty-history"))
       assert compacted.root_cursor.slot.empty?
       assert_equal 62, compacted.committed_size
@@ -138,8 +141,12 @@ class CompactionTest < Minitest::Test
             end
             add.call("live")
             (0...churn).each_slice(32) do |batch|
-              batch.each { |index| add.call(format("%08d", index)) }
-              batch.each { |index| remove.call(format("%08d", index)) }
+              batch.each do |index|
+                add.call(format("%08d", index))
+              end
+              batch.each do |index| # rubocop:disable Style/CombinableLoops -- Populate every route before testing deletion and reclamation.
+                remove.call(format("%08d", index))
+              end
               assert_equal 1, items.size
             end
           end
@@ -148,7 +155,7 @@ class CompactionTest < Minitest::Test
           if api == Core::Database
             assert_equal ["live"], declaration.new(compacted.root_cursor).map(&:first)
           else
-            expected = declaration.kind.to_s.end_with?("set") ? Set["live"] : {"live" => 1}
+            expected = declaration.kind.to_s.end_with?("set") ? Set["live"] : { "live" => 1 }
             assert_equal expected, compacted.snapshot["items"].to_ruby
           end
           assert_equal original, File.binread(File.join(dir, "source"))
@@ -158,7 +165,8 @@ class CompactionTest < Minitest::Test
           source&.close
         end
       end
-      assert_operator sizes.last, :<=, sizes.first + 1024, "retained empty routes: #{api} #{declaration.inspect}: #{sizes}"
+      assert_operator sizes.last, :<=, sizes.first + 1024,
+                      "retained empty routes: #{api} #{declaration.inspect}: #{sizes}"
     end
   end
 
@@ -292,7 +300,14 @@ class CompactionTest < Minitest::Test
     type = Struct.new(:bytes)
     calls = []
     codec = XitDB::Ruby::Codec.new(id: "test/value", type: type,
-      dump: ->(value) { calls << :dump; value.bytes }, load: ->(bytes) { calls << :load; type.new(bytes) })
+                                   dump: lambda { |value|
+                                     calls << :dump
+                                     value.bytes
+                                   },
+                                   load: lambda { |bytes|
+                                     calls << :load
+                                     type.new(bytes)
+                                   })
     Dir.mktmpdir do |dir|
       source = XitDB::Ruby.memory(codecs: [codec])
       unknown = "\x01\x0a\x07unknown\x03\x00\xffx".b
@@ -325,12 +340,16 @@ class CompactionTest < Minitest::Test
         tx = root.transaction
         values[:bytes] = source.bytes("x\0".b * 70_000, format_tag: "zz")
         values[:short_bytes] = source.bytes("sixsix", format_tag: "\xff\0".b)
-        values[:kv_pair] = Core::Slot.new(tag: :kv_pair,
-          value: tx.append("h" * 20 + values[:short_bytes].to_bytes + values[:bytes].to_bytes), full: true)
-        values[:sorted_kv_pair] = Core::Slot.new(tag: :sorted_kv_pair,
-          value: tx.append(values[:short_bytes].to_bytes + values[:bytes].to_bytes))
-        values[:index] = Core::Slot.new(tag: :index,
-          value: tx.append(values[:kv_pair].to_bytes + values[:sorted_kv_pair].to_bytes + "\0".b * 126))
+        values[:kv_pair] = Core::Slot.new(
+          tag: :kv_pair,
+          value: tx.append(("h" * 20) + values[:short_bytes].to_bytes + values[:bytes].to_bytes), full: true
+        )
+        values[:sorted_kv_pair] = Core::Slot.new(
+          tag: :sorted_kv_pair, value: tx.append(values[:short_bytes].to_bytes + values[:bytes].to_bytes)
+        )
+        values[:index] = Core::Slot.new(
+          tag: :index, value: tx.append(values[:kv_pair].to_bytes + values[:sorted_kv_pair].to_bytes + ("\0".b * 126))
+        )
         Core::HashMap::TAGS.each do |tag|
           cursor = tx.cursor(slot: Core::Slot.new)
           map = Core::HashMap.new(cursor, counted: tag.to_s.start_with?("counted"), set: tag.to_s.end_with?("set"))
@@ -403,7 +422,7 @@ class CompactionTest < Minitest::Test
       source.transaction do |root|
         tx = root.transaction
         pointer = tx.append(Core::Slot.uint(11).to_bytes + Core::Slot.uint(22).to_bytes +
-          Core::Slot.new(tag: :bytes, value: (1 << 64) - 1).to_bytes + "\0".b * 117)
+          Core::Slot.new(tag: :bytes, value: (1 << 64) - 1).to_bytes + ("\0".b * 117))
         short = Core::Slot.new(tag: :array_list, value: tx.append([1, pointer].pack("Q>Q>")))
         long = Core::Slot.new(tag: :array_list, value: tx.append([2, pointer].pack("Q>Q>")))
         holder = Core::LinkedArrayList.new(root)
@@ -413,7 +432,9 @@ class CompactionTest < Minitest::Test
       holder = Core::LinkedArrayList.new(compacted.root_cursor)
       assert_equal [11], Core::ArrayList.new(holder.cursor_at(0)).map(&:value)
       assert_equal [11, 22], Core::ArrayList.new(holder.cursor_at(1)).map(&:value)
-      pointers = holder.map { |slot| compacted.read_at(slot.value + 8, 8, bound: compacted.committed_size).unpack1("Q>") }
+      pointers = holder.map do |slot|
+        compacted.read_at(slot.value + 8, 8, bound: compacted.committed_size).unpack1("Q>")
+      end
       refute_equal pointers[0], pointers[1]
       assert_equal "\0".b * 135, compacted.read_at(pointers[0] + 9, 135, bound: compacted.committed_size)
       assert_equal "\0".b * 126, compacted.read_at(pointers[1] + 18, 126, bound: compacted.committed_size)
@@ -433,8 +454,8 @@ class CompactionTest < Minitest::Test
         tx = root.transaction
         first = tx.length
         count.times do |i|
-          pointer = i == count - 1 ? first : first + (i + 1) * 144
-          tx.append(Core::Slot.new(tag: :index, value: pointer).to_bytes + "\0".b * 135)
+          pointer = i == count - 1 ? first : first + ((i + 1) * 144)
+          tx.append(Core::Slot.new(tag: :index, value: pointer).to_bytes + ("\0".b * 135))
         end
         root.replace(Core::Slot.new(tag: :index, value: first))
       end
@@ -454,15 +475,15 @@ class CompactionTest < Minitest::Test
       interrupted = Interrupt.new("copy interrupted")
       original_read = source.method(:read_at)
       source.define_singleton_method(:read_at) do |offset, size, bound:|
-        if offset == first + (count - 1) * 144
+        if offset == first + ((count - 1) * 144)
           scratch_paths << maps.last.instance_variable_get(:@temporary).path
           scratch_store = maps.last.instance_variable_get(:@store)
           scratch_file = scratch_store.instance_variable_get(:@file)
           scratch_file.define_singleton_method(:pwrite) { |*| raise scratch_failure }
           begin
             scratch_store.flush
-          rescue IOError => error
-            scratch_flush_errors << error
+          rescue IOError => e
+            scratch_flush_errors << e
           end
           raise interrupted
         end

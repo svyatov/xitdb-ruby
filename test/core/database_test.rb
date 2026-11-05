@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "test_helper"
 require "tmpdir"
 require "weakref"
@@ -33,7 +34,10 @@ class DatabaseTest < Minitest::Test
     assert_equal 62, core.committed_size
     error = RuntimeError.new("abort")
     assert_same error, assert_raises(RuntimeError) {
-      core.transaction { |cursor| cursor.replace(core.bytes("new")); raise error }
+      core.transaction { |cursor|
+        cursor.replace(core.bytes("new"))
+        raise error
+      }
     }
     assert core.root_cursor.slot.empty?
     assert_equal 62, core.committed_size
@@ -68,13 +72,29 @@ class DatabaseTest < Minitest::Test
 
   def test_early_exits_abort_and_next_commits
     core = Core::Database.memory
-    core.transaction { |cursor| cursor.replace(Core::Slot.uint(1)); break }
-    catch(:abort) { core.transaction { |cursor| cursor.replace(Core::Slot.uint(2)); throw :abort } }
+    core.transaction do |cursor|
+      cursor.replace(Core::Slot.uint(1))
+      break
+    end
+    catch(:abort) do
+      core.transaction do |cursor|
+        cursor.replace(Core::Slot.uint(2))
+        throw :abort
+      end
+    end
     nonlocal_return(core)
-    assert_raises(Interrupt) { core.transaction { |cursor| cursor.replace(Core::Slot.uint(4)); raise Interrupt } }
+    assert_raises(Interrupt) do
+      core.transaction do |cursor|
+        cursor.replace(Core::Slot.uint(4))
+        raise Interrupt
+      end
+    end
     assert core.root_cursor.slot.empty?
     assert_equal 62, core.committed_size
-    core.transaction { |cursor| cursor.replace(Core::Slot.uint(5)); next :ignored }
+    core.transaction do |cursor|
+      cursor.replace(Core::Slot.uint(5))
+      next :ignored
+    end
     assert_equal 5, core.root_cursor.slot.value
   end
 
@@ -93,7 +113,10 @@ class DatabaseTest < Minitest::Test
       end
       calls = 0
       error = assert_raises(XitDB::CommitError) do
-        core.transaction { |cursor| calls += 1; cursor.replace(Core::Slot.uint(42)) }
+        core.transaction do |cursor|
+          calls += 1
+          cursor.replace(Core::Slot.uint(42))
+        end
       end
       assert_equal 1, calls
       uncertain = %i[header_write header_sync].include?(point)
@@ -173,9 +196,13 @@ class DatabaseTest < Minitest::Test
       assert_equal 2, detached.slot.value
       assert_raises(XitDB::ExpiredViewError) { temporary.slot }
       assert_equal 62, tx.freeze
-      error = Thread.new { root.slot rescue $! }.value
+      error = Thread.new do
+        root.slot
+      rescue StandardError
+        $ERROR_INFO
+      end.value
       assert_instance_of XitDB::TransactionStateError, error
-      assert_raises(XitDB::TransactionStateError) { core.transaction {} }
+      assert_raises(XitDB::TransactionStateError) { core.transaction { nil } }
     end
     assert_raises(XitDB::ExpiredViewError) { owned.slot }
     before = core.committed_size
@@ -373,13 +400,13 @@ class DatabaseTest < Minitest::Test
           core = Core::Database.new(store: store)
           store.release_fault = -> { raise IOError, "release failed" }
           result = case exit_kind
-          when :throw
-            catch(:abort) { core.transaction { throw :abort, :original_exit } }
-          when :break
-            core.transaction { break :original_exit }
-          when :return
-            return_from_transaction(core)
-          end
+                   when :throw
+                     catch(:abort) { core.transaction { throw :abort, :original_exit } }
+                   when :break
+                     core.transaction { break :original_exit }
+                   when :return
+                     return_from_transaction(core)
+                   end
           assert_equal :original_exit, result
           assert core.needs_reopen?
           assert_equal 62, core.committed_size
@@ -404,7 +431,8 @@ class DatabaseTest < Minitest::Test
       retained
     end.value
     GC.start
-    assert_equal 0, references.count(&:weakref_alive?), "originating registry #{registry.object_id} retained temporary cursors"
+    assert_equal 0, references.count(&:weakref_alive?),
+                 "originating registry #{registry.object_id} retained temporary cursors"
     assert_raises(XitDB::ExpiredViewError) { transaction.check_active! }
   end
 
@@ -418,7 +446,7 @@ class DatabaseTest < Minitest::Test
         [WeakRef.new(checkpoint), reference]
       end
       GC.start
-      assert_equal 0, references.sum { |pair| pair.count(&:weakref_alive?) }
+      assert_equal(0, references.sum { |pair| pair.count(&:weakref_alive?) })
     end
   end
 
@@ -484,6 +512,9 @@ class DatabaseTest < Minitest::Test
   end
 
   def nonlocal_return(core)
-    core.transaction { |cursor| cursor.replace(Core::Slot.uint(3)); return }
+    core.transaction do |cursor|
+      cursor.replace(Core::Slot.uint(3))
+      return # rubocop:disable Lint/NonLocalExitFromIterator -- Exercise rollback on a nonlocal return.
+    end
   end
 end

@@ -15,10 +15,23 @@ class PublicConcurrencyTest < Minitest::Test
 
   def teardown
     @threads.each { |thread| thread.kill if thread.alive? }
-    @threads.each { |thread| thread.join rescue nil }
+    # Kill all workers before joining any worker, so waiting cannot prevent cleanup.
+    @threads.each do |thread| # rubocop:disable Style/CombinableLoops
+      thread.join
+    rescue StandardError
+      nil
+    end
     @children.each do |pid|
-      Process.kill("KILL", pid) rescue Errno::ESRCH
-      Process.wait(pid) rescue Errno::ECHILD
+      begin
+        Process.kill("KILL", pid)
+      rescue StandardError
+        Errno::ESRCH
+      end
+      begin
+        Process.wait(pid)
+      rescue StandardError
+        Errno::ECHILD
+      end
     end
     @handles.each { |handle| handle.close unless handle.closed? }
     FileUtils.remove_entry(@directory)
@@ -65,8 +78,14 @@ class PublicConcurrencyTest < Minitest::Test
   def test_lock_timeout_does_not_invoke_callback
     owner = open_database
     waiter = open_database(lock_timeout: 0.02)
-    entered, release = Queue.new, Queue.new
-    writer = in_thread { owner.transaction { entered << true; release.pop } }
+    entered = Queue.new
+    release = Queue.new
+    writer = in_thread do
+      owner.transaction do
+        entered << true
+        release.pop
+      end
+    end
     Timeout.timeout(2) { entered.pop }
     callback_invocations_on_lock_timeout = 0
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -100,7 +119,8 @@ class PublicConcurrencyTest < Minitest::Test
     database = open_database
     database.transaction { |root| root["value"] = "old" * 100 }
     snapshot = database.snapshot
-    entered, release = Queue.new, Queue.new
+    entered = Queue.new
+    release = Queue.new
     writer = in_thread do
       database.transaction do |root|
         root["value"] = "new" * 100
@@ -118,7 +138,8 @@ class PublicConcurrencyTest < Minitest::Test
   end
 
   def test_close_waits_for_complete_public_read
-    entered, release = Queue.new, Queue.new
+    entered = Queue.new
+    release = Queue.new
     reading_thread = nil
     hasher = XitDB::Core::Hasher.new(id: "test", size: 20) do |key|
       if Thread.current == reading_thread
@@ -148,7 +169,8 @@ class PublicConcurrencyTest < Minitest::Test
 
   def test_close_waits_for_transaction_and_returned_snapshot_construction
     database = open_database
-    entered, release = Queue.new, Queue.new
+    entered = Queue.new
+    release = Queue.new
     writer = in_thread do
       database.transaction do |root|
         root["counter"] = 1
@@ -168,7 +190,10 @@ class PublicConcurrencyTest < Minitest::Test
 
   def test_iteration_releases_read_guard_before_callback
     database = open_database
-    database.transaction { |root| root["a"] = 1; root["b"] = 2 }
+    database.transaction do |root|
+      root["a"] = 1
+      root["b"] = 2
+    end
     snapshot = database.snapshot
     assert_raises(XitDB::ClosedError) do
       snapshot.each do |_key, _value|
@@ -181,24 +206,24 @@ class PublicConcurrencyTest < Minitest::Test
 
   def test_logical_reads_finish_before_close
     operations = [
-      ["array", ->(db, view) { view[1] }, 2],
-      ["array", ->(db, view) { view[0, 2].class }, XitDB::Views::Slice],
-      ["array", ->(db, view) { view.fetch(1) }, 2],
-      ["array", ->(db, view) { view.first(2) }, [1, 2]],
-      ["array", ->(db, view) { view.last(2) }, [2, 3]],
-      ["array", ->(db, view) { view.each { |value| break value } }, 1],
-      ["linked", ->(db, view) { view.split(1).size }, 2],
-      ["set", ->(db, view) { view.include?("a") }, true],
-      ["sorted", ->(db, view) { view.rank("b") }, 1],
-      ["sorted", ->(db, view) { view.keys }, %w[a b]],
-      ["sorted", ->(db, view) { view.each_key { |key| break key } }, "a"],
-      [nil, ->(db, view) { view.dig("array", 1) }, 2],
-      [nil, ->(db, view) { view.to_ruby["array"] }, [1, 2, 3]],
-      [nil, ->(db, view) { view == view }, true],
-      [nil, ->(db, view) { db.snapshot.revision.class }, XitDB::Revision],
-      [nil, ->(db, view) { db.history[0].revision.class }, XitDB::Revision],
-      [nil, ->(db, view) { db.history.size }, 1],
-      [nil, ->(db, view) { db.history.each { |snapshot| break snapshot.revision.class } }, XitDB::Revision]
+      ["array", ->(_db, view) { view[1] }, 2],
+      ["array", ->(_db, view) { view[0, 2].class }, XitDB::Views::Slice],
+      ["array", ->(_db, view) { view.fetch(1) }, 2],
+      ["array", ->(_db, view) { view.first(2) }, [1, 2]],
+      ["array", ->(_db, view) { view.last(2) }, [2, 3]],
+      ["array", ->(_db, view) { view.each { |value| break value } }, 1], # rubocop:disable Lint/UnreachableLoop -- Exercise early iterator exit.
+      ["linked", ->(_db, view) { view.split(1).size }, 2],
+      ["set", ->(_db, view) { view.include?("a") }, true],
+      ["sorted", ->(_db, view) { view.rank("b") }, 1],
+      ["sorted", ->(_db, view) { view.keys }, %w[a b]],
+      ["sorted", ->(_db, view) { view.each_key { |key| break key } }, "a"], # rubocop:disable Lint/UnreachableLoop -- Exercise early iterator exit.
+      [nil, ->(_db, view) { view.dig("array", 1) }, 2],
+      [nil, ->(_db, view) { view.to_ruby["array"] }, [1, 2, 3]],
+      [nil, ->(_db, view) { view == view }, true], # rubocop:disable Lint/BinaryOperatorWithIdenticalOperands -- Test reflexive view comparison.
+      [nil, ->(db, _view) { db.snapshot.revision.class }, XitDB::Revision],
+      [nil, ->(db, _view) { db.history[0].revision.class }, XitDB::Revision],
+      [nil, ->(db, _view) { db.history.size }, 1],
+      [nil, ->(db, _view) { db.history.each { |snapshot| break snapshot.revision.class } }, XitDB::Revision] # rubocop:disable Lint/UnreachableLoop -- Exercise early iterator exit.
     ]
     operations.each_with_index do |(selector, operation, expected), index|
       database = open_database(path: File.join(@directory, "read-#{index}.xit"))
@@ -208,11 +233,12 @@ class PublicConcurrencyTest < Minitest::Test
         root["linked"].push(1, 2, 3)
         root["set"] = Set["a"]
         root["sorted"] = XitDB.sorted_map
-        root["sorted"].merge!({"a" => 1, "b" => 2})
+        root["sorted"].merge!({ "a" => 1, "b" => 2 })
       end
       view = database.snapshot
       view = view[selector] if selector
-      entered, release = Queue.new, Queue.new
+      entered = Queue.new
+      release = Queue.new
       read = database.core.method(:read_at)
       reader_thread = nil
       blocked = false
@@ -225,7 +251,10 @@ class PublicConcurrencyTest < Minitest::Test
         end
         value
       end
-      reader = in_thread { reader_thread = Thread.current; operation.call(database, view) }
+      reader = in_thread do
+        reader_thread = Thread.current
+        operation.call(database, view)
+      end
       Timeout.timeout(2) { entered.pop }
       closer = in_thread { database.close }
       Timeout.timeout(2) { Thread.pass until closer.status == "sleep" || !closer.alive? }
@@ -240,12 +269,42 @@ class PublicConcurrencyTest < Minitest::Test
 
   def test_fetch_defaults_and_iteration_callbacks_can_close_the_handle
     operations = [
-      ->(db, root) { root.fetch("missing") { db.close; :closed } },
-      ->(db, root) { root["array"].fetch(9) { db.close; :closed } },
-      ->(db, root) { root.each { db.close; break :closed } },
-      ->(db, root) { root["sorted"].from("a") { db.close; break :closed } },
-      ->(db, root) { root["sorted"].page(offset: 0, limit: 1) { db.close; break :closed } },
-      ->(db, root) { db.history.each { db.close; break :closed } }
+      lambda { |db, root|
+        root.fetch("missing") do
+          db.close
+          :closed
+        end
+      },
+      lambda { |db, root|
+        root["array"].fetch(9) do
+          db.close
+          :closed
+        end
+      },
+      lambda { |db, root|
+        root.each do # rubocop:disable Lint/UnreachableLoop -- Exercise close during early iterator exit.
+          db.close
+          break :closed
+        end
+      },
+      lambda { |db, root|
+        root["sorted"].from("a") do
+          db.close
+          break :closed
+        end
+      },
+      lambda { |db, root|
+        root["sorted"].page(offset: 0, limit: 1) do
+          db.close
+          break :closed
+        end
+      },
+      lambda { |db, _root|
+        db.history.each do # rubocop:disable Lint/UnreachableLoop -- Exercise close during early iterator exit.
+          db.close
+          break :closed
+        end
+      }
     ]
     operations.each_with_index do |operation, index|
       database = open_database(path: File.join(@directory, "callback-#{index}.xit"))
@@ -261,14 +320,14 @@ class PublicConcurrencyTest < Minitest::Test
 
   private
 
-  def open_database(path: @path, **options)
-    database = XitDB.open(path, **options)
+  def open_database(path: @path, **)
+    database = XitDB.open(path, **)
     @handles << database
     database
   end
 
-  def in_thread(&block)
-    thread = Thread.new(&block)
+  def in_thread(&)
+    thread = Thread.new(&)
     thread.report_on_exception = false
     @threads << thread
     thread

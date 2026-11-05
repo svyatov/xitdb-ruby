@@ -4,6 +4,7 @@ require "digest"
 
 module XitDB
   module Core
+    # Validates the identity and width of a digest implementation.
     class Hasher
       attr_reader :id, :size
 

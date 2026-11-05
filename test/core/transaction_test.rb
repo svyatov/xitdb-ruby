@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "English"
 require "test_helper"
 
 class CoreLogicalMutationTest < Minitest::Test
@@ -31,9 +32,9 @@ class CoreLogicalMutationTest < Minitest::Test
       transaction = cursor.transaction
       assert_raises(RuntimeError) { transaction.with_logical_mutation { raise "callback failed" } }
       assert_equal :thrown, catch(:stop) { transaction.with_logical_mutation { throw :stop, :thrown } }
-      assert_equal :broken, transaction.with_logical_mutation { break :broken }
+      assert_equal(:broken, transaction.with_logical_mutation { break :broken })
       assert_equal :returned, leave_guard(transaction)
-      assert_equal :ready, transaction.with_logical_mutation { :ready }
+      assert_equal(:ready, transaction.with_logical_mutation { :ready })
     end
   end
 
@@ -42,7 +43,11 @@ class CoreLogicalMutationTest < Minitest::Test
     @database.transaction do |cursor|
       transaction = cursor.transaction
       transaction.with_logical_mutation do
-        error = Thread.new { transaction.with_logical_mutation { flunk } rescue $! }.value
+        error = Thread.new do
+          transaction.with_logical_mutation { flunk }
+        rescue StandardError
+          $ERROR_INFO
+        end.value
         assert_instance_of XitDB::TransactionStateError, error
         assert_raises(XitDB::TransactionStateError) { transaction.check_logical_mutation! }
       end

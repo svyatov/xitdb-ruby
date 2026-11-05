@@ -7,10 +7,12 @@ require "optparse"
 require "tmpdir"
 require_relative "../lib/xitdb/core"
 
+# Runs binary compatibility cases against the pinned reference implementations.
 module Interop
   ROOT = File.expand_path("..", __dir__)
   MANIFEST = JSON.parse(File.read(File.join(ROOT, "test/interop/manifest.json")))
-  KINDS = %w[array_list linked_array_list hash_map hash_set counted_hash_map counted_hash_set sorted_map sorted_set].freeze
+  KINDS = %w[array_list linked_array_list hash_map hash_set counted_hash_map counted_hash_set sorted_map
+             sorted_set].freeze
   TOOL_ROOT = File.expand_path("~/.local/share/mise/installs")
 
   def self.with_reference(name)
@@ -22,35 +24,41 @@ module Interop
       digest = Digest::SHA256.new
       files = Dir.glob(pin.fetch("source_glob"), base: source).sort
       files.each { |file| digest.update(file).update("\0").update(File.binread(File.join(source, file))) }
-      raise "#{name} reference differs from #{pin.fetch('revision')}" unless digest.hexdigest == pin.fetch("source_sha256")
+      unless digest.hexdigest == pin.fetch("source_sha256")
+        raise "#{name} reference differs from #{pin.fetch("revision")}"
+      end
     end
     Dir.mktmpdir("xitdb-#{name}-") do |dir|
-      env = {"MISE_CACHE_DIR" => "/private/tmp/xitdb-mise-cache", "XITDB_REFERENCE" => source}
+      env = { "MISE_CACHE_DIR" => "/private/tmp/xitdb-mise-cache", "XITDB_REFERENCE" => source }
       executable = case name
-      when "go"
-        binary = File.join(dir, "adapter")
-        command(env.merge("GOCACHE" => "/private/tmp/xitdb-go-build-cache", "GOPROXY" => "off", "GOSUMDB" => "off"),
-                "go", "build", "-o", binary, File.join(ROOT, "test/interop/go/main.go"), chdir: source)
-        [binary]
-      when "typescript"
-        ["bun", File.join(ROOT, "test/interop/typescript/main.ts")]
-      when "java"
-        java = File.join(TOOL_ROOT, "java/temurin-25.0.5+8.0.LTS/bin")
-        command(File.join(java, "javac"), "-d", dir, *Dir.glob("#{source}/src/main/java/**/*.java"), File.join(ROOT, "test/interop/java/Main.java"))
-        [File.join(java, "java"), "-cp", dir, "Main"]
-      when "zig"
-        binary = File.join(dir, "adapter")
-        command(File.join(TOOL_ROOT, "zig/0.17.0/zig"), "build-exe", "--cache-dir", "/private/tmp/xitdb-zig-cache",
-                "--global-cache-dir", "/private/tmp/xitdb-zig-global-cache", "-femit-bin=#{binary}", "--dep", "xitdb",
-                "-Mroot=#{ROOT}/test/interop/zig/main.zig", "-Mxitdb=#{source}/src/lib.zig")
-        [binary]
-      end
+                   when "go"
+                     binary = File.join(dir, "adapter")
+                     command(env.merge("GOCACHE" => "/private/tmp/xitdb-go-build-cache", "GOPROXY" => "off",
+                                       "GOSUMDB" => "off"),
+                             "go", "build", "-o", binary, File.join(ROOT, "test/interop/go/main.go"), chdir: source)
+                     [binary]
+                   when "typescript"
+                     ["bun", File.join(ROOT, "test/interop/typescript/main.ts")]
+                   when "java"
+                     java = File.join(TOOL_ROOT, "java/temurin-25.0.5+8.0.LTS/bin")
+                     command(File.join(java, "javac"), "-d", dir, *Dir.glob("#{source}/src/main/java/**/*.java"),
+                             File.join(ROOT, "test/interop/java/Main.java"))
+                     [File.join(java, "java"), "-cp", dir, "Main"]
+                   when "zig"
+                     binary = File.join(dir, "adapter")
+                     command(File.join(TOOL_ROOT, "zig/0.17.0/zig"), "build-exe",
+                             "--cache-dir", "/private/tmp/xitdb-zig-cache",
+                             "--global-cache-dir", "/private/tmp/xitdb-zig-global-cache",
+                             "-femit-bin=#{binary}", "--dep", "xitdb",
+                             "-Mroot=#{ROOT}/test/interop/zig/main.zig", "-Mxitdb=#{source}/src/lib.zig")
+                     [binary]
+                   end
       invoke = lambda do |operation, kase, path, hash = MANIFEST.fetch("hash")|
-        request = {operation: operation, case: kase, path: path, hash: hash,
-                   file_id: "1", scalars: MANIFEST.fetch("scalars")}
+        request = { operation: operation, case: kase, path: path, hash: hash,
+                    file_id: "1", scalars: MANIFEST.fetch("scalars") }
         if File.file?(path) && File.size(path) >= 20
           header = File.binread(path, 20)
-          request[:hash] = {id: header.byteslice(8, 4), size: header.byteslice(6, 2).unpack1("n")}
+          request[:hash] = { id: header.byteslice(8, 4), size: header.byteslice(6, 2).unpack1("n") }
         end
         JSON.parse(command(env, *executable, stdin_data: JSON.generate(request)))
       end
@@ -63,17 +71,23 @@ module Interop
     KINDS.each do |kind|
       [0, 17].each do |count|
         entries = count.times.map do |index|
-          value = {"tag" => "uint", "full" => false, "bits" => index.to_s}
+          value = { "tag" => "uint", "full" => false, "bits" => index.to_s }
           if kind.end_with?("list")
-            index < 2 ? {"tag" => "none", "full" => index == 1 || kind == "linked_array_list" && !linked_hole, "bits" => "0"} : value
+            if index < 2
+              { "tag" => "none", "full" => index == 1 || (kind == "linked_array_list" && !linked_hole),
+                "bits" => "0" }
+            else
+              value
+            end
           else
             [format("k%02d", index).unpack1("H*"), kind.end_with?("set") ? nil : value]
           end
         end
-        items << {"tag" => kind, "items" => entries}
+        items << { "tag" => kind, "items" => entries }
       end
     end
-    {"tag" => "array_list", "items" => [{"tag" => "uint", "full" => false, "bits" => "7"}, {"tag" => "array_list", "items" => items}]}
+    { "tag" => "array_list",
+      "items" => [{ "tag" => "uint", "full" => false, "bits" => "7" }, { "tag" => "array_list", "items" => items }] }
   end
 
   def self.normalized(cursor)
@@ -83,19 +97,20 @@ module Interop
 
     child = ->(value) { core::Cursor.new(database: cursor.database, slot: value, bound: cursor.bound) }
     items = case slot.tag
-    when :array_list, :linked_array_list
-      list = slot.tag == :array_list ? core::ArrayList.new(cursor) : core::LinkedArrayList.new(cursor)
-      list.size.times.map { |index| normalized(list.cursor_at(index)) }
-    when :hash_map, :hash_set, :counted_hash_map, :counted_hash_set
-      core::HashMap.from_cursor(cursor).each_entry.map do |_hash, key, value|
-        [child.call(key).read_bytes.bytes.unpack1("H*"), slot.tag.to_s.end_with?("set") ? nil : normalized(child.call(value))]
-      end.sort_by(&:first)
-    else
-      core::SortedMap.new(cursor).map do |key, value|
-        [key.unpack1("H*"), slot.tag == :sorted_set ? nil : normalized(child.call(value))]
-      end
-    end
-    {"tag" => slot.tag.to_s, "items" => items}
+            when :array_list, :linked_array_list
+              list = slot.tag == :array_list ? core::ArrayList.new(cursor) : core::LinkedArrayList.new(cursor)
+              list.size.times.map { |index| normalized(list.cursor_at(index)) }
+            when :hash_map, :hash_set, :counted_hash_map, :counted_hash_set
+              core::HashMap.from_cursor(cursor).each_entry.map do |_hash, key, value|
+                [child.call(key).read_bytes.bytes.unpack1("H*"),
+                 slot.tag.to_s.end_with?("set") ? nil : normalized(child.call(value))]
+              end.sort_by(&:first)
+            else
+              core::SortedMap.new(cursor).map do |key, value|
+                [key.unpack1("H*"), slot.tag == :sorted_set ? nil : normalized(child.call(value))]
+              end
+            end
+    { "tag" => slot.tag.to_s, "items" => items }
   end
 
   def self.read_tree(path)
@@ -103,8 +118,8 @@ module Interop
   end
 
   def self.export_parts(db, path, first)
-    File.open(path + ".base", "wb") { |io| db.read_committed(0, first, io) }
-    File.open(path + ".delta", "wb") { |io| db.read_committed(first, db.committed_size, io) }
+    File.open("#{path}.base", "wb") { |io| db.read_committed(0, first, io) }
+    File.open("#{path}.delta", "wb") { |io| db.read_committed(first, db.committed_size, io) }
   end
 
   def self.write_tree(path, hash_size: 20, hash_id: "sha1")
@@ -118,10 +133,12 @@ module Interop
         list = core::ArrayList.new(history.cursor_at(1))
         MANIFEST.fetch("scalars").each do |value|
           slot = if value.key?("hex")
-            db.bytes([value.fetch("hex")].pack("H*"), format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
-          else
-            core::Slot.new(tag: value.fetch("tag").to_sym, full: value.fetch("full"), value: Integer(value.fetch("bits")))
-          end
+                   db.bytes([value.fetch("hex")].pack("H*"),
+                            format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
+                 else
+                   core::Slot.new(tag: value.fetch("tag").to_sym, full: value.fetch("full"),
+                                  value: Integer(value.fetch("bits")))
+                 end
           list.append(slot)
         end
         KINDS.each do |kind|
@@ -129,11 +146,12 @@ module Interop
             list.append(core::Slot.new)
             cursor = list.cursor_at(list.size - 1)
             collection = case kind
-            when "array_list" then core::ArrayList.new(cursor)
-            when "linked_array_list" then core::LinkedArrayList.new(cursor)
-            when "sorted_map", "sorted_set" then core::SortedMap.new(cursor, set: kind.end_with?("set"))
-            else core::HashMap.new(cursor, counted: kind.start_with?("counted"), set: kind.end_with?("set"))
-            end
+                         when "array_list" then core::ArrayList.new(cursor)
+                         when "linked_array_list" then core::LinkedArrayList.new(cursor)
+                         when "sorted_map", "sorted_set" then core::SortedMap.new(cursor, set: kind.end_with?("set"))
+                         else core::HashMap.new(cursor, counted: kind.start_with?("counted"),
+                                                        set: kind.end_with?("set"))
+                         end
             count.times do |index|
               key = format("k%02d", index)
               value = core::Slot.uint(index)
@@ -143,7 +161,13 @@ module Interop
                 kind.end_with?("set") ? collection.add(key) : collection.put(key, value: value)
               else
                 hash = (hash_size == 48 ? Digest::SHA384 : Digest::SHA1).digest(key)
-                kind.end_with?("set") ? collection.add(hash, key: db.bytes(key)) : collection.put(hash, key: db.bytes(key), value: value)
+                if kind.end_with?("set")
+                  collection.add(hash,
+                                 key: db.bytes(key))
+                else
+                  collection.put(hash, key: db.bytes(key),
+                                       value: value)
+                end
               end
             end
           end
@@ -155,10 +179,10 @@ module Interop
 
   def self.check_ruby_replication(path)
     core = XitDB::Core
-    base = File.binread(path + ".reference.base")
-    delta = File.binread(path + ".reference.delta")
+    base = File.binread("#{path}.reference.base")
+    delta = File.binread("#{path}.reference.delta")
     require "stringio"
-    copy = core::Database.copy_replica(to: path + ".ruby-replica", source_io: StringIO.new(base), length: base.bytesize)
+    copy = core::Database.copy_replica(to: "#{path}.ruby-replica", source_io: StringIO.new(base), length: base.bytesize)
     begin
       previous = copy.replica_state
       begin
@@ -168,7 +192,7 @@ module Interop
         assert_equal previous, copy.replica_state
       end
       copy.apply_replicated(base.bytesize, StringIO.new(delta), delta.bytesize)
-      assert_equal File.binread(path), File.binread(path + ".ruby-replica")
+      assert_equal File.binread(path), File.binread("#{path}.ruby-replica")
     ensure
       copy.close
     end
@@ -177,17 +201,17 @@ module Interop
   def self.check_maintenance(invoke, path, expected)
     original = File.binread(path)
     invoke.call("compact", "all-kinds", path)
-    compacted = read_tree(path + ".compact")
-    assert_equal({"tag" => "array_list", "items" => [expected.fetch("items").last]}, compacted)
+    compacted = read_tree("#{path}.compact")
+    assert_equal({ "tag" => "array_list", "items" => [expected.fetch("items").last] }, compacted)
     assert_equal original, File.binread(path)
     result = invoke.call("replicate", "all-kinds", path)
     assert_equal true, result.fetch("interrupted")
-    assert_equal original, File.binread(path + ".replica")
-    assert_equal File.binread(path + ".base"), File.binread(path + ".reference.base")
-    assert_equal File.binread(path + ".delta"), File.binread(path + ".reference.delta")
+    assert_equal original, File.binread("#{path}.replica")
+    assert_equal File.binread("#{path}.base"), File.binread("#{path}.reference.base")
+    assert_equal File.binread("#{path}.delta"), File.binread("#{path}.reference.delta")
     check_ruby_replication(path)
-    XitDB::Core::Database.open(path, readonly: true) { |db| db.compact(to: path + ".ruby-compact").close }
-    assert_equal compacted, invoke.call("read", "all-kinds", path + ".ruby-compact").fetch("tree")
+    XitDB::Core::Database.open(path, readonly: true) { |db| db.compact(to: "#{path}.ruby-compact").close }
+    assert_equal compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
   end
 
   def self.check_opaque(invoke, dir)
@@ -195,35 +219,37 @@ module Interop
     path = File.join(dir, "opaque.xit")
     type = Struct.new(:payload)
     payload = "opaque\0codec".b * 12_000
-    codec = XitDB::Ruby::Codec.new(id: "interop/opaque/v1", type: type, dump: ->(value) { value.payload }, load: ->(bytes) { type.new(bytes) })
+    codec = XitDB::Ruby::Codec.new(id: "interop/opaque/v1", type: type, dump: lambda(&:payload), load: lambda { |bytes|
+      type.new(bytes)
+    })
     XitDB::Ruby.open(path, codecs: [codec]) do |db|
       db.transaction { |tx| tx[:old] = "first" }
       first = File.size(path)
       db.transaction do |tx|
-        tx[:opaque] = [2**100, :symbol, "a\0b".b, Time.at(1, 123456789, :nanosecond)]
+        tx[:opaque] = [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)]
         tx[:unknown] = type.new(payload)
       end
       XitDB::Core::Database.open(path, readonly: true) { |core| export_parts(core, path, first) }
     end
     expected = read_tree(path)
     check_maintenance(invoke, path, expected)
-    XitDB::Ruby.open(path + ".compact", readonly: true) do |db|
-      assert_equal [2**100, :symbol, "a\0b".b, Time.at(1, 123456789, :nanosecond)], db.snapshot[:opaque].to_ruby
+    XitDB::Ruby.open("#{path}.compact", readonly: true) do |db|
+      assert_equal [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)], db.snapshot[:opaque].to_ruby
       assert_equal XitDB::Ruby::EncodedValue, db.snapshot[:unknown].class
       assert_equal "interop/opaque/v1", db.snapshot[:unknown].codec_id
     end
-    XitDB::Ruby.open(path + ".compact", readonly: true, codecs: [codec]) do |db|
+    XitDB::Ruby.open("#{path}.compact", readonly: true, codecs: [codec]) do |db|
       assert_equal payload, db.snapshot[:unknown].payload
     end
   end
 
   def self.runtime(name)
-    env = {"MISE_CACHE_DIR" => "/private/tmp/xitdb-mise-cache"}
+    env = { "MISE_CACHE_DIR" => "/private/tmp/xitdb-mise-cache" }
     case name
     when "go" then command(env, "go", "version").strip
-    when "typescript" then "Bun #{command(env, 'bun', '--version').strip}"
+    when "typescript" then "Bun #{command(env, "bun", "--version").strip}"
     when "java" then command(File.join(TOOL_ROOT, "java/temurin-25.0.5+8.0.LTS/bin/java"), "--version").strip
-    when "zig" then "Zig #{command(File.join(TOOL_ROOT, 'zig/0.17.0/zig'), 'version').strip}"
+    when "zig" then "Zig #{command(File.join(TOOL_ROOT, "zig/0.17.0/zig"), "version").strip}"
     end
   end
 
@@ -239,16 +265,21 @@ module Interop
         FileUtils.mkdir_p(directory)
         fixture = File.join(directory, "all-kinds.xit")
         FileUtils.copy_file(path, fixture)
-        adapter = File.join(ROOT, "test/interop", name, name == "java" ? "Main.java" : "main.#{ {'go' => 'go', 'typescript' => 'ts', 'zig' => 'zig'}.fetch(name) }")
+        extension = { "go" => "go", "typescript" => "ts", "zig" => "zig" }
+        filename = name == "java" ? "Main.java" : "main.#{extension.fetch(name)}"
+        adapter = File.join(ROOT, "test/interop", name, filename)
         provenance = pin.merge("runtime" => runtime(name), "generated_at" => Time.now.utc.iso8601,
                                "producer" => "pinned upstream library through test/interop/#{name}",
-                               "fetch_command" => "gh api repos/#{pin.fetch('repository')}/tarball/#{pin.fetch('revision')}",
+                               "fetch_command" => "gh api repos/#{pin.fetch("repository")}/tarball/" \
+                                                  "#{pin.fetch("revision")}",
                                "generate_command" => "ruby script/interop.rb --generate-fixtures",
                                "generator_sha256" => Digest::SHA256.file(__FILE__).hexdigest,
                                "adapter_sha256" => Digest::SHA256.file(adapter).hexdigest,
-                               "manifest_sha256" => Digest::SHA256.file(File.join(ROOT, "test/interop/manifest.json")).hexdigest,
+                               "manifest_sha256" => Digest::SHA256.file(
+                                 File.join(ROOT, "test/interop/manifest.json")
+                               ).hexdigest,
                                "fixture_sha256" => Digest::SHA256.file(fixture).hexdigest)
-        File.write(File.join(directory, "provenance.json"), JSON.pretty_generate(provenance) + "\n")
+        File.write(File.join(directory, "provenance.json"), "#{JSON.pretty_generate(provenance)}\n")
         puts "#{name}: independent fixture generated and read by Ruby"
       end
     end
@@ -268,12 +299,13 @@ module Interop
       check_opaque(invoke, dir)
       check_sha384(name, invoke, dir)
     end
-    puts "#{name}: independent all-kinds writes, reads, history, compact, interrupted replication, and opaque rb01 maintenance passed in both directions"
+    puts "#{name}: independent all-kinds writes, reads, history, compact, interrupted replication, " \
+         "and opaque rb01 maintenance passed in both directions"
   end
 
   def self.check_sha384(name, invoke, dir)
     path = File.join(dir, "sha384-reference.xit")
-    assert_reference_result(name, invoke.call("write", "all-kinds", path, {id: "s384", size: 48}))
+    assert_reference_result(name, invoke.call("write", "all-kinds", path, { id: "s384", size: 48 }))
     assert_equal expected_tree, read_tree(path)
     check_maintenance(invoke, path, expected_tree)
     ruby_path = File.join(dir, "sha384-ruby.xit")
@@ -289,24 +321,26 @@ module Interop
 
     observed = result.fetch("numbers")
     %w[18446744073709551615 9223372036854775808 9223372036854775809].each do |bits|
-      assert_equal({"tag" => "uint", "bits" => bits, "error" => "ExpectedUnsignedLongException"},
+      assert_equal({ "tag" => "uint", "bits" => bits, "error" => "ExpectedUnsignedLongException" },
                    observed.find { |value| value["tag"] == "uint" && value["bits"] == bits })
     end
-    {"9007199254740991" => "9007199254740991", "9007199254740993" => "9007199254740992",
-     "9223372036854775807" => "9223372036854776000", "9223372036854775808" => "-9223372036854776000"}.each do |bits, number|
-      number = Integer(bits) >= 2**63 ? (Integer(bits) - 2**64).to_s : bits if name == "java"
-      assert_equal({"tag" => "int", "bits" => bits, "number" => number},
+    numbers = { "9007199254740991" => "9007199254740991", "9007199254740993" => "9007199254740992",
+                "9223372036854775807" => "9223372036854776000", "9223372036854775808" => "-9223372036854776000" }
+    numbers.each do |bits, number|
+      number = Integer(bits) >= 2**63 ? (Integer(bits) - (2**64)).to_s : bits if name == "java"
+      assert_equal({ "tag" => "int", "bits" => bits, "number" => number },
                    observed.find { |value| value["tag"] == "int" && value["bits"] == bits })
     end
-    assert_equal({"tag" => "uint", "bits" => "9223372036854775807", "number" => name == "java" ? "9223372036854775807" : "9223372036854776000"},
+    number = name == "java" ? "9223372036854775807" : "9223372036854776000"
+    assert_equal({ "tag" => "uint", "bits" => "9223372036854775807", "number" => number },
                  observed.find { |value| value["tag"] == "uint" && value["bits"] == "9223372036854775807" })
-    if name == "java" && result.key?("writer_rejections")
-      assert_equal %w[18446744073709551615 9223372036854775808 9223372036854775809], result.fetch("writer_rejections")
-    end
+    return unless name == "java" && result.key?("writer_rejections")
+
+    assert_equal %w[18446744073709551615 9223372036854775808 9223372036854775809], result.fetch("writer_rejections")
   end
 
   def self.run
-    options = {reference: "go", case: "empty"}
+    options = { reference: "go", case: "empty" }
     OptionParser.new do |parser|
       parser.on("--reference NAME") { |name| options[:reference] = name }
       parser.on("--case CASE") { |name| options[:case] = name }
@@ -314,17 +348,25 @@ module Interop
       parser.on("--generate-fixtures") { options[:generate] = true }
     end.parse!
     return generate_fixtures if options[:generate]
+
     if options[:all]
-      %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction replication].each do |name|
+      %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction
+         replication].each do |name|
         run_go_case(name)
       end
       MANIFEST.fetch("references").each_key { |reference| check_reference(reference) }
-      puts "Known pinned limits: TypeScript Number rounds integers outside its exact range; Java and TypeScript readUint reject values above INT64_MAX. Java Uint writes also reject that range; public Slot writes preserve it. Exact raw bits and maintenance pass."
-      puts "Sparse constructors: array append cursors preserve holes; linked append cursors store occupied nulls. Zig's returned linked cursor reports an empty slot before rereading. Ruby linked holes retain their ranks and full bits; reference iterators skip holes."
+      puts "Known pinned limits: TypeScript Number rounds integers outside its exact range; Java and " \
+           "TypeScript readUint reject values above INT64_MAX. Java Uint writes also reject that " \
+           "range; public Slot writes preserve it. Exact raw bits and maintenance pass."
+      puts "Sparse constructors: array append cursors preserve holes; linked append cursors store " \
+           "occupied nulls. Zig's returned linked cursor reports an empty slot before rereading. Ruby " \
+           "linked holes retain their ranks and full bits; reference iterators skip holes."
       return
     end
     if %w[all-kinds signedness tags history opaque].include?(options[:case]) || options[:reference] != "go"
-      raise "unsupported case: #{options[:case]}" unless %w[all-kinds scalars signedness tags history compaction replication opaque].include?(options[:case])
+      raise "unsupported case: #{options[:case]}" unless %w[all-kinds scalars signedness tags history compaction
+                                                            replication opaque].include?(options[:case])
+
       check_reference(options[:reference])
       return
     end
@@ -332,31 +374,35 @@ module Interop
   end
 
   def self.run_go_case(name)
-    options = {reference: "go", case: name}
+    options = { reference: "go", case: name }
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
-    raise "unsupported case: #{options[:case]}" unless %w[empty scalars array-list hash-collections linked-array-insert linked-array-edit sorted-collections compaction replication].include?(options[:case])
+
+    cases = %w[empty scalars array-list hash-collections linked-array-insert
+               linked-array-edit sorted-collections compaction replication]
+    raise "unsupported case: #{options[:case]}" unless cases.include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
     verify_source(reference)
     Dir.mktmpdir("xitdb-interop-") do |dir|
       binary = File.join(dir, "go-adapter")
-      env = {"GOCACHE" => File.join(Dir.tmpdir, "xitdb-go-build-cache"), "GOPROXY" => "off", "GOSUMDB" => "off"}
+      env = { "GOCACHE" => File.join(Dir.tmpdir, "xitdb-go-build-cache"), "GOPROXY" => "off", "GOSUMDB" => "off" }
       command(env, "go", "build", "-o", binary, File.join(ROOT, "test/interop/go/main.go"), chdir: reference)
-      if options[:case] == "empty"
+      case options[:case]
+      when "empty"
         empty(binary, dir)
-      elsif options[:case] == "array-list"
+      when "array-list"
         array_list(binary, dir)
-      elsif options[:case] == "hash-collections"
+      when "hash-collections"
         hash_collections(binary, dir)
-      elsif options[:case] == "linked-array-insert"
+      when "linked-array-insert"
         linked_array_insert(binary, dir)
-      elsif options[:case] == "linked-array-edit"
+      when "linked-array-edit"
         linked_array_edit(binary, dir)
-      elsif options[:case] == "sorted-collections"
+      when "sorted-collections"
         sorted_collections(binary, dir)
-      elsif options[:case] == "compaction"
+      when "compaction"
         compaction(binary, dir)
-      elsif options[:case] == "replication"
+      when "replication"
         replication(binary, dir)
       else
         scalars(binary, dir)
@@ -367,29 +413,34 @@ module Interop
 
   def self.verify_source(path)
     pin = MANIFEST.fetch("references").fetch("go")
-    raise "missing Go reference #{pin.fetch('repository')} at #{pin.fetch('revision')}: #{path}" unless File.file?(File.join(path, "go.mod"))
+    unless File.file?(File.join(path, "go.mod"))
+      raise "missing Go reference #{pin.fetch("repository")} at #{pin.fetch("revision")}: #{path}"
+    end
 
     digest = Digest::SHA256.new
     Dir.glob("*.go", base: path).sort.each do |file|
       digest.update(file).update("\0").update(File.binread(File.join(path, file)))
     end
     digest.update("go.mod\0").update(File.binread(File.join(path, "go.mod")))
-    raise "Go reference differs from pinned source #{pin.fetch('revision')}" unless digest.hexdigest == pin.fetch("source_sha256")
+    return if digest.hexdigest == pin.fetch("source_sha256")
+
+    raise "Go reference differs from pinned source #{pin.fetch("revision")}"
   end
 
-  def self.command(*args, **options)
-    output, error, status = Open3.capture3(*args, **options)
+  def self.command(*args, **)
+    output, error, status = Open3.capture3(*args, **)
     raise "#{args.inspect} failed: #{error}\n#{output}" unless status.success?
 
     output
   end
 
   def self.adapter(binary, operation, name, path, value = nil)
-    request = {operation: operation, case: name, path: path, hash: MANIFEST.fetch("hash"),
-               file_id: MANIFEST.fetch("file_id"), value: value}
+    request = { operation: operation, case: name, path: path, hash: MANIFEST.fetch("hash"),
+                file_id: MANIFEST.fetch("file_id"), value: value }
     request[:values] = request.delete(:value) if name == "array-list"
     request.merge!(request.delete(:value)) if name == "hash-collections"
-    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit sorted-collections compaction].include?(name)
+    request.merge!(request.delete(:value)) if %w[linked-array-insert linked-array-edit sorted-collections
+                                                 compaction].include?(name)
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
@@ -413,10 +464,12 @@ module Interop
       MANIFEST.fetch("scalars").each do |value|
         db.transaction do |cursor|
           slot = if value.key?("hex")
-            db.bytes([value.fetch("hex")].pack("H*"), format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
-          else
-            XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")), full: value.fetch("full"))
-          end
+                   db.bytes([value.fetch("hex")].pack("H*"),
+                            format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
+                 else
+                   XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")),
+                                         full: value.fetch("full"))
+                 end
           cursor.replace(slot)
         end
         assert_equal value, adapter(binary, "read", "scalars", ruby_path)
@@ -424,7 +477,7 @@ module Interop
         XitDB::Core::Database.open(go_path, readonly: true) { |reader| assert_equal value, read_value(reader) }
       end
     end
-    puts "#{MANIFEST.fetch('scalars').length} scalar vectors checked in both directions"
+    puts "#{MANIFEST.fetch("scalars").length} scalar vectors checked in both directions"
   end
 
   def self.read_value(db)
@@ -433,7 +486,7 @@ module Interop
 
   def self.read_cursor_value(cursor)
     slot = cursor.slot
-    value = {"tag" => slot.tag.to_s, "full" => slot.full}
+    value = { "tag" => slot.tag.to_s, "full" => slot.full }
     if %i[bytes short_bytes].include?(slot.tag)
       bytes = cursor.read_bytes
       value.merge("hex" => bytes.bytes.unpack1("H*"), "format_tag" => bytes.format_tag&.unpack1("H*"))
@@ -445,17 +498,17 @@ module Interop
   def self.array_list(binary, dir)
     [0, 1, 15, 16, 17, 255, 256, 257].each do |length|
       values = Array.new(length) do |index|
-        {"tag" => "uint", "full" => false, "bits" => index.to_s}
+        { "tag" => "uint", "full" => false, "bits" => index.to_s }
       end
-      values[0] = {"tag" => "none", "full" => false, "bits" => "0"} if length > 0
-      values[1] = {"tag" => "none", "full" => true, "bits" => "0"} if length > 1
+      values[0] = { "tag" => "none", "full" => false, "bits" => "0" } if length.positive?
+      values[1] = { "tag" => "none", "full" => true, "bits" => "0" } if length > 1
       ruby_path = File.join(dir, "ruby-array-#{length}.xit")
       XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
         db.transaction do |root|
           list = XitDB::Core::ArrayList.new(root)
           values.each do |value|
             list.append(XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym,
-                                            full: value.fetch("full"), value: Integer(value.fetch("bits"))))
+                                              full: value.fetch("full"), value: Integer(value.fetch("bits"))))
           end
         end
       end
@@ -465,7 +518,7 @@ module Interop
       XitDB::Core::Database.open(go_path, readonly: true) do |db|
         list = XitDB::Core::ArrayList.new(db.root_cursor)
         assert_equal length, list.size
-        assert_equal values, length.times.map { |index| read_cursor_value(list.cursor_at(index)) }
+        assert_equal(values, length.times.map { |index| read_cursor_value(list.cursor_at(index)) })
       end
     end
     puts "8 array lengths checked with sparse slots and occupied nulls in both directions"
@@ -483,26 +536,26 @@ module Interop
       source.transaction { |root| root.replace(core::Slot.uint(7)) }
       first = source.committed_size
       source.transaction { |root| root.replace(source.bytes(payload, format_tag: "\xff\0".b)) }
-      File.open(ruby_path + ".base", "wb") { |io| source.read_committed(0, first, io) }
-      File.open(ruby_path + ".delta", "wb") { |io| source.read_committed(first, source.committed_size, io) }
+      File.open("#{ruby_path}.base", "wb") { |io| source.read_committed(0, first, io) }
+      File.open("#{ruby_path}.delta", "wb") { |io| source.read_committed(first, source.committed_size, io) }
       result = adapter(binary, "read", "replication", ruby_path)
       assert_equal first, result.fetch("first_size")
       assert_equal source.replica_state.checksum.to_s, result.fetch("checksum")
       assert_equal source.committed_size, result.fetch("size")
       assert_equal Digest::SHA256.hexdigest(payload), result.fetch("payload_sha256")
-      assert_equal File.binread(ruby_path), File.binread(ruby_path + ".replica")
+      assert_equal File.binread(ruby_path), File.binread("#{ruby_path}.replica")
     end
     go_path = File.join(dir, "go-replication")
     result = adapter(binary, "write", "replication", go_path)
-    File.open(go_path + ".base", "rb") do |io|
-      copy = core::Database.copy_replica(to: go_path + ".replica", source_io: io, length: result.fetch("first_size"))
+    File.open("#{go_path}.base", "rb") do |io|
+      copy = core::Database.copy_replica(to: "#{go_path}.replica", source_io: io, length: result.fetch("first_size"))
       begin
         assert_equal 7, copy.root_cursor.slot.value
         snapshot = copy.root_cursor
         core::Database.open(go_path, readonly: true) do |source|
           assert_equal result.fetch("first_size"), source.replication_start(copy.replica_state)
         end
-        File.open(go_path + ".delta", "rb") do |delta|
+        File.open("#{go_path}.delta", "rb") do |delta|
           copy.apply_replicated(result.fetch("first_size"), delta, delta.size)
         end
         assert_equal 7, snapshot.slot.value
@@ -510,23 +563,24 @@ module Interop
         assert_equal result.fetch("size"), copy.committed_size
         assert_equal payload, copy.root_cursor.read_bytes.bytes
         assert_equal "\xff\0".b, copy.root_cursor.read_bytes.format_tag
-        assert_equal File.binread(go_path), File.binread(go_path + ".replica")
+        assert_equal File.binread(go_path), File.binread("#{go_path}.replica")
       ensure
         copy.close
       end
     end
-    puts "Historical full exports and incremental streams applied in both directions with exact bytes, commit checksums, and opaque payload tags"
+    puts "Historical full exports and incremental streams applied in both directions with exact " \
+         "bytes, commit checksums, and opaque payload tags"
   end
 
   def self.compaction(binary, dir)
     core = XitDB::Core
     payload = "opaque\0payload".b * 6000
     %w[history raw].each do |kind|
-      expected = {"history" => kind == "history" ? 1 : 0, "cycle" => true, "shared" => true,
-                  "payload_sha256" => Digest::SHA256.hexdigest(payload), "tag" => "ff00",
-                  "short" => "short", "short_tag" => "ff00"}
+      expected = { "history" => kind == "history" ? 1 : 0, "cycle" => true, "shared" => true,
+                   "payload_sha256" => Digest::SHA256.hexdigest(payload), "tag" => "ff00",
+                   "short" => "short", "short_tag" => "ff00" }
       source_path = File.join(dir, "ruby-#{kind}")
-      ruby_path = source_path + ".compact"
+      ruby_path = "#{source_path}.compact"
       core::Database.open(source_path) do |db|
         db.transaction do |root|
           tx = root.transaction
@@ -535,7 +589,7 @@ module Interop
           position = tx.length
           graph = core::Slot.new(tag: kind == "history" ? :array_list : :index, value: position, full: true)
           tx.append([4, position + 16].pack("Q>Q>")) if kind == "history"
-          tx.append(graph.to_bytes + bytes.to_bytes + bytes.to_bytes + short.to_bytes + "\0".b * 108)
+          tx.append(graph.to_bytes + bytes.to_bytes + bytes.to_bytes + short.to_bytes + ("\0".b * 108))
           if kind == "history"
             history = core::ArrayList.new(root)
             history.append(core::Slot.uint(10)).append(graph)
@@ -547,14 +601,14 @@ module Interop
         db.compact(to: ruby_path).close
         assert_equal original, File.binread(source_path)
       end
-      assert_equal expected, adapter(binary, "read", "compaction", ruby_path, {"collection" => kind})
+      assert_equal expected, adapter(binary, "read", "compaction", ruby_path, { "collection" => kind })
       go_path = File.join(dir, "go-#{kind}")
-      assert_equal expected, adapter(binary, "write", "compaction", go_path, {"collection" => kind})
-      [ruby_path + ".go-compact", go_path + ".go-compact"].each do |path|
+      assert_equal expected, adapter(binary, "write", "compaction", go_path, { "collection" => kind })
+      ["#{ruby_path}.go-compact", "#{go_path}.go-compact"].each do |path|
         core::Database.open(path, readonly: true) do |db|
           assert_compaction_graph(db, kind, payload)
           original = File.binread(path)
-          compacted = db.compact(to: path + ".ruby-compact")
+          compacted = db.compact(to: "#{path}.ruby-compact")
           begin
             assert_compaction_graph(compacted, kind, payload)
             assert_equal original, File.binread(path)
@@ -564,7 +618,8 @@ module Interop
         end
       end
     end
-    puts "Cyclic history and arbitrary index roots compacted in both implementations with shared, large, and unknown-tagged bytes"
+    puts "Cyclic history and arbitrary index roots compacted in both implementations with shared, " \
+         "large, and unknown-tagged bytes"
   end
 
   def self.assert_compaction_graph(db, kind, payload)
@@ -577,7 +632,7 @@ module Interop
     end
     assert_equal true, graph.full
     pointer = kind == "history" ? db.read_at(graph.value + 8, 8, bound: db.committed_size).unpack1("Q>") : graph.value
-    children = 4.times.map { |i| core::Slot.parse(db.read_at(pointer + i * 9, 9, bound: db.committed_size)) }
+    children = 4.times.map { |i| core::Slot.parse(db.read_at(pointer + (i * 9), 9, bound: db.committed_size)) }
     assert_equal graph, children[0]
     assert_equal children[1], children[2]
     assert_equal payload, db.read_bytes(children[1]).bytes
@@ -587,27 +642,31 @@ module Interop
   end
 
   def self.hash_collections(binary, dir)
-    scalar = ->(tag, bits = "0", full = false) { {"tag" => tag, "bits" => bits, "full" => full} }
-    hashes = ["1" + "a" * 39, "2" + "a" * 39, "3" + "a" * 39, "0" * 39 + "1", "0" * 39 + "f"]
+    scalar = ->(tag, bits = "0", full = false) { { "tag" => tag, "bits" => bits, "full" => full } }
+    hashes = ["1#{"a" * 39}", "2#{"a" * 39}", "3#{"a" * 39}", "#{"0" * 39}1", "#{"0" * 39}f"]
     vectors = hashes.each_with_index.map do |hash, index|
-      {"hash" => hash, "key" => scalar.call("uint", (index + 1).to_s), "value" => scalar.call("uint", (index + 7).to_s)}
+      { "hash" => hash, "key" => scalar.call("uint", (index + 1).to_s),
+        "value" => scalar.call("uint", (index + 7).to_s) }
     end
     vectors[0]["key"] = scalar.call("int", "18446744073709551615")
     vectors[0]["value"] = scalar.call("none")
     vectors[2]["key"] = scalar.call("float", "9223372036854775808")
     vectors[2]["value"] = scalar.call("none", "0", true)
-    vectors[4]["key"] = {"tag" => "bytes", "hex" => "00" * 9, "format_tag" => "7273", "full" => true}
+    vectors[4]["key"] = { "tag" => "bytes", "hex" => "00" * 9, "format_tag" => "7273", "full" => true }
     vectors << vectors[4].merge("key" => scalar.call("uint", "999"), "value" => scalar.call("uint", "77"))
     XitDB::Core::HashMap::TAGS.each do |tag|
       [[], vectors].each_with_index do |entries, index|
         removals = index.zero? ? [] : [hashes[1], hashes[3]]
-        request = {"collection" => tag.to_s, "entries" => entries, "removals" => removals}
+        request = { "collection" => tag.to_s, "entries" => entries, "removals" => removals }
         final = index.zero? ? [] : [vectors[0], vectors[2], vectors[4].merge("value" => scalar.call("uint", "77"))]
-        expected = {"tag" => tag.to_s, "count" => final.size, "entries" => final.sort_by { |entry| entry.fetch("hash") }, "missing" => true}
+        expected = { "tag" => tag.to_s, "count" => final.size, "entries" => final.sort_by do |entry|
+          entry.fetch("hash")
+        end, "missing" => true }
         ruby_path = File.join(dir, "ruby-#{tag}-#{index}.xit")
         XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
           db.transaction do |root|
-            map = XitDB::Core::HashMap.new(root, counted: tag.to_s.start_with?("counted"), set: tag.to_s.end_with?("set"))
+            map = XitDB::Core::HashMap.new(root, counted: tag.to_s.start_with?("counted"),
+                                                 set: tag.to_s.end_with?("set"))
             entries.each do |entry|
               key = hash_slot(db, entry.fetch("key"))
               value = hash_slot(db, entry.fetch("value"))
@@ -628,9 +687,9 @@ module Interop
           assert_equal tag, db.root_cursor.slot.tag
           assert_equal final.size, map.size
           actual = map.each_entry.map do |hash, key, value|
-            {"hash" => hash.unpack1("H*"), "key" => hash_value(db, key), "value" => hash_value(db, value)}
+            { "hash" => hash.unpack1("H*"), "key" => hash_value(db, key), "value" => hash_value(db, value) }
           end
-          assert_equal expected.fetch("entries"), actual.sort_by { |entry| entry.fetch("hash") }
+          assert_equal(expected.fetch("entries"), actual.sort_by { |entry| entry.fetch("hash") })
           final.each do |entry|
             hash = [entry.fetch("hash")].pack("H*")
             assert_equal true, map.include?(hash)
@@ -641,14 +700,16 @@ module Interop
         end
       end
     end
-    puts "4 hash tags checked empty and populated, with deep collisions, removals, raw keys, key-only records, and occupied nulls"
+    puts "4 hash tags checked empty and populated, with deep collisions, removals, raw keys, " \
+         "key-only records, and occupied nulls"
   end
 
   def self.hash_slot(db, value)
     if value.key?("hex")
       db.bytes([value.fetch("hex")].pack("H*"), format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
     else
-      XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")), full: value.fetch("full"))
+      XitDB::Core::Slot.new(tag: value.fetch("tag").to_sym, value: Integer(value.fetch("bits")),
+                            full: value.fetch("full"))
     end
   end
 
@@ -661,7 +722,7 @@ module Interop
         oracle.insert(position, index.to_s)
         position
       end
-      request = {"positions" => positions}
+      request = { "positions" => positions }
       ruby_path = File.join(dir, "ruby-linked-#{length}.xit")
       XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
         db.transaction do |root|
@@ -680,8 +741,8 @@ module Interop
           list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
           assert_equal :linked_array_list, db.root_cursor.slot.tag
           assert_equal length, list.size
-          assert_equal oracle, length.times.map { |index| list.get(index).value.to_s }
-          assert_equal oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s }
+          assert_equal(oracle, length.times.map { |index| list.get(index).value.to_s })
+          assert_equal(oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s })
         end
       end
     end
@@ -700,27 +761,27 @@ module Interop
         keys = keys.first(length)
         entries = keys.each_with_index.map do |key, i|
           value = if tag == "sorted_set" || i.zero?
-            nil
-          else
-            {"tag" => "uint", "bits" => i.to_s, "full" => false}
-          end
-          {"key_hex" => key.unpack1("H*"), "value" => value}
+                    nil
+                  else
+                    { "tag" => "uint", "bits" => i.to_s, "full" => false }
+                  end
+          { "key_hex" => key.unpack1("H*"), "value" => value }
         end.shuffle(random: Random.new(8))
         if length.positive?
-          entries << {"key_hex" => "62", "value" => {"tag" => "none", "bits" => "0", "full" => true}}
-          entries << {"key_hex" => "62", "value" => nil}
+          entries << { "key_hex" => "62", "value" => { "tag" => "none", "bits" => "0", "full" => true } }
+          entries << { "key_hex" => "62", "value" => nil }
         end
-        removals = length.zero? ? [] : ["00", "6161", "6b3030303030303031"]
+        removals = length.zero? ? [] : %w[00 6161 6b3030303030303031]
         final = {}
         entries.each do |entry|
           key = entry.fetch("key_hex")
           final[key] = entry.fetch("value") if !final.key?(key) || entry.fetch("value")
         end
         removals.each { |key| final.delete(key) }
-        empty = {"tag" => "none", "bits" => "0", "full" => false}
-        expected_entries = final.sort.map { |key, value| {"key_hex" => key, "value" => value || empty} }
-        expected = {"tag" => tag, "count" => final.size, "entries" => expected_entries}
-        request = {"collection" => tag, "sorted_entries" => entries, "removals" => removals}
+        empty = { "tag" => "none", "bits" => "0", "full" => false }
+        expected_entries = final.sort.map { |key, value| { "key_hex" => key, "value" => value || empty } }
+        expected = { "tag" => tag, "count" => final.size, "entries" => expected_entries }
+        request = { "collection" => tag, "sorted_entries" => entries, "removals" => removals }
         ruby_path = File.join(dir, "ruby-#{tag}-#{length}.xit")
         XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
           db.transaction do |root|
@@ -739,7 +800,7 @@ module Interop
           map = XitDB::Core::SortedMap.new(db.root_cursor)
           assert_equal tag, db.root_cursor.slot.tag.to_s
           assert_equal expected_entries.size, map.size
-          actual = map.map { |key, slot| {"key_hex" => key.unpack1("H*"), "value" => hash_value(db, slot)} }
+          actual = map.map { |key, slot| { "key_hex" => key.unpack1("H*"), "value" => hash_value(db, slot) } }
           assert_equal expected_entries, actual
           expected_entries.each_with_index do |entry, i|
             key = [entry.fetch("key_hex")].pack("H*")
@@ -754,7 +815,8 @@ module Interop
         end
       end
     end
-    puts "2 sorted tags and 4 lengths checked with byte keys, key-only records, replacement, removal, ranks, and suffix iteration"
+    puts "2 sorted tags and 4 lengths checked with byte keys, key-only records, replacement, " \
+         "removal, ranks, and suffix iteration"
   end
 
   def self.linked_array_edit(binary, dir)
@@ -770,7 +832,8 @@ module Interop
       split = [17, oracle.size].min
       offset = [16, oracle.size].min
       size = [257, oracle.size - offset].min
-      request = {"length" => length, "deletions" => deletions, "split_index" => split, "offset" => offset, "size" => size}
+      request = { "length" => length, "deletions" => deletions, "split_index" => split, "offset" => offset,
+                  "size" => size }
       expected = oracle.slice(offset, size).map(&:to_s)
       ruby_path = File.join(dir, "ruby-edit-#{length}.xit")
       XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
@@ -792,10 +855,11 @@ module Interop
         list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
         assert_equal :linked_array_list, db.root_cursor.slot.tag
         assert_equal expected.size, list.size
-        assert_equal expected, list.map { |slot| slot.value.to_s }
+        assert_equal(expected, list.map { |slot| slot.value.to_s })
       end
     end
-    puts "5 linked-array edit lengths checked with first/middle/final removals, root collapse, split/rejoin, slices, and empty operands"
+    puts "5 linked-array edit lengths checked with first/middle/final removals, root collapse, " \
+         "split/rejoin, slices, and empty operands"
   end
 end
 

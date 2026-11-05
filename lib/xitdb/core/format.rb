@@ -2,6 +2,7 @@
 
 module XitDB
   module Core
+    # Validates and decodes the binary storage format.
     module Format
       UINT64_MAX = (1 << 64) - 1
 
@@ -16,8 +17,40 @@ module XitDB
         raise TypeError, "expected String, got #{bytes.class}" unless bytes.is_a?(String)
         raise CorruptionError, "expected #{width} bytes, got #{bytes.bytesize}" unless bytes.bytesize == width
       end
+
+      def self.slice(bytes, offset, length = nil)
+        result = if offset.is_a?(Range)
+                   bytes.byteslice(offset)
+                 else
+                   bytes.byteslice(offset, length || 1)
+                 end
+        raise CorruptionError, "byte slice exceeds payload" unless result
+
+        result
+      end
+
+      def self.unsigned(bytes)
+        value = bytes.unpack1("Q>")
+        raise CorruptionError, "invalid unsigned integer" unless value.is_a?(Integer)
+
+        value
+      end
+
+      def self.integers(bytes, format)
+        bytes.unpack(format).map do |value|
+          raise CorruptionError, "invalid integer payload" unless value.is_a?(Integer)
+
+          value
+        end
+      end
+
+      def self.pair(bytes, format)
+        values = integers(bytes, format)
+        [values.fetch(0), values.fetch(1)]
+      end
     end
 
+    # The immutable database format header.
     class Header
       SIZE = 20
       VERSION = 1
@@ -37,7 +70,11 @@ module XitDB
 
       def self.parse(bytes)
         Format.width(bytes, SIZE)
-        magic, padding, version, hash_size, hash_id, file_id = bytes.unpack("a3Cnn a4Q>")
+        magic = Format.slice(bytes, 0, 3)
+        padding = bytes.getbyte(3) || raise(CorruptionError, "missing header padding")
+        version, hash_size = Format.pair(Format.slice(bytes, 4, 4), "nn")
+        hash_id = Format.slice(bytes, 8, 4)
+        file_id = Format.unsigned(Format.slice(bytes, 12, 8))
         raise CorruptionError, "invalid xitdb magic number" unless magic == "xit"
         raise FormatVersionError, "unsupported xitdb format version #{version}" unless version == VERSION
 
@@ -49,6 +86,7 @@ module XitDB
       end
     end
 
+    # An immutable tagged value or record reference.
     class Slot
       SIZE = 9
       TAGS = %i[none index array_list linked_array_list hash_map kv_pair bytes short_bytes uint int float
@@ -58,9 +96,7 @@ module XitDB
 
       def initialize(tag: :none, value: 0, full: false)
         code = tag.is_a?(Symbol) ? TAGS.index(tag) : tag
-        unless code.is_a?(Integer) && (0..127).cover?(code)
-          raise ArgumentError, "invalid slot tag: #{tag.inspect}"
-        end
+        raise ArgumentError, "invalid slot tag: #{tag.inspect}" unless code.is_a?(Integer) && (0..127).cover?(code)
         raise TypeError, "full must be true or false" unless full.equal?(true) || full.equal?(false)
 
         @tag = TAGS[code] || code
@@ -71,8 +107,9 @@ module XitDB
 
       def self.parse(bytes)
         Format.width(bytes, SIZE)
-        flags, value = bytes.unpack("CQ>")
-        new(tag: flags & 0x7f, value: value, full: flags & 0x80 != 0)
+        flags = bytes.getbyte(0) || raise(CorruptionError, "missing slot flags")
+        value = Format.unsigned(Format.slice(bytes, 1, 8))
+        new(tag: flags & 0x7f, value: value, full: flags.anybits?(0x80))
       end
 
       def self.int(value)
@@ -87,7 +124,7 @@ module XitDB
       def self.float(value)
         raise TypeError, "expected Float, got #{value.class}" unless value.is_a?(Float)
 
-        new(tag: :float, value: [value].pack("G").unpack1("Q>"))
+        new(tag: :float, value: Format.unsigned([value].pack("G")))
       end
 
       def self.null

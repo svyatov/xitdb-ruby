@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 module XitDB
+  # A captured root map with an optional committed revision.
   class Snapshot < Views::Map
     attr_reader :revision
 

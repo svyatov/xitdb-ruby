@@ -4,6 +4,7 @@ require_relative "../errors"
 
 module XitDB
   module Ruby
+    # Encodes and validates fields in Ruby profile payloads.
     module Wire
       def self.u(value)
         unless value.is_a?(Integer) && value >= 0
@@ -29,15 +30,15 @@ module XitDB
         raise InvalidValueError, "text field requires valid UTF-8" unless utf8.valid_encoding?
 
         b(utf8)
-      rescue EncodingError => error
-        raise InvalidValueError, error.message
+      rescue EncodingError => e
+        raise InvalidValueError, e.message
       end
 
       def self.z(value)
         raise InvalidValueError, "signed field requires an Integer" unless value.is_a?(Integer)
 
         hex = value.abs.to_s(16)
-        hex = "0" + hex if hex.length.odd?
+        hex = "0#{hex}" if hex.length.odd?
         magnitude = value.zero? ? "".b : [hex].pack("H*")
         (value.negative? ? "\x01".b : "\x00".b) + b(magnitude)
       end
@@ -52,6 +53,7 @@ module XitDB
         [value].pack("G")
       end
 
+      # Reads canonical fields and rejects truncated or trailing bytes.
       class Reader
         def initialize(bytes)
           @bytes = bytes.b
@@ -59,7 +61,10 @@ module XitDB
         end
 
         def byte
-          take(1).getbyte(0)
+          value = take(1).getbyte(0)
+          raise InvalidValueError, "truncated payload field" unless value
+
+          value
         end
 
         def u
@@ -93,11 +98,11 @@ module XitDB
           raise InvalidValueError, "invalid integer sign" unless sign <= 1
 
           magnitude = b
-          if magnitude.getbyte(0) == 0 || (sign == 1 && magnitude.empty?)
+          if magnitude.getbyte(0)&.zero? || (sign == 1 && magnitude.empty?)
             raise InvalidValueError, "nonminimal integer magnitude"
           end
 
-          value = magnitude.empty? ? 0 : magnitude.unpack1("H*").to_i(16)
+          value = magnitude.empty? ? 0 : magnitude.unpack1("H*").to_s.to_i(16)
           sign.zero? ? value : -value
         end
 
@@ -112,7 +117,10 @@ module XitDB
         end
 
         def f64
-          take(8).unpack1("G")
+          value = take(8).unpack1("G")
+          raise InvalidValueError, "invalid float payload" unless value.is_a?(Float)
+
+          value
         end
 
         def finish!
@@ -127,6 +135,8 @@ module XitDB
           raise InvalidValueError, "truncated payload field" if size > @bytes.bytesize - @position
 
           result = @bytes.byteslice(@position, size)
+          raise InvalidValueError, "truncated payload field" unless result
+
           @position += size
           result
         end

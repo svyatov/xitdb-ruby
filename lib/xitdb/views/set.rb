@@ -2,6 +2,7 @@
 
 module XitDB
   module Views
+    # Provides membership reads and writes for persistent sets.
     class Set < Base
       def include?(value)
         context.read { !adapter.lookup(value).nil? }
@@ -30,7 +31,7 @@ module XitDB
       def clear
         check!
         context.writable!
-        return self unless clear_entries
+        return self unless clear_entries?
 
         context.change_membership(path)
         self
