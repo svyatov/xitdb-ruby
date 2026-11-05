@@ -7,6 +7,7 @@ const algorithms: Record<string, [number, string]> = {sha1: [20, "SHA-1"], rb01:
 const algorithm = algorithms[request.hash.id];
 if (!algorithm || algorithm[0] !== request.hash.size) throw new Error("unsupported hash");
 if (request.case !== "all-kinds") throw new Error("unsupported case");
+if (!["write", "read", "compact", "replicate"].includes(request.operation)) throw new Error("unsupported operation");
 const kinds = ["array_list", "linked_array_list", "hash_map", "hash_set", "counted_hash_map", "counted_hash_set", "sorted_map", "sorted_set"];
 const tags = ["none", "index", "array_list", "linked_array_list", "hash_map", "kv_pair", "bytes", "short_bytes", "uint", "int", "float", "hash_set", "counted_hash_map", "counted_hash_set", "sorted_map", "sorted_set", "sorted_kv_pair"];
 const hex = (value: Uint8Array) => Buffer.from(value).toString("hex");
@@ -110,7 +111,17 @@ function reader(bytes: Uint8Array) {
   }};
 }
 
-using core = new x.CoreFile(request.path);
+function sourceCore() {
+  if (request.operation === "write") return new x.CoreFile(request.path);
+  const bytes = fs.readFileSync(request.path);
+  if (bytes.length === 0) throw new Error("empty source database");
+  const core = new x.CoreMemory();
+  core.writer().write(bytes);
+  core.seek(0);
+  return core;
+}
+
+using core = sourceCore();
 const db = new x.Database(core, new x.Hasher(algorithm[1], x.Hasher.stringToId(request.hash.id)), 1n);
 let result;
 switch (request.operation) {
