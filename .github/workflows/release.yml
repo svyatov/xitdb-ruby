@@ -4,21 +4,28 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to verify and publish
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
   verify:
     uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
 
   publish:
     needs: verify
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
@@ -28,15 +35,56 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
           persist-credentials: false
       - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
         with:
           ruby-version: '4.0'
       - name: Check release tag
-        run: ruby -Ilib -rxitdb/version -e 'abort "Tag must match gem version" unless ENV.fetch("GITHUB_REF_NAME") == "v#{XitDB::VERSION}"'
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: ruby -Ilib -rxitdb/version -e 'abort "Tag must match gem version" unless ENV.fetch("RELEASE_TAG") == "v#{XitDB::VERSION}"'
       - name: Build gem
         run: gem build xitdb.gemspec --output xitdb.gem
       - name: Authenticate with RubyGems
-        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a # v2.1.0
+        env:
+          RUBYGEMS_OWNER_ID: '71752'
+        # The v2.1.0 credentials action does not support the owner required for a new gem.
+        run: |
+          ruby -rjson -rnet/http <<'RUBY'
+          # frozen_string_literal: true
+
+          def json_response(uri, request)
+            response = Net::HTTP.start(uri.host, uri.port, use_ssl: true, open_timeout: 10, read_timeout: 30) do |http|
+              http.request(request)
+            end
+            abort "OIDC request to #{uri.host} failed: HTTP #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+            JSON.parse(response.body)
+          rescue JSON::ParserError
+            abort "OIDC response from #{uri.host} is not valid JSON"
+          end
+
+          owner = ENV.fetch("RUBYGEMS_OWNER_ID")
+          abort "RUBYGEMS_OWNER_ID must be a numeric account ID" unless owner.match?(/\A[1-9]\d*\z/)
+
+          uri = URI(ENV.fetch("ACTIONS_ID_TOKEN_REQUEST_URL"))
+          uri.query = URI.encode_www_form(URI.decode_www_form(uri.query || "") + [["audience", "rubygems.org"]])
+          request = Net::HTTP::Get.new(uri)
+          request["Authorization"] = "Bearer #{ENV.fetch("ACTIONS_ID_TOKEN_REQUEST_TOKEN")}"
+          jwt = json_response(uri, request).fetch("value")
+          puts "::add-mask::#{jwt}"
+
+          uri = URI("https://rubygems.org/api/v1/oidc/trusted_publisher/exchange_token")
+          request = Net::HTTP::Post.new(uri)
+          request["Content-Type"] = "application/json"
+          request["Accept"] = "application/json"
+          request.body = JSON.generate(jwt: jwt, owner: owner)
+          key = json_response(uri, request).fetch("rubygems_api_key")
+          abort "Invalid RubyGems API key" unless key.is_a?(String) && key.match?(/\Arubygems_[A-Za-z0-9_]+\z/)
+
+          puts "::add-mask::#{key}"
+          File.open(ENV.fetch("GITHUB_ENV"), "a") { |file| file.puts "GEM_HOST_API_KEY=#{key}" }
+          RUBY
       - name: Publish gem
         run: gem push --host https://rubygems.org xitdb.gem
