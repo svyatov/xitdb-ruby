@@ -2,13 +2,30 @@
 
 module XitDB
   # Copies logical entries with one iterator per ancestor and no node cache.
+  #
+  # Profiles interpret source values and construct destination values. An
+  # explicit stack avoids Ruby call-stack limits on deeply nested input.
+  # @api private
   class Conversion
+    # Bind logical value readers and writers, with an optional application transform.
+    # @param source [Context]
+    # @param destination [Context] writable destination
+    # @param transform [#call, nil] receives value:, path:, and role:
     def initialize(source, destination, transform: nil)
       @source = source
       @destination = destination
       @transform = transform
     end
 
+    # Copy one value with an explicit stack of ancestors rather than recursive calls.
+    #
+    # Only the active traversal path retains iterators. Repeated references can be
+    # copied more than once; a reference to an active ancestor is rejected.
+    # @param slot [Core::Slot] source value
+    # @param path [Array<Object>] source location for diagnostics and transforms
+    # @param adapter [Object, nil] optional selected container adapter
+    # @return [Core::Slot] encoded destination value
+    # @raise [CyclicValueError] if stored values form an ancestor cycle
     def copy(slot, path: [], adapter: nil)
       # @type var stack: ::Array[conversion_frame]
       stack = []
@@ -45,6 +62,8 @@ module XitDB
 
     private
 
+    # Copy a scalar immediately, or push a container frame after checking for a cycle.
+    # @return [Core::Slot, nil] nil when the container needs further traversal
     def begin_value(stored, location, selected, stack, active)
       adapter = selected || @source.profile.container(stored, context: @source, path: location)
       return copy_scalar(stored, location) unless adapter
@@ -60,6 +79,8 @@ module XitDB
       nil
     end
 
+    # Stream compatible bytes directly or decode, transform, and encode a scalar.
+    # @return [Core::Slot]
     def copy_scalar(stored, location)
       bytes = @source.profile.conversion_bytes(stored, context: @source) unless @transform
       if bytes
@@ -79,11 +100,15 @@ module XitDB
       @destination.profile.encode(value, context: @destination, path: location)
     end
 
+    # Assign a completed child to the current destination adapter.
+    # @return [void]
     def assign_parent(stack, stored)
       parent = stack.last || raise(CorruptionError, "missing conversion parent")
       parent[3].assign(parent[4], stored)
     end
 
+    # Finish a container, remove its active identity, and attach it to its parent.
+    # @return [Core::Slot]
     def finish_frame(frame, stack, active)
       stored = frame[3].slot
       active.delete(frame[0])
@@ -93,12 +118,16 @@ module XitDB
     end
 
     # Callback StopIteration must abort the operation, so rescue only #next.
+    # Read the next source entry, rescuing exhaustion only from the iterator.
+    # @return [Array, nil] nil at the end
     def next_entry(frame)
       frame[2].next
     rescue StopIteration
       nil
     end
 
+    # Transform a key, detect collisions, and choose the next child to copy.
+    # @return [Array(Core::Slot, Array), nil] nil for set members
     def select_child(frame, entry)
       selector, child = entry
       child_path = frame[1] + [selector]
@@ -123,6 +152,8 @@ module XitDB
       end
     end
 
+    # Apply the key callback and reject unsupported destination key classes.
+    # @return [Object] transformed selector
     def transform_key(value, path)
       converted = transform(value, path, :key)
       case converted
@@ -133,6 +164,8 @@ module XitDB
       end
     end
 
+    # Call application code with an owned immutable path and explicit key/value role.
+    # @return [Object] unchanged input when no callback exists
     def transform(value, path, role)
       callback = @transform
       return value unless callback
@@ -148,8 +181,19 @@ module XitDB
 
     # A bounded byte range, including tagged bytes and Ruby String payloads.
     class ByteSource
+      # Captured byte length and optional format label for this source.
+      #
+      # @!attribute [r] size
+      #   Number of bytes visible through this source.
+      #   @return [Integer]
+      # @!attribute [r] format_tag
+      #   Optional two-byte label attached to the stored byte value.
+      #   @return [String, nil]
       attr_reader :size, :format_tag
 
+      # Capture a bounded byte source without loading its payload.
+      # @param context [Context]
+      # @param slot [Core::Slot]
       def initialize(context, slot)
         @source = Core::Bytes.open(context.database.core, slot, bound: context.read_bound)
         @start = 0
@@ -157,6 +201,11 @@ module XitDB
         @format_tag = @source.format_tag
       end
 
+      # Read a checked byte range relative to this source's start.
+      # @param position [Integer]
+      # @param length [Integer]
+      # @return [String]
+      # @raise [InvalidValueError] if the requested range exceeds this source
       def read(position, length)
         unless position >= 0 && length >= 0 && position + length <= size
           raise InvalidValueError, "truncated byte payload"
@@ -165,6 +214,9 @@ module XitDB
         @source.read(@start + position, length)
       end
 
+      # Decode a minimal base-128 unsigned integer and report the next byte position.
+      # @param position [Integer]
+      # @return [Array(Integer, Integer)] integer and next position
       def unsigned(position)
         value = shift = 0
         while true
@@ -182,6 +234,10 @@ module XitDB
         [value, position]
       end
 
+      # Create a bounded subsource that shares the same underlying storage.
+      # @param position [Integer]
+      # @param length [Integer]
+      # @return [ByteSource]
       def slice(position, length)
         read(position + length, 0)
         output = dup
@@ -191,6 +247,8 @@ module XitDB
         output
       end
 
+      # Validate UTF-8 in chunks and select UTF-8 or binary for a portable byte payload.
+      # @return [Encoding]
       def portable_encoding
         converter = Encoding::Converter.new(Encoding::UTF_8, Encoding::UTF_16LE)
         each_chunk { |chunk| converter.convert(chunk) }
@@ -200,6 +258,11 @@ module XitDB
         Encoding::BINARY
       end
 
+      # Append this source to a destination transaction in bounded chunks.
+      # @param context [Context]
+      # @param prefix [String] optional bytes preceding the source payload
+      # @param format_tag [String, nil]
+      # @return [Core::Slot]
       def write_to(context, prefix: "".b, format_tag: @format_tag)
         Core::Bytes.append(context.writable_transaction, size: size, prefix: prefix, format_tag: format_tag,
                                                          representation: :external) do |position, length|
@@ -209,6 +272,10 @@ module XitDB
 
       private
 
+      # Visit bounded pieces without retaining the complete byte value.
+      # @yield [chunk]
+      # @yieldparam chunk [String]
+      # @return [void]
       def each_chunk
         position = 0
         while position < size

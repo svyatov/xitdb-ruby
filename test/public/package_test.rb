@@ -1,11 +1,16 @@
 # frozen_string_literal: true
 
+# Regression tests for installed gem files, runtime dependencies, and packaged examples.
+
 require_relative "../test_helper"
 require_relative "../support/package_helpers"
 
+# Covers installed gem files, runtime dependencies, and packaged examples.
+# @api private
 class PackageTest < Minitest::Test
   include PackageHelpers
 
+  # Checks that built gem loads both profiles in a clean bundle.
   def test_built_gem_loads_both_profiles_in_a_clean_bundle
     with_built_package do |spec|
       assert_equal "Ada", packaged_example("portable").fetch("name")

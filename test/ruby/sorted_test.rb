@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
+# Regression tests for typed Ruby sorted keys, range queries, and malformed key payloads.
+
 require_relative "test_helper"
 require "xitdb/ruby"
 require "tmpdir"
 
+# Covers typed Ruby sorted keys, range queries, and malformed key payloads.
+# @api private
 class RubySortedTest < RubyProfileTest
+  # Checks ordered bytes match exact numeric and time order.
   def test_ordered_bytes_match_exact_numeric_and_time_order
     numbers = [-(2**200), -1, 0, 1, 2**200]
 
@@ -14,6 +19,7 @@ class RubySortedTest < RubyProfileTest
     assert_equal(times, times.shuffle.sort_by { |t| ordered(Time.at(t), :time) })
   end
 
+  # Checks typed key byte vectors and preservation of lexicographic prefix order.
   def test_wire_vectors_and_prefix_order
     { -256 => "00fffffffffffffffdfeff", -1 => "00fffffffffffffffefe",
       0 => "01", 1 => "02000000000000000101", 256 => "0200000000000000020100" }.each do |number, hex|
@@ -36,6 +42,7 @@ class RubySortedTest < RubyProfileTest
     assert_equal Encoding::BINARY, ordered("é", :string).encoding
   end
 
+  # Checks exact chronological ordering for rational times with large denominators and long continued fractions.
   def test_exact_time_order_with_large_denominators_and_long_continued_fractions
     a = 1
     b = 1
@@ -46,6 +53,7 @@ class RubySortedTest < RubyProfileTest
     assert_operator ordered(Time.at(Rational(1, 10**100)), :time).bytesize, :<, 100
   end
 
+  # Checks that ordered key validation precedes input hooks.
   def test_ordered_key_validation_precedes_input_hooks
     { string: "a", integer: 1, float: 1.0, time: Time.at(0) }.each do |kind, value|
       assert_raises(XitDB::UnsupportedValueError) { ordered(nil, kind) }
@@ -70,6 +78,7 @@ class RubySortedTest < RubyProfileTest
     singleton_inputs.each { |input| assert_raises(XitDB::UnsupportedValueError) { ordered(input, :string) } }
   end
 
+  # Checks typed sorted declarations and their rejection by the portable profile.
   def test_typed_declarations_and_portable_isolation
     key_kinds = %i[string integer float time]
     XitDB::Ruby.memory do |db|
@@ -111,6 +120,7 @@ class RubySortedTest < RubyProfileTest
     assert_empty calls
   end
 
+  # Checks typed maps and sets across sorted iteration, rank lookup, and snapshot pagination.
   def test_typed_maps_and_sets_order_rank_and_snapshot_pages
     { integer: [-(2**200), -1, 0, 1, 2**200], float: [-Float::INFINITY, -1.0, 0.0, 1.0, Float::INFINITY],
       string: ["", "a", "a\0", "aa", "é"],
@@ -158,6 +168,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks comparison aliases retain original keys and invalidate descendants.
   def test_comparison_aliases_retain_original_keys_and_invalidate_descendants
     { string: ["é".encode("ISO-8859-1"), "é"],
       time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).getlocal(-7200)],
@@ -193,6 +204,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks streams use sorted identity and allow unrelated writes.
   def test_streams_use_sorted_identity_and_allow_unrelated_writes
     { string: ["é".encode("ISO-8859-1"), "é", "z"],
       time: [Time.at(Rational(1, 3)).getlocal(3600), Time.at(Rational(1, 3)).utc,
@@ -224,6 +236,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks descendant streams block replacement through sorted aliases.
   def test_descendant_streams_block_replacement_through_sorted_aliases
     { string: ["é".encode("ISO-8859-1"), "é"],
       time: [Time.at(Rational(-1, 3)).getlocal(3600), Time.at(Rational(-1, 3)).utc] }.each do |kind, (key, other)|
@@ -245,6 +258,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks public sorted keys and merge reject hooks before any mutation.
   def test_public_sorted_keys_and_merge_reject_hooks_before_any_mutation
     calls = []
     bad_key = Class.new(String) do
@@ -290,6 +304,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks that typed merge validates keys and rolls back all entries.
   def test_typed_merge_validates_keys_and_rolls_back_all_entries
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -318,6 +333,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks text alias merge retains first representation and last value.
   def test_text_alias_merge_retains_first_representation_and_last_value
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -347,6 +363,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks raw typed sorted envelopes and records against their expected layout.
   def test_exact_sorted_envelopes_and_records
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -380,6 +397,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks malformed sorted envelopes and original keys are rejected.
   def test_malformed_sorted_envelopes_and_original_keys_are_rejected
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -420,6 +438,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks sorted size rank and pages do not scan entries.
   def test_sorted_size_rank_and_pages_do_not_scan_entries
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -451,6 +470,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks sorted failed storage write and clear restore observed values.
   def test_sorted_failed_storage_write_and_clear_restore_observed_values
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -489,6 +509,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks sorted count failure restores tree and observed values.
   def test_sorted_count_failure_restores_tree_and_observed_values
     XitDB::Ruby.memory do |db|
       db.transaction do |root|
@@ -521,6 +542,7 @@ class RubySortedTest < RubyProfileTest
     end
   end
 
+  # Checks sorted file reopen preserves exact time and original offset.
   def test_sorted_file_reopen_preserves_exact_time_and_original_offset
     Dir.mktmpdir do |directory|
       path = File.join(directory, "sorted.xit")

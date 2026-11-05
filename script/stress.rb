@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Runs the large-data workload in Docker with explicit memory and data sizes.
+# Prints a JSON report after all checks succeed.
+
 require "optparse"
 require_relative "../test/stress/workload"
 

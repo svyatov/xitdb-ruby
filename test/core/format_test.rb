@@ -1,8 +1,13 @@
 # frozen_string_literal: true
 
+# Regression tests for binary headers, scalar slots, checksums, and format error contracts.
+
 require "test_helper"
 
+# Covers binary headers, scalar slots, checksums, and format error contracts.
+# @api private
 class FormatTest < Minitest::Test
+  # Checks exact header bytes and the distinct encodings for empty and occupied null slots.
   def test_header_and_null_vectors
     header = XitDB::Core::Header.new(file_id: 1, hash_id: "sha1", hash_size: 20)
 
@@ -10,12 +15,14 @@ class FormatTest < Minitest::Test
     assert_equal "800000000000000000", XitDB::Core::Slot.new(tag: :none, value: 0, full: true).to_bytes.unpack1("H*")
   end
 
+  # Checks the checksum against fixed CRC-64/XZ vectors.
   def test_crc64_xz_vectors
     assert_equal 0, XitDB::Core::CRC64.call("")
     assert_equal 0x330284772e652b05, XitDB::Core::CRC64.call("a")
     assert_equal 0x995dc9bbdf1939fa, XitDB::Core::CRC64.call("123456789")
   end
 
+  # Checks that header parses without losing reserved bytes or unknown hash ids.
   def test_header_parses_without_losing_reserved_bytes_or_unknown_hash_ids
     bytes = ["786974ff00010000800000ff0123456789abcdef"].pack("H*")
     header = XitDB::Core::Header.parse(bytes)
@@ -30,17 +37,20 @@ class FormatTest < Minitest::Test
     assert_predicate header.hash_id, :frozen?
   end
 
+  # Checks malformed header width and magic are corrupt.
   def test_malformed_header_width_and_magic_are_corrupt
     ["", "xit", "x" * 19, "x" * 21, "bad\0\0\1\0\24sha1#{"\0" * 8}"].each do |bytes|
       assert_raises(XitDB::CorruptionError) { XitDB::Core::Header.parse(bytes) }
     end
   end
 
+  # Checks unsupported header version has a distinct error.
   def test_unsupported_header_version_has_a_distinct_error
     bytes = ["7869740000020014736861310000000000000001"].pack("H*")
     assert_raises(XitDB::FormatVersionError) { XitDB::Core::Header.parse(bytes) }
   end
 
+  # Checks header fields reject overflow and wrong types.
   def test_header_fields_reject_overflow_and_wrong_types
     [-1, 2**64].each do |id|
       assert_raises(RangeError) { XitDB::Core::Header.new(file_id: id, hash_id: "sha1", hash_size: 20) }
@@ -53,6 +63,7 @@ class FormatTest < Minitest::Test
     assert_raises(ArgumentError) { XitDB::Core::Header.new(file_id: 1, hash_id: "sha256", hash_size: 32) }
   end
 
+  # Checks null is occupied and zero slot is empty.
   def test_null_is_occupied_and_zero_slot_is_empty
     null = XitDB::Core::Slot.null
 
@@ -67,6 +78,7 @@ class FormatTest < Minitest::Test
     refute_predicate XitDB::Core::Slot.uint(0), :empty?
   end
 
+  # Checks integer vectors keep signedness and all 64 bits.
   def test_integer_vectors_keep_signedness_and_all_64_bits
     [
       [:int, -(2**63), "098000000000000000"],
@@ -85,6 +97,7 @@ class FormatTest < Minitest::Test
     end
   end
 
+  # Checks integer factories reject overflow and coercion.
   def test_integer_factories_reject_overflow_and_coercion
     [-(2**63) - 1, 2**63].each do |value|
       assert_raises(RangeError) { XitDB::Core::Slot.int(value) }
@@ -96,6 +109,7 @@ class FormatTest < Minitest::Test
     assert_raises(TypeError) { XitDB::Core::Slot.uint("1") }
   end
 
+  # Checks floats preserve IEEE values.
   def test_floats_preserve_ieee_values
     [[1.5, "0a3ff8000000000000"], [-0.0, "0a8000000000000000"],
      [Float::INFINITY, "0a7ff0000000000000"], [-Float::INFINITY, "0afff0000000000000"]].each do |value, hex|
@@ -107,6 +121,7 @@ class FormatTest < Minitest::Test
     assert_raises(TypeError) { XitDB::Core::Slot.float("1.5") }
   end
 
+  # Checks all upstream tags and unknown tags round trip.
   def test_all_upstream_tags_and_unknown_tags_round_trip
     tags = %i[none index array_list linked_array_list hash_map kv_pair bytes short_bytes uint int float
               hash_set counted_hash_map counted_hash_set sorted_map sorted_set sorted_kv_pair]
@@ -128,6 +143,7 @@ class FormatTest < Minitest::Test
     end
   end
 
+  # Checks slots reject invalid widths and fields.
   def test_slots_reject_invalid_widths_and_fields
     ["", "\0" * 8, "\0" * 10].each do |bytes|
       assert_raises(XitDB::CorruptionError) { XitDB::Core::Slot.parse(bytes) }
@@ -141,6 +157,7 @@ class FormatTest < Minitest::Test
     assert_raises(TypeError) { XitDB::Core::Slot.new(tag: :none, value: 0, full: 1) }
   end
 
+  # Checks value error owns an immutable path and keeps the cause.
   def test_value_error_owns_an_immutable_path_and_keeps_the_cause
     path = [+"profile", +"status", 2]
     original = RuntimeError.new("codec failed")
@@ -159,6 +176,7 @@ class FormatTest < Minitest::Test
     assert_kind_of XitDB::Error, error
   end
 
+  # Checks commit error requires a known outcome.
   def test_commit_error_requires_a_known_outcome
     %i[not_committed committed unknown].each do |outcome|
       assert_equal outcome, XitDB::CommitError.new("I/O failed", outcome: outcome).outcome
@@ -166,6 +184,7 @@ class FormatTest < Minitest::Test
     assert_raises(ArgumentError) { XitDB::CommitError.new("I/O failed", outcome: :retry) }
   end
 
+  # Checks key collision error has an owned immutable value path.
   def test_key_collision_error_has_an_owned_immutable_value_path
     assert XitDB.const_defined?(:KeyCollisionError, false), "KeyCollisionError must be available"
     path = [+"records", 1]

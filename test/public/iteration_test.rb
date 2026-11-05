@@ -1,18 +1,25 @@
 # frozen_string_literal: true
 
+# Regression tests for iteration, view invalidation, and retained context memory.
+
 require "test_helper"
 require "objspace"
 require "xitdb/ruby"
 
+# Covers iteration, view invalidation, and retained context memory.
+# @api private
 class PublicIterationTest < Minitest::Test
+  # Creates an in-memory portable database for each test.
   def setup
     @db = XitDB.memory
   end
 
+  # Closes the portable database if the test has not already closed it.
   def teardown
     @db.close unless @db.closed?
   end
 
+  # Checks shifted descendants expire while earlier locations remain live.
   def test_shifted_descendants_expire_while_earlier_locations_remain_live
     [XitDB.array, XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -40,6 +47,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks linked shifts retain metadata only for observed locations.
   def test_linked_shifts_retain_metadata_only_for_observed_locations
     @db.transaction do |root|
       root["items"] = XitDB.linked_array
@@ -57,6 +65,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks that transaction iteration yields writable children and live replacements.
   def test_transaction_iteration_yields_writable_children_and_live_replacements
     [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map].each do |declaration|
       @db.transaction do |root|
@@ -77,6 +86,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks snapshot traversal retains no per position generation metadata.
   def test_snapshot_traversal_retains_no_per_position_generation_metadata
     @db.transaction { |root| root["items"] = Array.new(1024) { [1] } }
     items = @db.snapshot["items"]
@@ -87,6 +97,7 @@ class PublicIterationTest < Minitest::Test
     assert_operator retained_context_bytes(items.context) - before, :<, 4096
   end
 
+  # Checks key enumeration does not read large values and keeps lifetime checks.
   def test_key_enumeration_does_not_read_large_values_and_keeps_lifetime_checks
     configurations = [[XitDB, [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map]],
                       [XitDB::Ruby, [XitDB.map, XitDB.sorted_map(key: :string)]]]
@@ -128,6 +139,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks dropped transaction children release generation metadata.
   def test_dropped_transaction_children_release_generation_metadata
     @db.transaction do |root|
       root["items"] = Array.new(1024) { [1] }
@@ -141,6 +153,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks replacing an ancestor expires descendants and iterators.
   def test_replacing_an_ancestor_expires_descendants_and_iterators
     @db.transaction do |root|
       root["parent"] = { "items" => [[1], [2]] }
@@ -155,6 +168,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks that byte equal map keys share child lifetime across encodings.
   def test_byte_equal_map_keys_share_child_lifetime_across_encodings
     [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map].each do |declaration|
       @db.transaction do |root|
@@ -172,6 +186,7 @@ class PublicIterationTest < Minitest::Test
     end
   end
 
+  # Checks set membership invalidates iterators but noops preserve them.
   def test_set_membership_invalidates_iterators_but_noops_preserve_them
     [XitDB.set, XitDB.set(counted: true), XitDB.sorted_set].each do |declaration|
       @db.transaction do |root|
@@ -190,6 +205,9 @@ class PublicIterationTest < Minitest::Test
 
   private
 
+  # Totals shallow sizes of objects directly retained by a view context.
+  # @param context [Object] context to measure
+  # @return [Integer] bytes reported by ObjectSpace
   def retained_context_bytes(context)
     ObjectSpace.reachable_objects_from(context).sum { |object| ObjectSpace.memsize_of(object) }
   end

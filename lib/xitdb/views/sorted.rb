@@ -4,10 +4,19 @@ module XitDB
   module Views
     # Adds ordered iteration and pagination to sorted collection views.
     module Sorted
+      # Count keys or members that sort before the supplied key.
+      #
+      # The key need not exist. The result is its insertion position.
+      # @param key [Object] key matching this sorted collection's key kind
+      # @return [Integer] zero-based insertion position
       def rank(key)
         context.read { adapter.rank(key) }
       end
 
+      # Visit entries starting at the first key greater than or equal to key.
+      # @param key [Object]
+      # @yield [*entry] key/value for maps, member for sets
+      # @return [self, Enumerator]
       def from(key)
         return enum_for(:from, key) unless block_given?
 
@@ -15,6 +24,10 @@ module XitDB
         self
       end
 
+      # Visit entries starting at a position in sorted order.
+      # @param index [Integer] zero-based sorted position
+      # @yield [*entry] key/value for maps, member for sets
+      # @return [self, Enumerator]
       def from_index(index)
         return enum_for(:from_index, index) unless block_given?
 
@@ -22,6 +35,12 @@ module XitDB
         self
       end
 
+      # Visit at most limit entries starting at a sorted position.
+      # @param offset [Integer] starting position
+      # @param limit [Integer] nonnegative maximum number of entries
+      # @yield [*entry] key/value for maps, member for sets
+      # @return [self, Enumerator]
+      # @raise [ArgumentError] if limit is negative
       def page(offset:, limit:)
         check!
         offset = integer_argument(offset)
@@ -44,6 +63,10 @@ module XitDB
     class SortedMap < Map
       include Sorted
 
+      # Assign a Ruby Hash while preserving this map's declared sorted key kind.
+      # @param hash [::Hash]
+      # @return [self]
+      # @raise [TypeError] if the argument is not an exact Ruby Hash
       def merge!(hash)
         return super unless defined?(Profiles::Ruby) && context.profile.is_a?(Profiles::Ruby)
 
@@ -70,6 +93,7 @@ module XitDB
       end
     end
 
+    # A set visited in key order, with rank lookup and bounded pagination.
     class SortedSet < Set
       include Sorted
     end

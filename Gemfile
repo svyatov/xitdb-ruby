@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Runtime dependencies come from the gemspec. These additional gems support
+# local tests, static analysis, and development tasks.
+
 source "https://rubygems.org"
 
 gemspec

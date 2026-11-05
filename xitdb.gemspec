@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Package metadata and the explicit file list shipped to gem users.
+# Development tools are declared in Gemfile rather than runtime dependencies.
+
 require_relative "lib/xitdb/version"
 
 Gem::Specification.new do |spec|

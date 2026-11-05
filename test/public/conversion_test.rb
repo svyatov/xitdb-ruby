@@ -1,20 +1,27 @@
 # frozen_string_literal: true
 
+# Regression tests for profile conversion, history copying, bounded reads, and target cleanup.
+
 require "test_helper"
 require "xitdb/ruby"
 require "tmpdir"
 
+# Covers profile conversion, history copying, bounded reads, and target cleanup.
+# @api private
 class ConversionTest < Minitest::Test
+  # Creates a temporary destination directory and tracks opened database handles.
   def setup
     @directory = Dir.mktmpdir("xitdb-conversion-")
     @handles = []
   end
 
+  # Closes handles in reverse order and removes conversion output files.
   def teardown
     @handles.reverse_each { |db| db.close unless db.closed? }
     FileUtils.remove_entry(@directory)
   end
 
+  # Checks explicit Ruby-to-portable key conversion and rejection of transformed key collisions.
   def test_explicit_native_to_portable_transform_and_collision
     native = track(XitDB::Ruby.memory)
     native.transaction { |root| root[:name] = "Ada" }
@@ -30,6 +37,7 @@ class ConversionTest < Minitest::Test
     assert_equal "Other", native.snapshot["name"]
   end
 
+  # Checks that conversion copies history in both profile directions without materializing entire values.
   def test_histories_and_both_directions_without_materialization
     source = track(XitDB.memory)
     source.transaction { |root| root["data"] = [1, { "name" => "Ada" }, Set["a", "b"]] }
@@ -52,6 +60,7 @@ class ConversionTest < Minitest::Test
     guard&.disable
   end
 
+  # Checks that conversion preserves empty history and rejects invalid history options.
   def test_empty_history_and_invalid_history_selection
     source = track(XitDB.memory)
     target = track(source.convert(to: path("empty"), profile: :ruby))
@@ -62,6 +71,7 @@ class ConversionTest < Minitest::Test
     refute_path_exists path("invalid")
   end
 
+  # Checks that transforms receive source paths and use the history captured when conversion starts.
   def test_path_dependent_transform_and_captured_source_history
     source = track(XitDB.memory)
     source.transaction do |root|
@@ -92,6 +102,7 @@ class ConversionTest < Minitest::Test
     assert_includes calls, [%w[left n], :key]
   end
 
+  # Checks destination conflicts and callback failure preserve data.
   def test_destination_conflicts_and_callback_failure_preserve_data
     source = track(XitDB.open(path("source")))
     source.transaction { |root| root["n"] = 1 }
@@ -114,6 +125,7 @@ class ConversionTest < Minitest::Test
     assert_equal 1, source.snapshot["n"]
   end
 
+  # Checks conversion with configured profiles, opaque values, and unregistered codecs.
   def test_configured_profiles_opaque_values_and_unknown_codecs
     source = track(XitDB.memory(hash: :sha256))
     source.transaction { |root| root["opaque"] = XitDB::Core::ByteValue.new("payload", format_tag: "zz") }
@@ -147,6 +159,7 @@ class ConversionTest < Minitest::Test
     assert_raises(XitDB::UnsupportedValueError) { source.convert(to: path("reserved"), profile: :ruby) }
   end
 
+  # Checks short and empty conversion values retain external representation.
   def test_short_and_empty_conversion_values_retain_external_representation
     source = track(XitDB.memory)
     source.transaction do |root|
@@ -178,6 +191,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks copying between database paths and rollback when any copied value fails.
   def test_copy_from_cross_file_paths_and_atomic_rollback
     source = track(XitDB::Ruby.memory)
     source.transaction { |root| root[:person] = { name: "Ada", scores: [1, 2] } }
@@ -207,6 +221,7 @@ class ConversionTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { expired.copy_from(snapshot, at: ["x"]) }
   end
 
+  # Checks large strings and opaque bytes are streamed without scalar allocation.
   def test_large_strings_and_opaque_bytes_are_streamed_without_scalar_allocation
     source = track(XitDB.memory)
     utf8 = "#{"a" * 65_535}é#{"b" * 140_000}"
@@ -235,6 +250,7 @@ class ConversionTest < Minitest::Test
     assert_equal Encoding::UTF_16LE, clone.snapshot["encoded"].encoding
   end
 
+  # Checks copying array slices, replacing roots, and passing source-relative paths to transforms.
   def test_copy_slice_root_replacement_and_source_relative_transform_paths
     source = track(XitDB.memory)
     source.transaction { |root| root["numbers"] = [10, 20, 30, 40] }
@@ -259,6 +275,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks copy callbacks cannot mutate either active transaction or leak foreign views.
   def test_copy_callbacks_cannot_mutate_either_active_transaction_or_leak_foreign_views
     source = track(XitDB.memory)
     destination = track(XitDB::Ruby.memory)
@@ -296,6 +313,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks sorted-key kinds, transformed set collisions, and explicit key conversion.
   def test_sorted_kinds_set_collisions_and_explicit_key_transform
     native = track(XitDB::Ruby.memory)
     native.transaction do |root|
@@ -321,6 +339,7 @@ class ConversionTest < Minitest::Test
     assert_raises(XitDB::UnsupportedEncodingError) { target.convert(to: path("invalid-key"), profile: :ruby) }
   end
 
+  # Checks transformed key is owned before value callbacks.
   def test_transformed_key_is_owned_before_value_callbacks
     source = track(XitDB.memory)
     source.transaction { |root| root["name"] = 1 }
@@ -339,6 +358,7 @@ class ConversionTest < Minitest::Test
     refute target.snapshot.key?("changed")
   end
 
+  # Checks competing target commits are rejected even for empty source.
   def test_competing_target_commits_are_rejected_even_for_empty_source
     [false, true].each do |populated|
       source = track(XitDB.memory)
@@ -366,6 +386,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks failed publication retains outcome and closes owned store.
   def test_failed_publication_retains_outcome_and_closes_owned_store
     [1, 2, 3, 4].each do |failed_sync|
       source = track(XitDB.memory)
@@ -399,6 +420,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks persistent partial header write retains physical bytes and closes descriptor.
   def test_persistent_partial_header_write_retains_physical_bytes_and_closes_descriptor
     source = track(XitDB.memory)
     source.transaction { |root| root["n"] = 7 }
@@ -447,6 +469,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks initialization and failed copy cleanup preserve competing writes.
   def test_initialization_and_failed_copy_cleanup_preserve_competing_writes
     source = track(XitDB.memory)
     source.transaction { |root| root["n"] = 1 }
@@ -483,6 +506,7 @@ class ConversionTest < Minitest::Test
     XitDB.open(target_path) { |other| assert_equal 99, other.snapshot["competitor"] }
   end
 
+  # Checks copy stream conflicts and nonlocal exit leave destination unchanged.
   def test_copy_stream_conflicts_and_nonlocal_exit_leave_destination_unchanged
     source = track(XitDB.memory)
     source.transaction { |root| root["n"] = 1 }
@@ -515,11 +539,13 @@ class ConversionTest < Minitest::Test
     assert_equal 0, File.size(path("nonlocal"))
   end
 
+  # Checks that copy validates destination keys and root kind before callbacks.
   def test_copy_validates_destination_keys_and_root_kind_before_callbacks
     source = track(XitDB.memory)
     source.transaction { |root| root["list"] = [1] }
     destination = track(XitDB::Ruby.memory)
     key = +"bad"
+    # Adds singleton behavior that value or key validation must reject.
     def key.special = :singleton_behavior
     calls = 0
     transform = lambda { |value:, **|
@@ -537,6 +563,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks native codec registry is copied and callbacks remain value local.
   def test_native_codec_registry_is_copied_and_callbacks_remain_value_local
     type = Struct.new(:amount)
     calls = []
@@ -566,6 +593,7 @@ class ConversionTest < Minitest::Test
     assert_raises(XitDB::UnsupportedValueError) { source.convert(to: path("no-codec"), profile: configured) }
   end
 
+  # Checks untagged native binary streams remain streamable.
   def test_untagged_native_binary_streams_remain_streamable
     source = track(XitDB::Ruby.memory)
     source.transaction { |root| root.write_bytes(:binary) { |io| io.write("\x00\xff".b * 50_000) } }
@@ -577,6 +605,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks streamed native strings reject malformed wire fields.
   def test_streamed_native_strings_reject_malformed_wire_fields
     fixtures = [
       ["\x02".b, XitDB::UnsupportedEncodingError],
@@ -593,6 +622,7 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Checks stored cycles abort conversion with the source path.
   def test_stored_cycles_abort_conversion_with_the_source_path
     source = track(XitDB.memory)
     source.core.transaction do |history|
@@ -610,6 +640,7 @@ class ConversionTest < Minitest::Test
     assert_equal 0, File.size(path("cycle"))
   end
 
+  # Checks that deep graph and shared histories copy incrementally.
   def test_deep_graph_and_shared_histories_copy_incrementally
     source = track(XitDB.memory)
     nested = "leaf"
@@ -638,11 +669,16 @@ class ConversionTest < Minitest::Test
 
   private
 
+  # Registers a database for cleanup in reverse opening order.
+  # @param database [XitDB::Database] handle to retain
+  # @return [XitDB::Database] same handle
   def track(database)
     @handles << database
     database
   end
 
+  # Rejects raw reads above 64 KiB to detect whole-payload allocation.
+  # @param core [XitDB::Core::Database] source to instrument
   def enforce_bounded_reads(core)
     core.define_singleton_method(:read_at) do |offset, size, bound:|
       raise "conversion allocated a complete byte value" if size > 65_536
@@ -651,6 +687,11 @@ class ConversionTest < Minitest::Test
     end
   end
 
+  # Intercepts target-store opening to install the requested fault.
+  # @param target [String] destination path to intercept
+  # @param configure [Proc] callback that configures the target store
+  # @yield executes the operation under test
+  # @return [Object] block result
   def with_target_store(target, configure)
     original = XitDB::Core::FileStore.method(:open)
     XitDB::Core::FileStore.singleton_class.remove_method(:open)
@@ -668,6 +709,9 @@ class ConversionTest < Minitest::Test
     XitDB::Core::FileStore.define_singleton_method(:open, original)
   end
 
+  # Constructs an output path inside the test temporary directory.
+  # @param name [String] basename without extension
+  # @return [String] database path
   def path(name)
     File.join(@directory, "#{name}.xit")
   end

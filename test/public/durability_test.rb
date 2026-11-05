@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+# Regression tests for durable publication, commit outcomes, and cooperating initializers.
+
 require "test_helper"
 require "support/fault_store"
 require "tmpdir"
 require "timeout"
 require "xitdb/ruby"
 
+# Covers durable publication, commit outcomes, and cooperating initializers.
+# @api private
 class PublicDurabilityTest < Minitest::Test
+  # Creates a file-backed database behind FaultStore and commits the initial counter.
   def setup
     @directory = Dir.mktmpdir
     @path = File.join(@directory, "database.xit")
@@ -17,6 +22,7 @@ class PublicDurabilityTest < Minitest::Test
     @database.transaction { |root| root["counter"] = 0 }
   end
 
+  # Disables fault hooks, closes the database, and removes its temporary directory.
   def teardown
     @store.fault = nil
     @store.release_fault = nil
@@ -24,6 +30,7 @@ class PublicDurabilityTest < Minitest::Test
     FileUtils.remove_entry(@directory)
   end
 
+  # Checks that data sync failure is a known abort and allows a later write.
   def test_data_sync_failure_is_a_known_abort_and_allows_a_later_write
     fault = fail_sync(1)
     invocations = 0
@@ -43,6 +50,7 @@ class PublicDurabilityTest < Minitest::Test
     assert_reopened_counter(2)
   end
 
+  # Checks that header sync failure is unknown and never retries the callback.
   def test_header_sync_failure_is_unknown_and_never_retries_the_callback
     fault = fail_sync(2)
     invocations = 0
@@ -64,6 +72,7 @@ class PublicDurabilityTest < Minitest::Test
     assert_reopened_counter(1)
   end
 
+  # Checks partial header publication is unknown and reopens at previous trailer.
   def test_partial_header_publication_is_unknown_and_reopens_at_previous_trailer
     @store.fault = lambda do |name, args|
       if name == :write_at && args.first == 20
@@ -89,6 +98,7 @@ class PublicDurabilityTest < Minitest::Test
     reopened&.close
   end
 
+  # Checks that unlock failure after header sync is committed.
   def test_unlock_failure_after_header_sync_is_committed
     fault = IOError.new("unlock failed")
     @store.release_fault = -> { raise fault }
@@ -110,6 +120,7 @@ class PublicDurabilityTest < Minitest::Test
     assert_reopened_counter(1)
   end
 
+  # Checks callback error keeps identity and releases the writer.
   def test_callback_error_keeps_identity_and_releases_the_writer
     failure = RuntimeError.new("application failed")
     error = assert_raises(RuntimeError) do
@@ -123,6 +134,7 @@ class PublicDurabilityTest < Minitest::Test
     assert_equal 2, @database.transaction { |root| root["counter"] = 2 }["counter"]
   end
 
+  # Checks that process interruption after data sync keeps previous commit.
   def test_process_interruption_after_data_sync_keeps_previous_commit
     reader, writer = IO.pipe
     pid = fork do
@@ -171,6 +183,7 @@ class PublicDurabilityTest < Minitest::Test
     [reader, writer].compact.each { |io| io.close unless io.closed? }
   end
 
+  # Checks failed owned initialization and compaction release persistent write failures.
   def test_failed_owned_initialization_and_compaction_release_persistent_write_failures
     failure_cases = [[:open, 2], [:compact, 2], [:compact, 4]]
     [XitDB::Core::Database, XitDB, XitDB::Ruby].each do |api|
@@ -241,6 +254,7 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  # Checks that new output names sync the directory after file data.
   def test_new_output_names_sync_the_directory_after_file_data
     durable_output_cases.each do |api, operation|
       path = File.join(@directory, "sync-#{api.name}-#{operation}")
@@ -268,6 +282,7 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  # Checks that directory sync failure preserves outcome and releases owned files.
   def test_directory_sync_failure_preserves_outcome_and_releases_owned_files
     empty_output_operations = %i[compact convert]
     durable_output_cases.each do |api, operation|
@@ -288,14 +303,17 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  # Checks cooperating thread initializer syncs name before creator resumes.
   def test_cooperating_thread_initializer_syncs_name_before_creator_resumes
     assert_cooperating_initializer(:thread)
   end
 
+  # Checks cooperating process initializer syncs name before creator resumes.
   def test_cooperating_process_initializer_syncs_name_before_creator_resumes
     assert_cooperating_initializer(:process)
   end
 
+  # Checks reopening valid uncertain output syncs name before committing.
   def test_reopening_valid_uncertain_output_syncs_name_before_committing
     path = File.join(@directory, "uncertain-replica")
     failure = IOError.new("directory fsync failed")
@@ -325,6 +343,7 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  # Checks existing handle directory failure preserves previous commit.
   def test_existing_handle_directory_failure_preserves_previous_commit
     original = File.binread(@path)
     registrations = XitDB::Core::FileStore.const_get(:WRITERS).fetch(@real.storage_identity).last
@@ -353,6 +372,8 @@ class PublicDurabilityTest < Minitest::Test
 
   private
 
+  # Checks that a delayed initializer preserves another writer's committed root.
+  # @param cooperation [Symbol] :thread or :process mode
   def assert_cooperating_initializer(cooperation)
     path = File.join(@directory, "cooperating-#{cooperation}")
     with_file_syncs do |events, _files|
@@ -385,6 +406,9 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  # Runs a block in a child process and returns its result through a pipe.
+  # @yield executes the child operation
+  # @return [Object] child result
   def in_process
     reader, writer = IO.pipe
     pid = fork do
@@ -422,12 +446,19 @@ class PublicDurabilityTest < Minitest::Test
     [reader, writer].compact.each { |io| io.close unless io.closed? }
   end
 
+  # Lists API and operation pairs that create durable output files.
+  # @return [Array<Array>] API modules or classes paired with operation symbols
   def durable_output_cases
     [[XitDB::Core::Database, :open], [XitDB, :open], [XitDB::Ruby, :open],
      [XitDB::Core::Database, :compact], [XitDB, :compact], [XitDB::Ruby, :compact],
      [XitDB, :convert], [XitDB::Ruby, :convert], [XitDB::Core::Database, :replica]]
   end
 
+  # Creates an output database through the selected API and operation.
+  # @param api [Module] profile entry point or raw database class
+  # @param operation [Symbol] :open, :compact, :convert, or :replica
+  # @param path [String] destination path
+  # @return [XitDB::Database, XitDB::Core::Database] open output
   def create_output(api, operation, path)
     return api.open(path) if operation == :open
 
@@ -447,6 +478,10 @@ class PublicDurabilityTest < Minitest::Test
     source&.close
   end
 
+  # Records file and directory fsync calls during an operation.
+  # @param failure [Exception, nil] error raised during directory synchronization
+  # @yieldparam events [Array<Symbol>] observed synchronization order
+  # @yieldparam files [Array] opened files and identities
   def with_file_syncs(failure: nil)
     events = []
     files = []
@@ -478,6 +513,9 @@ class PublicDurabilityTest < Minitest::Test
     File.singleton_class.remove_method(:open)
   end
 
+  # Makes the selected fsync call fail on the underlying database file.
+  # @param number [Integer] one-based call number to fail
+  # @return [IOError] injected exception
   def fail_sync(number)
     file = @real.instance_variable_get(:@file)
     sync = file.method(:fsync)
@@ -492,6 +530,8 @@ class PublicDurabilityTest < Minitest::Test
     failure
   end
 
+  # Reopens the file to check the counter after a publication outcome.
+  # @param expected [Integer] expected committed counter
   def assert_reopened_counter(expected)
     XitDB.open(@path) { |reopened| assert_equal expected, reopened.snapshot["counter"] }
   end

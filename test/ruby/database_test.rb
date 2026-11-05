@@ -1,20 +1,27 @@
 # frozen_string_literal: true
 
+# Regression tests for Ruby-profile collections, key identity, value envelopes, and profile isolation.
+
 require "English"
 require_relative "../test_helper"
 require "tmpdir"
 require "open3"
 
+# Covers Ruby-profile collections, key identity, value envelopes, and profile isolation.
+# @api private
 class RubyDatabaseTest < Minitest::Test
+  # Loads the Ruby entry point and creates an in-memory Ruby-profile database.
   def setup
     require "xitdb/ruby"
     @db = XitDB::Ruby.memory
   end
 
+  # Closes the Ruby-profile database after each test.
   def teardown
     @db&.close
   end
 
+  # Checks insertion-ordered Ruby key identity and separation from the portable profile.
   def test_ordered_native_keys_and_profile_isolation
     @db.transaction do |root|
       root[:name] = "symbol"
@@ -42,6 +49,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks scalar keys retain original representation and order.
   def test_scalar_keys_retain_original_representation_and_order
     keys = [nil, false, true, 1, 1.0, -0.0, :name, "name", 2**200, Float::INFINITY]
     @db.transaction do |root|
@@ -59,6 +67,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal keys.size, @db.snapshot.size
   end
 
+  # Checks native collections mutate materialize and capture history.
   def test_native_collections_mutate_materialize_and_capture_history
     input = { name: [+"Ada", { active: true }], members: Set[1, "1", :one] }
     first = @db.transaction do |root|
@@ -91,6 +100,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal first.to_ruby, @db.snapshot.to_ruby
   end
 
+  # Checks rejected input is atomic and does not execute hooks.
   def test_rejected_input_is_atomic_and_does_not_execute_hooks
     calls = []
     singleton = []
@@ -116,6 +126,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks native streams use typed keys and binary values.
   def test_native_streams_use_typed_keys_and_binary_values
     escaped_reader = escaped_writer = nil
     @db.transaction do |root|
@@ -166,6 +177,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { escaped_writer.write("late") }
   end
 
+  # Checks Ruby persistence across processes and rejection of unsupported profile identifiers.
   def test_persistence_across_processes_and_unknown_profiles
     Dir.mktmpdir do |directory|
       path = File.join(directory, "native.xit")
@@ -198,6 +210,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks insertion overflow preserves updates and clear resets empty indexes.
   def test_insertion_overflow_preserves_updates_and_clear_resets_empty_indexes
     [false, true].each do |set|
       @db.transaction do |root|
@@ -225,6 +238,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks raw Ruby collection envelopes and their index records against the expected layout.
   def test_exact_envelopes_and_index_records
     @db.transaction do |root|
       root[:array] = [1]
@@ -266,6 +280,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal digest, @db.core.read_bytes(hash_slot).bytes
   end
 
+  # Checks malformed envelopes and conflicting indexes are rejected.
   def test_malformed_envelopes_and_conflicting_indexes_are_rejected
     @db.transaction do |root|
       root[:array] = []
@@ -294,6 +309,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks handle configuration is owned and rejected before file creation.
   def test_handle_configuration_is_owned_and_rejected_before_file_creation
     codecs = []
     other = XitDB::Ruby.memory(codecs: codecs)
@@ -310,6 +326,7 @@ class RubyDatabaseTest < Minitest::Test
     other&.close
   end
 
+  # Checks nonempty codec configuration cannot override emptiness.
   def test_nonempty_codec_configuration_cannot_override_emptiness
     calls = []
     codecs = [Object.new]
@@ -321,6 +338,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks invalid codec configuration rejects without input hooks or file creation.
   def test_invalid_codec_configuration_rejects_without_input_hooks_or_file_creation
     configurations = [Class.new(Array).new([Object.new]), [Object.new], Object.new, BasicObject.new]
     input_hooks = %i[instance_of? class empty? dup initialize_dup]
@@ -344,6 +362,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks empty codec configuration is owned without copy or reflection hooks.
   def test_empty_codec_configuration_is_owned_without_copy_or_reflection_hooks
     calls = []
     codecs = []
@@ -384,6 +403,7 @@ class RubyDatabaseTest < Minitest::Test
     second&.close
   end
 
+  # Checks clear is atomic and invalidates children and iterators.
   def test_clear_is_atomic_and_invalidates_children_and_iterators
     @db.transaction do |root|
       root[:items] = { first: [], second: 2 }
@@ -415,6 +435,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks that equal key aliases share expiry and stream identity.
   def test_equal_key_aliases_share_expiry_and_stream_identity
     @db.transaction do |root|
       root[-0.0] = []
@@ -441,6 +462,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks native streams enforce threads readonly and failed assignment ownership.
   def test_native_streams_enforce_threads_readonly_and_failed_assignment_ownership
     escaped = nil
     @db.transaction do |root|
@@ -482,6 +504,7 @@ class RubyDatabaseTest < Minitest::Test
     foreign&.close
   end
 
+  # Checks native size and single lookup do not materialize unrelated values.
   def test_native_size_and_single_lookup_do_not_materialize_unrelated_values
     @db.transaction do |root|
       root[:items] = (0...100).to_h { |index| [index, [index, "value"]] }
@@ -509,6 +532,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_raises(XitDB::UnsupportedEncodingError) { snapshot[:untouched] }
   end
 
+  # Checks nested containers capture shared inputs and reject cycles atomically.
   def test_nested_containers_capture_shared_inputs_and_reject_cycles_atomically
     shared = ["value"]
     @db.transaction do |root|
@@ -531,6 +555,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks failed lookup index write restores order and identifier.
   def test_failed_lookup_index_write_restores_order_and_identifier
     @db.transaction do |root|
       root[:items] = { first: 1 }
@@ -557,6 +582,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks failed lookup removal restores both indexes.
   def test_failed_lookup_removal_restores_both_indexes
     @db.transaction do |root|
       root[:items] = { first: 1, second: 2 }
@@ -582,6 +608,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks empty and non ascii key equality preserves original encoding.
   def test_empty_and_non_ascii_key_equality_preserves_original_encoding
     @db.transaction do |root|
       root["".encode("UTF-16LE")] = 1
@@ -597,6 +624,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal "binary", @db.snapshot["\xc3\xa9".b]
   end
 
+  # Checks linked slices and concatenation preserve native envelopes.
   def test_linked_slices_and_concatenation_preserve_native_envelopes
     @db.transaction do |root|
       root[:items] = XitDB.linked_array
@@ -615,6 +643,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks unregistered scalar subclasses reject before encoding hooks.
   def test_unregistered_scalar_subclasses_reject_before_encoding_hooks
     calls = []
     values = [
@@ -648,6 +677,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks collection declaration subclasses reject without running hooks.
   def test_collection_declaration_subclasses_reject_without_running_hooks
     calls = []
     klass = Class.new(XitDB::CollectionDeclaration)
@@ -668,6 +698,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks public subclass rejection bypasses type hooks and accepts real views.
   def test_public_subclass_rejection_bypasses_type_hooks_and_accepts_real_views
     calls = []
     values = [Class.new(String).new("value"), Class.new(Array).new,
@@ -693,6 +724,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks bulk subclass predicates cannot mutate the transaction.
   def test_bulk_subclass_predicates_cannot_mutate_the_transaction
     @db.transaction do |root|
       root[:kept] = "value"
@@ -728,6 +760,7 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal({ kept: "value", array: [[1, 3], [2]], rescued: "yes" }, @db.snapshot.to_ruby)
   end
 
+  # Checks bulk merge stream targets reject key type hooks.
   def test_bulk_merge_stream_targets_reject_key_type_hooks
     @db.transaction do |root|
       root[:kept] = "value"
@@ -750,6 +783,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks coercion reentrant writes reject without expiring prior views.
   def test_coercion_reentrant_writes_reject_without_expiring_prior_views
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -785,6 +819,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks coercion reads and handled cross context rejection can complete.
   def test_coercion_reads_and_handled_cross_context_rejection_can_complete
     @db.transaction do |root|
       root[:array] = [1]
@@ -822,6 +857,7 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks coercion nonlocal exit restores context and allows later mutation.
   def test_coercion_nonlocal_exit_restores_context_and_allows_later_mutation
     @db.transaction do |root|
       root[:items] = [1]
@@ -841,6 +877,9 @@ class RubyDatabaseTest < Minitest::Test
 
   private
 
+  # Exposes a Ruby collection envelope as a raw array for layout assertions.
+  # @param view [Object] Ruby collection view
+  # @return [XitDB::Core::ArrayList] raw envelope
   def physical_envelope(view)
     XitDB::Core::ArrayList.new(view.context.cursor(view.slot))
   end

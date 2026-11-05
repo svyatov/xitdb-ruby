@@ -1,11 +1,16 @@
 # frozen_string_literal: true
 
+# Regression tests for independent upstream reads and writes, fixture provenance, and adapter failures.
+
 require "minitest/autorun"
 require_relative "test_helper"
 
+# Covers independent upstream reads and writes, fixture provenance, and adapter failures.
+# @api private
 class ReferenceTest < Minitest::Test
   include ReferenceHelpers
 
+  # Checks reference files round trip all core kinds.
   def test_reference_files_round_trip_all_core_kinds
     %w[go typescript java zig].each do |reference|
       with_reference(reference) do
@@ -39,6 +44,7 @@ class ReferenceTest < Minitest::Test
     end
   end
 
+  # Checks typescript invalid operation does not create source.
   def test_typescript_invalid_operation_does_not_create_source
     with_reference("typescript") do
       path = File.join(@directory, "source.xit")
@@ -52,6 +58,7 @@ class ReferenceTest < Minitest::Test
     end
   end
 
+  # Checks typescript source operations accept readonly file.
   def test_typescript_source_operations_accept_readonly_file
     with_reference("typescript") do
       path = File.join(@directory, "source.xit")
@@ -69,6 +76,10 @@ class ReferenceTest < Minitest::Test
 
   private
 
+  # Invokes the TypeScript adapter with failure output and status available to assertions.
+  # @param operation [String] adapter operation
+  # @param path [String] fixture path
+  # @return [Array] stdout, stderr, and process status
   def typescript_request(operation, path)
     source = ENV.fetch("XITDB_TYPESCRIPT_REFERENCE", "/private/tmp/xitdb-reference-typescript")
     request = { operation: operation, case: "all-kinds", path: path, hash: Interop::MANIFEST.fetch("hash") }

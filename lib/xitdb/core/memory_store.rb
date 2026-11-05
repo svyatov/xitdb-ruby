@@ -4,9 +4,14 @@ require "monitor"
 
 module XitDB
   module Core
-    # Coordinates store lifetime and exclusive writers.
+    # Shared locking, byte access, and close coordination for storage handles.
+    #
+    # A logical operation keeps the handle open across several reads or writes.
+    #
+    # A writer lock permits one writer at a time. A flush drains buffers; sync also requests durable storage.
+    # @api private
     module Store
-      # Only for owned stores whose construction or maintenance failed.
+      # Closes an owned store after failure, preserving the original exception.
       def close_unreturned
         close
       rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
@@ -18,6 +23,12 @@ module XitDB
       end
       private :close_unreturned
 
+      # Reads exactly the requested bytes at an absolute offset.
+      # @param offset [Integer] absolute byte offset
+      # @param length [Integer] number of bytes
+      # @return [String]
+      # @raise [EOFError] if the requested range exceeds store length
+      # @raise [ClosedError] if the store is closed
       def read_at(offset, length)
         synchronize do
           position(offset)
@@ -29,6 +40,12 @@ module XitDB
         end
       end
 
+      # Writes bytes at an absolute offset and returns their count.
+      # @param offset [Integer] absolute byte offset
+      # @param bytes [String] binary input bytes
+      # @return [Integer]
+      # @raise [ReadOnlyError] if the store is read-only
+      # @raise [ClosedError] if the store is closed
       def write_at(offset, bytes)
         synchronize do
           writable!
@@ -39,6 +56,9 @@ module XitDB
         end
       end
 
+      # Adds bytes at the logical end and returns their starting offset.
+      # @param bytes [String] binary input bytes
+      # @return [Integer]
       def append(bytes)
         synchronize do
           writable!
@@ -48,14 +68,21 @@ module XitDB
         end
       end
 
+      # Counts logical bytes, including buffered writes.
+      # @return [Integer]
       def length
         synchronize { store_length }
       end
 
+      # Tests whether the store contains zero bytes.
+      # @return [Boolean]
       def empty?
         length.zero?
       end
 
+      # Sets the logical length, removing bytes or adding zero bytes.
+      # @param length [Integer] number of bytes
+      # @return [nil]
       def truncate(length)
         synchronize do
           writable!
@@ -65,10 +92,14 @@ module XitDB
         end
       end
 
+      # Sends buffered writes to the underlying storage.
+      # @return [void]
       def flush
         synchronize { flush_bytes }
       end
 
+      # Flushes writes and requests durable storage where supported.
+      # @return [void]
       def sync
         synchronize do
           flush_bytes
@@ -76,7 +107,11 @@ module XitDB
         end
       end
 
-      # Pin the handle across all storage calls in one logical operation.
+      # Keeps the store open throughout one multi-call operation.
+      # @return [Object]
+      # @yield runs while close waits for this operation
+      # @yieldreturn [Object] result returned to the caller
+      # @api private
       def with_operation
         thread = Thread.current
         synchronize { @operation_users[thread] = @operation_users.fetch(thread, 0) + 1 }
@@ -91,6 +126,15 @@ module XitDB
         end
       end
 
+      # Runs one writer while other writers wait until the timeout.
+      # @param timeout [Numeric] finite nonnegative number of seconds to wait for a writer
+      # @param on_release_error [Proc, nil] optional callback receiving a writer lock release exception
+      # @return [Object]
+      # @yield runs while this thread owns the writer lock
+      # @yieldreturn [Object] result returned to the caller
+      # @raise [BusyError] if another writer holds the lock past the timeout
+      # @raise [TransactionStateError] if this thread already holds the writer lock
+      # @raise [ReadOnlyError] if the store is read-only
       def with_exclusive_lock(timeout: 5, on_release_error: nil)
         raise TypeError, "timeout must be a real Numeric" unless timeout.is_a?(Numeric) && timeout.real?
         raise ArgumentError, "timeout must be finite and nonnegative" unless timeout.finite? && timeout >= 0
@@ -126,6 +170,10 @@ module XitDB
         end
       end
 
+      # Waits for operations and writers, then closes the store.
+      # @param discard [Boolean] whether to close without flushing buffered writes
+      # @return [void]
+      # @raise [TransactionStateError] if called inside this thread's active operation or writer block
       def close(discard: false)
         @state.synchronize do
           return if @closed
@@ -148,12 +196,15 @@ module XitDB
         end
       end
 
+      # Tests whether the store has completed closing.
+      # @return [Boolean]
       def closed?
         @state.synchronize { @closed }
       end
 
       private
 
+      # Releases writer ownership and preserves a pending caller failure.
       def release_writer(locked, completed, on_release_error)
         @state.synchronize do
           @lock_owner = nil if locked
@@ -168,6 +219,7 @@ module XitDB
         end
       end
 
+      # Creates the monitor, operation counters, and shared writer mutex.
       def initialize_state(writer_mutex = Mutex.new)
         @state = Monitor.new
         @idle = @state.new_cond
@@ -180,6 +232,7 @@ module XitDB
         @release_failed = false
       end
 
+      # Checks the store lifetime while holding its state monitor.
       def synchronize
         @state.synchronize do
           if @closed || (@closing && @lock_owner != Thread.current && !@operation_users.key?(Thread.current))
@@ -190,24 +243,29 @@ module XitDB
         end
       end
 
+      # Rejects read-only writes and writes after a failed lock release.
       def writable!
         raise ReadOnlyError, "store is read-only" if readonly?
         raise TransactionStateError, "writer lock release failed; reopen the store" if @release_failed
       end
 
+      # Rejects offsets and lengths that are not nonnegative integers.
       def position(value)
         raise TypeError, "offset and length must be Integers" unless value.is_a?(Integer)
         raise ArgumentError, "offset and length must be nonnegative" if value.negative?
       end
 
+      # Checks that a write payload is a String.
       def string(bytes)
         raise TypeError, "bytes must be a String" unless bytes.is_a?(String)
       end
 
+      # Reads the clock used for writer deadlines.
       def monotonic_time
         Process.clock_gettime(Process::CLOCK_MONOTONIC)
       end
 
+      # Waits briefly for a writer and rejects an expired deadline.
       def wait_for_writer(deadline)
         remaining = deadline - monotonic_time
         raise BusyError, "writer lock timed out" unless remaining.positive?
@@ -215,22 +273,32 @@ module XitDB
         sleep([remaining, 0.005].min)
       end
 
+      # Acquires the process-local writer mutex before its deadline.
       def lock_writer(deadline)
         wait_for_writer(deadline) until @writer_mutex.try_lock
       end
 
+      # Releases the process-local writer mutex.
       def unlock_writer
         @writer_mutex.unlock
       end
     end
     private_constant :Store
 
-    # A synchronized store backed by a binary string.
+    # A synchronized byte store backed by a private binary string.
+    #
+    # Offsets use bytes, starting at zero. Closing discards all data; sync has no persistent storage to update.
     class MemoryStore
       include Store
 
+      # @!attribute [r] storage_identity
+      #   Identity shared by handles referring to the same underlying storage.
+      #   @return [Object, Array<Integer>]
       attr_reader :storage_identity
 
+      # Copies initial bytes into a writable in-memory store.
+      # @param bytes [String] binary input bytes
+      # @return [MemoryStore]
       def initialize(bytes = "".b)
         string(bytes)
         @bytes = bytes.b
@@ -238,25 +306,31 @@ module XitDB
         initialize_state
       end
 
+      # Reports whether writes are disabled.
+      # @return [Boolean]
       def readonly?
         false
       end
 
       private
 
+      # Counts the bytes held by the in-memory store.
       def store_length
         @bytes.bytesize
       end
 
+      # Reads a validated range from the binary string.
       def read_bytes(offset, length)
         Format.slice(@bytes, offset, length)
       end
 
+      # Replaces a range, filling any gap before it with zero bytes.
       def write_bytes(offset, bytes)
         @bytes << ("\0".b * (offset - store_length)) if offset > store_length
         @bytes[offset, bytes.bytesize] = bytes
       end
 
+      # Shrinks or extends the binary string to the requested length.
       def truncate_bytes(length)
         if length < store_length
           @bytes = Format.slice(@bytes, 0, length)
@@ -265,10 +339,13 @@ module XitDB
         end
       end
 
+      # Completes a flush without work because memory has no write buffer.
       def flush_bytes; end
 
+      # Completes synchronization without work because this store has no disk file.
       def sync_bytes; end
 
+      # Releases all bytes held by the in-memory store.
       def close_bytes
         @bytes.clear
       end

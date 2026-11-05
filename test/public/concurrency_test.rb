@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
+# Regression tests for writer serialization across handles, threads, and processes.
+
 require "test_helper"
 require "tmpdir"
 require "timeout"
 
+# Covers writer serialization across handles, threads, and processes.
+# @api private
 class PublicConcurrencyTest < Minitest::Test
+  # Creates a shared file path and tracks handles, worker threads, and child processes.
   def setup
     @directory = Dir.mktmpdir
     @path = File.join(@directory, "database.xit")
@@ -13,6 +18,7 @@ class PublicConcurrencyTest < Minitest::Test
     @children = []
   end
 
+  # Stops workers, reaps child processes, closes handles, and removes the temporary directory.
   def teardown
     @threads.each { |thread| thread.kill if thread.alive? }
     # Kill all workers before joining any worker, so waiting cannot prevent cleanup.
@@ -37,6 +43,7 @@ class PublicConcurrencyTest < Minitest::Test
     FileUtils.remove_entry(@directory)
   end
 
+  # Checks that two handles refresh after lock.
   def test_two_handles_refresh_after_lock
     open_database.transaction { |root| root["counter"] = 0 }
     ready_read, ready_write = IO.pipe
@@ -78,6 +85,7 @@ class PublicConcurrencyTest < Minitest::Test
     [ready_read, ready_write, start_read, start_write].compact.each { |io| io.close unless io.closed? }
   end
 
+  # Checks lock timeout does not invoke callback.
   def test_lock_timeout_does_not_invoke_callback
     owner = open_database
     waiter = open_database(lock_timeout: 0.02)
@@ -105,6 +113,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_equal 1, callback_invocations_on_success
   end
 
+  # Checks nested handles for one inode reject before callback.
   def test_nested_handles_for_one_inode_reject_before_callback
     first = open_database
     alias_path = File.join(@directory, "alias.xit")
@@ -119,6 +128,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_equal 1, second.snapshot["counter"]
   end
 
+  # Checks snapshot reads do not wait for writer.
   def test_snapshot_reads_do_not_wait_for_writer
     database = open_database
     database.transaction { |root| root["value"] = "old" * 100 }
@@ -143,6 +153,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_equal "old" * 100, snapshot["value"]
   end
 
+  # Checks close waits for complete public read.
   def test_close_waits_for_complete_public_read
     entered = Queue.new
     release = Queue.new
@@ -175,6 +186,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { snapshot["value"] }
   end
 
+  # Checks close waits for transaction and returned snapshot construction.
   def test_close_waits_for_transaction_and_returned_snapshot_construction
     database = open_database
     entered = Queue.new
@@ -198,6 +210,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_equal 1, open_database.snapshot["counter"]
   end
 
+  # Checks iteration releases read guard before callback.
   def test_iteration_releases_read_guard_before_callback
     database = open_database
     database.transaction do |root|
@@ -214,6 +227,7 @@ class PublicConcurrencyTest < Minitest::Test
     assert_predicate database, :closed?
   end
 
+  # Checks logical reads finish before close.
   def test_logical_reads_finish_before_close
     operations = [
       ["array", ->(_db, view) { view[1] }, 2],
@@ -278,6 +292,7 @@ class PublicConcurrencyTest < Minitest::Test
     end
   end
 
+  # Checks fetch defaults and iteration callbacks can close the handle.
   def test_fetch_defaults_and_iteration_callbacks_can_close_the_handle
     operations = [
       lambda { |db, root|
@@ -332,12 +347,18 @@ class PublicConcurrencyTest < Minitest::Test
 
   private
 
+  # Opens a database and registers its handle for test cleanup.
+  # @param path [String] database file path
+  # @return [XitDB::Database] tracked handle
   def open_database(path: @path, **)
     database = XitDB.open(path, **)
     @handles << database
     database
   end
 
+  # Starts a worker thread and registers it for test cleanup.
+  # @yield performs the concurrent operation
+  # @return [Thread] tracked worker
   def in_thread(&)
     thread = Thread.new(&)
     thread.report_on_exception = false
@@ -345,6 +366,9 @@ class PublicConcurrencyTest < Minitest::Test
     thread
   end
 
+  # Waits at most five seconds for a worker and propagates its exception.
+  # @param thread [Thread] worker to join
+  # @return [Object] worker result
   def join(thread)
     Timeout.timeout(5) { thread.value }
   end

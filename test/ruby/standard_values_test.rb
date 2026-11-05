@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+# Regression tests for standard Ruby value round trips and canonical payload validation.
+
 require_relative "test_helper"
 require "date"
 require "bigdecimal"
 require "json"
 
+# Covers standard Ruby value round trips and canonical payload validation.
+# @api private
 class RubyStandardValuesTest < RubyProfileTest
   Scalars = XitDB::Ruby::Scalars
 
+  # Checks exact time offsets and preservation of the sign of decimal zero.
   def test_exact_time_offset_and_decimal_zero
     time = Time.at(Rational(1, 10**12)).getlocal(3600)
 
@@ -16,6 +21,7 @@ class RubyStandardValuesTest < RubyProfileTest
     assert_equal BigDecimal("-0").sign, round_trip(BigDecimal("-0")).sign
   end
 
+  # Checks that time payloads preserve both rational instants and presentation metadata.
   def test_time_exact_instants_and_presentation
     offsets = [-86_399, 0, 86_399]
     [Rational(-1, 10**12), Rational(1, 3), 2**80].each do |instant|
@@ -31,11 +37,13 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks fractional time offsets are explicitly unsupported.
   def test_fractional_time_offsets_are_explicitly_unsupported
     assert_raises(XitDB::UnsupportedValueError) { store(Time.at(0).getlocal(Rational(1, 2))) }
     assert_equal 1, round_trip(Time.at(0).getlocal(Rational(1))).utc_offset
   end
 
+  # Checks decimal decoding preserves application modes.
   def test_decimal_decoding_preserves_application_modes
     BigDecimal.save_exception_mode do
       BigDecimal.save_limit do
@@ -52,6 +60,7 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks dates preserve calendar start.
   def test_dates_preserve_calendar_start
     [Date::GREGORIAN, Date::JULIAN, Date::ITALY, Date::ENGLAND, 2_298_874, 2_426_355, 2_299_161.5].each do |start|
       [-2**70, 0, 2_299_161, 2**70].each do |jd|
@@ -64,6 +73,7 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks datetimes preserve exact instant offset and calendar.
   def test_datetimes_preserve_exact_instant_offset_and_calendar
     [Date::GREGORIAN, Date::JULIAN, Date::ITALY, Date::ENGLAND].each do |start|
       [Rational(-1, 1), Rational(1, 24), Rational(1, 1)].each do |offset|
@@ -78,6 +88,7 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks canonical decimal forms, signed zero, infinities, and NaN.
   def test_decimal_normal_form_and_special_values
     %w[0 -0 1.2300 -123000 1e100000 1e-100000 Infinity -Infinity NaN].each do |text|
       original = BigDecimal(text)
@@ -91,12 +102,14 @@ class RubyStandardValuesTest < RubyProfileTest
                  @core.read_bytes(store(BigDecimal("1.23"))).bytes
   end
 
+  # Checks rationals preserve large reduced components.
   def test_rationals_preserve_large_reduced_components
     [Rational(0), Rational(-2, 3), Rational((2**2048) + 1, 2**2048)].each do |value|
       assert_equal value, round_trip(value)
     end
   end
 
+  # Checks mutable reads are independent and assignment captures time.
   def test_mutable_reads_are_independent_and_assignment_captures_time
     original = Time.at(Rational(1, 10**12)).getlocal(3600)
     slot = store(original)
@@ -120,12 +133,14 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks standard values remain unsupported hash keys.
   def test_standard_values_remain_unsupported_hash_keys
     [Time.at(0), Date.today, DateTime.now, BigDecimal("1"), Rational(1, 2)].each do |value|
       assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
     end
   end
 
+  # Checks standard Ruby values against fixed versioned payload fixtures.
   def test_literal_standard_value_fixtures
     values = {
       "utc_epoch" => Time.at(0).utc, "fixed_epoch" => Time.at(0).getlocal(0),
@@ -153,6 +168,7 @@ class RubyStandardValuesTest < RubyProfileTest
     end
   end
 
+  # Checks that invalid standard-value payload fields raise value errors.
   def test_malformed_standard_fields
     %w[
       0105000001000002 010500000100010101 0105000001000301518000

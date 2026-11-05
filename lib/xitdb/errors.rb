@@ -30,8 +30,12 @@ module XitDB
 
   # An invalid value with an owned, immutable diagnostic path.
   class ValueError < Error
+    # @return [Array<Object>] immutable selectors locating the rejected input
     attr_reader :path
 
+    # Store an error message and an owned immutable copy of its value location.
+    # @param message [String, nil]
+    # @param path [Array<Object>] selectors leading to the rejected value
     def initialize(message = nil, path: [])
       @path = copy_path(path)
       super(message)
@@ -39,6 +43,8 @@ module XitDB
 
     private
 
+    # Copy diagnostic containers and replace unsupported objects with safe class descriptions.
+    # @return [Object] immutable diagnostic value
     def copy_path(value)
       case value
       when Array then Array.instance_method(:map).bind_call(value) { |part| copy_path(part) }.freeze
@@ -70,8 +76,17 @@ module XitDB
 
   # A failed commit with its observed durability outcome.
   class CommitError < Error
+    # @return [Symbol] :not_committed, :committed, or :unknown; inspect before retrying
     attr_reader :outcome
 
+    # Describe a commit failure together with its observed publication outcome.
+    #
+    # :not_committed means the root was not published. :committed means it was
+    # published despite the error. :unknown means publication could not be established.
+    # A retry can repeat application effects when publication already succeeded.
+    # @param message [String, nil]
+    # @param outcome [Symbol] :not_committed, :committed, or :unknown
+    # @raise [ArgumentError] if the outcome is not recognized
     def initialize(message = nil, outcome:)
       unless %i[not_committed committed unknown].include?(outcome)
         raise ArgumentError, "invalid commit outcome: #{outcome.inspect}"

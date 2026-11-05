@@ -1,20 +1,27 @@
 # frozen_string_literal: true
 
+# Regression tests for public byte streams, IO copying, abort behavior, and transaction ownership.
+
 require "English"
 require "test_helper"
 require "digest"
 require "stringio"
 require "timeout"
 
+# Covers public byte streams, IO copying, abort behavior, and transaction ownership.
+# @api private
 class StreamsTest < Minitest::Test
+  # Creates an in-memory portable database for each test.
   def setup
     @db = XitDB.memory
   end
 
+  # Closes the portable database if the test has not already closed it.
   def teardown
     @db.close unless @db.closed?
   end
 
+  # Checks IO copy stream and writer abort.
   def test_io_copy_stream_and_writer_abort
     data = ("abc\0def\xff".b * 300_000).freeze
     expected_digest = Digest::SHA256.hexdigest(data)
@@ -52,6 +59,7 @@ class StreamsTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { retained_writer.write("x") }
   end
 
+  # Checks reader positions short reads and output buffers.
   def test_reader_positions_short_reads_and_output_buffers
     @db.transaction { |root| root["blob"] = "abcdef" }
     @db.snapshot.open_bytes("blob") do |io|
@@ -87,6 +95,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks empty streams, inline byte values, and exact binary payloads.
   def test_empty_inline_and_binary_storage
     ["", "abcdefgh", "a\0b", "\xff".b, "a" * 65_537].each do |data|
       @db.transaction { |root| root.write_bytes("blob") { |io| assert_equal data.bytesize, io.write(data) } }
@@ -96,6 +105,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks nonlocal exits discard and expire streams.
   def test_nonlocal_exits_discard_and_expire_streams
     writer = reader = nil
     @db.transaction do |root|
@@ -129,6 +139,7 @@ class StreamsTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { writer.pos }
   end
 
+  # Checks overlapping keys ancestors and merges reject before changes.
   def test_overlapping_keys_ancestors_and_merges_reject_before_changes
     @db.transaction do |root|
       root["nested"] = { "blob" => "old", "sibling" => 0 }
@@ -157,6 +168,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks array streams reject shifted positions and allow unrelated edits.
   def test_array_streams_reject_shifted_positions_and_allow_unrelated_edits
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -185,6 +197,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks invalid values readonly and closed handles.
   def test_invalid_values_readonly_and_closed_handles
     @db.transaction do |root|
       root["tagged"] = XitDB::Core::ByteValue.new("abc", format_tag: "xx")
@@ -209,6 +222,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks reads are bounded and skip scalar materialization.
   def test_reads_are_bounded_and_skip_scalar_materialization
     data = "0123456789" * 30_000
     @db.transaction { |root| root["blob"] = data }
@@ -227,6 +241,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks tagged bytes reject before reading corrupt metadata.
   def test_tagged_bytes_reject_before_reading_corrupt_metadata
     @db.close
     store = XitDB::Core::MemoryStore.new
@@ -240,6 +255,7 @@ class StreamsTest < Minitest::Test
     assert_equal "stream requires untagged bytes", error.message
   end
 
+  # Checks that stream arguments follow IO conversion rules and reject invalid sizes or offsets.
   def test_io_argument_errors_and_conversion
     @db.transaction { |root| root["blob"] = "abc" }
     @db.snapshot.open_bytes("blob") do |io|
@@ -271,6 +287,7 @@ class StreamsTest < Minitest::Test
     assert_equal "123", @db.snapshot["blob"]
   end
 
+  # Checks all escaped reader operations expire even after close.
   def test_all_escaped_reader_operations_expire_even_after_close
     @db.transaction { |root| root["blob"] = "abc" }
     retained = nil
@@ -282,6 +299,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks finalization failure restores only the stream assignment.
   def test_finalization_failure_restores_only_the_stream_assignment
     @db.transaction do |root|
       root["blob"] = "before"
@@ -310,6 +328,7 @@ class StreamsTest < Minitest::Test
     assert_equal({ "blob" => "after", "sibling" => "kept" }, @db.snapshot.to_ruby)
   end
 
+  # Checks transaction streams reject other threads.
   def test_transaction_streams_reject_other_threads
     @db.transaction do |root|
       root["blob"] = "data"
@@ -337,6 +356,7 @@ class StreamsTest < Minitest::Test
     assert_equal "good", @db.snapshot["blob"]
   end
 
+  # Checks close waits for the complete chunked read.
   def test_close_waits_for_the_complete_chunked_read
     data = "x" * 200_000
     @db.transaction { |root| root["blob"] = data }
@@ -374,6 +394,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks reader setup pins array index resolution and byte metadata.
   def test_reader_setup_pins_array_index_resolution_and_byte_metadata
     @db.transaction { |root| root["items"] = ["value"] }
     items = @db.snapshot["items"]
@@ -414,6 +435,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks corrupt byte length rejects before the reader callback.
   def test_corrupt_byte_length_rejects_before_the_reader_callback
     @db.transaction { |root| root["blob"] = "long byte value" }
     snapshot = @db.snapshot
@@ -426,6 +448,7 @@ class StreamsTest < Minitest::Test
     assert_raises(XitDB::CorruptionError) { snapshot.open_bytes("blob") { flunk "corrupt reader was yielded" } }
   end
 
+  # Checks rejected removals do not decode the active value.
   def test_rejected_removals_do_not_decode_the_active_value
     @db.transaction do |root|
       root["blob"] = "data"
@@ -451,6 +474,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks sparse array growth cannot fill an active stream position.
   def test_sparse_array_growth_cannot_fill_an_active_stream_position
     @db.transaction do |root|
       root["items"] = []
@@ -469,6 +493,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks array reader bounds after negative index normalization.
   def test_array_reader_bounds_after_negative_index_normalization
     valid_indices = [[-3, "left"], [-1, "right"], [0, "left"], [2, "right"]]
     invalid_indices = [-4, -5, -6, -100, 3]
@@ -489,6 +514,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks slice reader bounds use the visible size.
   def test_slice_reader_bounds_use_the_visible_size
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -510,6 +536,7 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  # Checks invalid array reader cannot bypass stream overlap protection.
   def test_invalid_array_reader_cannot_bypass_stream_overlap_protection
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|

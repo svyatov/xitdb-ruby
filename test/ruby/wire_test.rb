@@ -1,10 +1,15 @@
 # frozen_string_literal: true
 
+# Regression tests for Ruby wire lengths, canonical integers, and truncated input.
+
 require_relative "test_helper"
 
+# Covers Ruby wire lengths, canonical integers, and truncated input.
+# @api private
 class RubyWireTest < RubyProfileTest
   Wire = XitDB::Ruby::Wire
 
+  # Checks fixed wire vectors for lengths, strings, integers, rationals, and floating-point values.
   def test_literal_wire_fields
     { u: [[0, "00"], [127, "7f"], [128, "8001"], [624_485, "e58e26"]],
       b: [["\x00\xff".b, "0200ff"], ["", "00"]],
@@ -23,6 +28,7 @@ class RubyWireTest < RubyProfileTest
     end
   end
 
+  # Checks that truncated, noncanonical, and oversized wire fields are rejected.
   def test_malformed_fields
     { u: ["", "80", "8000", "8100"], b: %w[02ff ffffffffffffffffff01],
       t: %w[01ff 02c080], z: %w[02 0100 000100 00020001 0002ff],

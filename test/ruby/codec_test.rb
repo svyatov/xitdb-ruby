@@ -1,16 +1,25 @@
 # frozen_string_literal: true
 
+# Regression tests for codec registration, opaque fallback values, and trusted callback handling.
+
 require_relative "test_helper"
 require "xitdb/ruby"
 require "tmpdir"
 
+# Covers codec registration, opaque fallback values, and trusted callback handling.
+# @api private
 class RubyCodecTest < Minitest::Test
   Money = Struct.new(:amount)
 
+  # Builds the Money fixture codec with replaceable serialization callbacks.
+  # @param dump [Proc] callback that serializes Money
+  # @param load [Proc] callback that restores Money
+  # @return [XitDB::Ruby::Codec] fixture codec
   def money_codec(dump: lambda(&:amount), load: ->(bytes) { Money.new(bytes.dup) })
     XitDB::Ruby::Codec.new(id: "example/money/v1", type: Money, dump: dump, load: load)
   end
 
+  # Checks unknown codec preserves bytes without loading classes.
   def test_unknown_codec_preserves_bytes_without_loading_classes
     Dir.mktmpdir do |directory|
       path = File.join(directory, "codec.xit")
@@ -43,6 +52,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks failed dump restores root allocations and views.
   def test_failed_dump_restores_root_allocations_and_views
     calls = 0
     failure = RuntimeError.new("dump failed")
@@ -69,6 +79,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks that key enumeration never loads values.
   def test_key_enumeration_never_loads_values
     loads = 0
     codec = money_codec(load: lambda { |_|
@@ -91,6 +102,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks that dig traverses native maps arrays and captured slices.
   def test_dig_traverses_native_maps_arrays_and_captured_slices
     captured = nil
     codec = money_codec(load: ->(_) { captured })
@@ -113,6 +125,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks registry rejects duplicates and builtin overrides before filesystem effects.
   def test_registry_rejects_duplicates_and_builtin_overrides_before_filesystem_effects
     codec = money_codec
     builtin_types = [NilClass, FalseClass, TrueClass, Integer, Float, String, Symbol, Time,
@@ -134,6 +147,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks that invalid basic object codec arguments raise configuration errors.
   def test_invalid_basic_object_codec_arguments_raise_configuration_errors
     callback = ->(value) { value }
     invalid = BasicObject.new
@@ -147,10 +161,13 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks codec configuration does not call type predicate hooks.
   def test_codec_configuration_does_not_call_type_predicate_hooks
     callback = ->(_value) { "bytes" }
+    # Raises if validation invokes this caller-defined object hook.
     def callback.is_a?(*) = raise("callback type hook ran")
     type = Class.new
+    # Raises if validation invokes this caller-defined object hook.
     def type.is_a?(*) = raise("class type hook ran")
 
     codec = XitDB::Ruby::Codec.new(id: "example/predicate/v1", type: type, dump: callback, load: callback)
@@ -159,10 +176,13 @@ class RubyCodecTest < Minitest::Test
     assert_equal "bytes", codec.load("bytes")
   end
 
+  # Checks registry captures inputs and dispatches exact classes.
   def test_registry_captures_inputs_and_dispatches_exact_classes
     codec = money_codec
     inputs = [codec]
+    # Raises if validation invokes this caller-defined object hook.
     def inputs.dup = raise("must not call dup")
+    # Raises if validation invokes this caller-defined object hook.
     def inputs.each = raise("must not call each")
     registry = XitDB::Ruby::CodecRegistry.new(inputs)
     inputs.clear
@@ -180,6 +200,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks view codecs reject instead of silently bypassing callbacks.
   def test_view_codecs_reject_instead_of_silently_bypassing_callbacks
     calls = []
     [XitDB::Views::Base, XitDB::Views::Map, XitDB::Views::Array, Class.new(XitDB::Views::Map)].each do |type|
@@ -197,6 +218,7 @@ class RubyCodecTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks class dispatch does not call class identity hooks.
   def test_class_dispatch_does_not_call_class_identity_hooks
     type = Class.new(Money)
     %i[== equal? hash eql?].each do |method|
@@ -215,6 +237,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks basic object only registrations reject before file creation.
   def test_basic_object_only_registrations_reject_before_file_creation
     calls = []
     Dir.mktmpdir do |directory|
@@ -240,6 +263,7 @@ class RubyCodecTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks invalid codec definitions reject without calling input hooks.
   def test_invalid_codec_definitions_reject_without_calling_input_hooks
     [nil, "", "\xff".b, BasicObject.new].each do |id|
       assert_raises(XitDB::CodecConfigurationError) do
@@ -252,6 +276,7 @@ class RubyCodecTest < Minitest::Test
       end
     end
     hostile = Object.new
+    # Raises if validation invokes this caller-defined object hook.
     def hostile.respond_to_missing?(*) = raise("reflection hook ran")
     assert_raises(XitDB::CodecConfigurationError) { money_codec(dump: hostile) }
     assert_raises(XitDB::CodecConfigurationError) { money_codec(load: nil) }
@@ -264,6 +289,7 @@ class RubyCodecTest < Minitest::Test
     assert_predicate codec.id, :frozen?
   end
 
+  # Checks invalid dump output and nonlocal exit restore assignment.
   def test_invalid_dump_output_and_nonlocal_exit_restore_assignment
     callback = nil
     codec = money_codec(dump: ->(value) { callback.call(value) })
@@ -287,6 +313,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks load is not called for other identifiers or invalid envelopes.
   def test_load_is_not_called_for_other_identifiers_or_invalid_envelopes
     calls = 0
     codec = money_codec(load: lambda { |bytes|
@@ -305,8 +332,10 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks scalar freezing does not call custom freeze methods.
   def test_scalar_freezing_does_not_call_custom_freeze_methods
     type = Class.new do
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def freeze = raise("must use trusted freeze")
     end
     codec = XitDB::Ruby::Codec.new(id: "example/value/v1", type: type, dump: ->(_) { "bytes" }, load: lambda { |_|
@@ -320,6 +349,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks registered scalar and container subclasses use codecs only for values.
   def test_registered_scalar_and_container_subclasses_use_codecs_only_for_values
     [String, Time, Date, Array, Hash, Set].each do |base|
       type = Class.new(base)
@@ -348,6 +378,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks load receives frozen independent bytes and materializes fresh values.
   def test_load_receives_frozen_independent_bytes_and_materializes_fresh_values
     payloads = []
     codec = money_codec(load: lambda { |bytes|
@@ -376,6 +407,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks dump callback rejects nested writes across contexts and allows reads.
   def test_dump_callback_rejects_nested_writes_across_contexts_and_allows_reads
     callback = nil
     calls = 0
@@ -405,6 +437,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks that delete loaders run once inside the mutation guard.
   def test_delete_loaders_run_once_inside_the_mutation_guard
     expected_amounts = { delete: ["1"], delete_at: ["2"], pop: ["3"], pop_many: %w[2 3] }
     %i[delete delete_at pop pop_many].each do |operation|
@@ -457,6 +490,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks multi pop partial loader failure preserves views and iteration.
   def test_multi_pop_partial_loader_failure_preserves_views_and_iteration
     calls = 0
     failure = RuntimeError.new("load failed")
@@ -490,6 +524,7 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  # Checks delete loader failures and stream conflicts preserve state.
   def test_delete_loader_failures_and_stream_conflicts_preserve_state
     %i[delete delete_at pop].each do |operation|
       fail_load = true

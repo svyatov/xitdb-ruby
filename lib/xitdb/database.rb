@@ -6,8 +6,19 @@ require_relative "conversion"
 module XitDB
   # Owns the profile, history, and transactions of a public database.
   class Database
+    # @!attribute [r] core
+    #   Raw storage API for operations such as replication.
+    #   @return [Core::Database]
+    # @!attribute [r] profile
+    #   Rules used to interpret values and collection keys.
+    #   @return [Profiles::Portable, Profiles::Ruby]
     attr_reader :core, :profile
 
+    # Resolve a portable hash algorithm and reject the reserved Ruby identifier.
+    # @api private
+    # @param value [Symbol, Core::Hasher] algorithm name or configured hasher
+    # @return [Core::Hasher]
+    # @raise [ProfileMismatchError] if the hasher uses rb01
     def self.hasher(value)
       if value.is_a?(Core::Hasher)
         raise ProfileMismatchError, "rb01 is reserved for XitDB::Ruby" if value.id == "rb01"
@@ -24,6 +35,23 @@ module XitDB
       end
     end
 
+    # Open a portable database, creating a missing file.
+    #
+    # A profile defines which Ruby values a file can represent. Portable files
+    # use the upstream xitdb rules. Ruby-profile files require {Ruby.open}.
+    # With a block, the handle closes even if the block raises an exception.
+    # Without a block, the caller must call {#close}.
+    #
+    # @param path [String] file to open or create
+    # @param readonly [Boolean] forbid transactions and require an existing file
+    # @param hash [Symbol, Core::Hasher, nil] hash configuration; nil reads the header or defaults to SHA-1
+    # @param lock_timeout [Float] seconds to wait for the writer lock
+    # @yield [database] use the database before automatic closure
+    # @yieldparam database [Database] open handle
+    # @return [Database, Object] handle without a block, otherwise the block's result
+    # @raise [ProfileMismatchError] if the file uses an incompatible profile
+    # @raise [CorruptionError] if the existing file has invalid storage data
+    # @see XitDB.open
     def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0)
       selected = hasher(hash) unless hash.nil?
       # @type var options: { ?hash_id: String, ?hash_size: Integer }
@@ -48,6 +76,10 @@ module XitDB
       end
     end
 
+    # Match the file's hash identifier and digest size to a builtin algorithm.
+    # @param header [Core::Header]
+    # @return [Core::Hasher]
+    # @raise [ProfileMismatchError] if explicit configuration is required
     def self.header_hasher(header)
       case [header.hash_id, header.hash_size]
       when ["sha1", 20] then Core::Hasher.sha1
@@ -59,6 +91,10 @@ module XitDB
     end
     private_class_method :header_hasher
 
+    # Create exclusively first, so opening an existing empty file cannot initialize it.
+    # @param path [String]
+    # @param readonly [Boolean]
+    # @return [Array(Core::FileStore, Boolean)] storage and whether this call created it
     def self.open_store(path, readonly:)
       return [Core::FileStore.open(path, readonly: true), false] if readonly
 
@@ -70,6 +106,13 @@ module XitDB
     end
     private_class_method :open_store
 
+    # Create a portable database that stores bytes only in this process.
+    #
+    # Closing discards its data. The block form closes automatically.
+    # @param hash [Symbol, Core::Hasher] portable hash algorithm
+    # @yield [database] work with the temporary database
+    # @yieldparam database [Database]
+    # @return [Database, Object] handle or block result
     def self.memory(hash: :sha1)
       selected = hasher(hash)
       database = new(core: Core::Database.memory(hash_id: selected.id, hash_size: selected.size),
@@ -83,6 +126,11 @@ module XitDB
       end
     end
 
+    # Attach a value profile to storage and validate its public root.
+    # @api private
+    # @param core [Core::Database] owned storage handle
+    # @param profile [Profiles::Portable, Profiles::Ruby] value interpretation
+    # @param readonly [Boolean] disable public writes
     def initialize(core:, profile:, readonly: false)
       @core = core
       @profile = profile
@@ -90,6 +138,26 @@ module XitDB
       snapshot
     end
 
+    # Change values together and return their committed snapshot.
+    #
+    # The root acts like a Hash. Nested collections are database views.
+    # Normal completion commits changes; an exception aborts them.
+    # The block's views expire when the transaction ends.
+    # A transaction with no logical changes adds no history entry.
+    #
+    # @yield [root] make related changes under one writer lock
+    # @yieldparam root [Views::Map] writable root map
+    # @return [Snapshot] committed root, regardless of the block's return value
+    # @raise [ReadOnlyError] if the handle forbids writes
+    # @raise [BusyError] if the writer lock times out before the block runs
+    # @raise [CommitError] if storage publication or synchronization fails
+    # @raise [ArgumentError] if no block is supplied
+    # @example Commit two related values
+    #   db.transaction do |root|
+    #     root["name"] = "Ada"
+    #     root["visits"] = 1
+    #   end
+    # @see CommitError#outcome
     def transaction(&block)
       raise ArgumentError, "transaction requires a block" unless block_given?
       raise ReadOnlyError, "database is read-only" if @readonly
@@ -97,6 +165,10 @@ module XitDB
       core.with_operation { perform_transaction(&block) }
     end
 
+    # Append a logical root only after the user's changes complete.
+    # @yield [root] transaction's writable map
+    # @yieldparam root [Views::Map]
+    # @return [Snapshot] committed state
     def perform_transaction
       committed = core.transaction do |history_cursor|
         array = history_array(history_cursor)
@@ -117,6 +189,12 @@ module XitDB
     end
     private :perform_transaction
 
+    # Capture the latest root or resolve a saved revision.
+    #
+    # Later commits do not change this snapshot. Its views require an open handle.
+    # @param revision [Revision, nil] saved position; nil selects the latest state
+    # @return [Snapshot] read-only root
+    # @raise [ForeignRevisionError] if the revision no longer identifies this file
     def snapshot(revision: nil)
       core.with_operation do
         if revision
@@ -128,15 +206,25 @@ module XitDB
       end
     end
 
+    # Access committed roots in oldest-first order.
+    # @return [History] live access to the database's history
     def history
       core.check_open!
       History.new(self)
     end
 
+    # Append a previous root as a new commit without deleting history.
+    # @param value [Snapshot, Revision] state from this file generation
+    # @return [Snapshot] new commit containing the selected values
+    # @raise [ForeignRevisionError] if the state belongs to another file generation
+    # @raise [ReadOnlyError] if writes are forbidden
     def revert(value)
       core.with_operation { perform_revert(value) }
     end
 
+    # Validate the selected root again under the writer lock before appending it.
+    # @param value [Snapshot, Revision]
+    # @return [Snapshot] newly published state
     def perform_revert(value)
       target = if value.is_a?(Snapshot)
                  unless value.context.database.core.header.file_id == core.header.file_id
@@ -165,10 +253,19 @@ module XitDB
     end
     private :perform_revert
 
+    # Close storage and invalidate every view that uses this handle.
+    # @return [void]
     def close
       core.close
     end
 
+    # Copy reachable storage to a separate file and return its open handle.
+    #
+    # Shared structures remain shared. Compaction preserves the stored profile.
+    # The caller closes the returned database.
+    # @param to [String] separate empty destination file
+    # @return [Database] compacted database
+    # @see #convert
     def compact(to:)
       compacted = core.compact(to: to)
       begin
@@ -185,10 +282,26 @@ module XitDB
       end
     end
 
+    # Report whether this handle has closed.
+    # @return [Boolean]
     def closed?
       core.closed?
     end
 
+    # Copy logical values into a separate database with the selected profile.
+    #
+    # Conversion decodes and encodes values, so shared histories can duplicate data.
+    # Use a transform when a value or key needs an explicit representation change.
+    # The caller closes the returned database.
+    #
+    # @param to [String] separate empty destination file
+    # @param profile [Symbol, Profiles::Portable, Profiles::Ruby] :portable, :ruby, or a configured profile
+    # @param history [Symbol] :all copies every root; :latest copies only the last root
+    # @param transform [#call, nil] callback receiving value:, path:, and role: (:key or :value)
+    # @return [Database] converted database
+    # @raise [UnsupportedValueError] if the destination cannot encode a value
+    # @raise [KeyCollisionError] if different source keys become the same destination key
+    # @see #compact
     def convert(to:, profile:, history: :all, transform: nil)
       raise ArgumentError, "history must be :all or :latest" unless %i[all latest].include?(history)
       raise TypeError, "transform must respond to call" unless transform.nil? || transform.respond_to?(:call)
@@ -223,6 +336,11 @@ module XitDB
     end
 
     # Conventional history is shared by profiles; logical roots use the profile seam.
+    # Read the physical array whose entries are committed logical root maps.
+    # @api private
+    # @param cursor [Core::Cursor]
+    # @return [Core::ArrayList]
+    # @raise [ProfileMismatchError] if the physical root is not a history array
     def history_array(cursor)
       unless cursor.slot.empty? || cursor.slot.tag == :array_list
         raise ProfileMismatchError, "public databases require a top-level history array"
@@ -231,6 +349,12 @@ module XitDB
       Core::ArrayList.new(cursor)
     end
 
+    # Build a read-only map from one entry in a captured history.
+    # @api private
+    # @param cursor [Core::Cursor]
+    # @param index [Integer] history position
+    # @param revision [Revision, nil] existing identity proof
+    # @return [Snapshot]
     def snapshot_from_history(cursor, index, revision: nil)
       core.with_operation do
         slot = history_array(cursor).get(index)
@@ -246,6 +370,9 @@ module XitDB
 
     private
 
+    # Create an independent profile configuration for the destination.
+    # @param selected [Symbol, Profiles::Portable, Profiles::Ruby]
+    # @return [Profiles::Portable, Profiles::Ruby]
     def conversion_profile(selected)
       source_profile = profile
       case selected
@@ -264,6 +391,14 @@ module XitDB
       end
     end
 
+    # Copy selected roots in one destination transaction after checking target identity.
+    # @param target [Database]
+    # @param store [Core::FileStore]
+    # @param captured [Core::Cursor] source commit boundary
+    # @param histories [Core::ArrayList]
+    # @param history [Symbol] :all or :latest
+    # @param transform [#call, nil]
+    # @return [Core::Cursor] committed destination cursor
     def copy_history(target, store, captured, histories, history, transform)
       target_core = target.core
       target_core.transaction do |cursor|
@@ -291,6 +426,10 @@ module XitDB
       end
     end
 
+    # Require a logical root map after the selected profile interprets its storage.
+    # @param slot [Core::Slot]
+    # @param context [Context]
+    # @return [void]
     def validate_root(slot, context)
       adapter = profile.container(slot, context: context, path: []) unless slot.empty?
       return if adapter && %i[map sorted_map].include?(adapter.kind)
@@ -298,6 +437,9 @@ module XitDB
       raise ProfileMismatchError, "history entry must contain a root map"
     end
 
+    # Select the latest history entry, or expose an empty uncommitted root.
+    # @param cursor [Core::Cursor]
+    # @return [Snapshot]
     def snapshot_from_cursor(cursor)
       count = history_array(cursor).size
       return snapshot_from_history(cursor, count - 1) unless count.zero?
@@ -305,6 +447,10 @@ module XitDB
       Snapshot.new(context: Context.new(database: self, root: Core::Slot.new, bound: cursor.bound), revision: nil)
     end
 
+    # Bind a history index to the file identifier and commit trailer checksum.
+    # @param cursor [Core::Cursor]
+    # @param index [Integer]
+    # @return [Revision]
     def revision_for(cursor, index)
       position = cursor.bound - Core::Database::TRAILER_SIZE
       checksum = core.read_at(position + 17, 8, bound: cursor.bound).unpack1("Q>")
@@ -314,6 +460,17 @@ module XitDB
     end
   end
 
+  # Open or create a portable database.
+  #
+  # Portable map keys are Strings. Use {Ruby.open} for native Ruby values.
+  # @param path [String] database filename
+  # @param readonly [Boolean] require an existing file and forbid writes
+  # @param hash [Symbol, Core::Hasher, nil] algorithm or configuration; nil detects existing files
+  # @param lock_timeout [Float] seconds allowed to acquire the writer lock
+  # @yield [database] use a handle that closes when the block ends
+  # @yieldparam database [Database]
+  # @return [Database, Object] open handle or block result
+  # @see Database.open
   def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0, &block)
     if block
       Database.open(path, readonly: readonly, hash: hash, lock_timeout: lock_timeout, &block)
@@ -322,6 +479,17 @@ module XitDB
     end
   end
 
+  # Create a portable database without a disk file.
+  # @param hash [Symbol, Core::Hasher] hash algorithm
+  # @yield [database] use a handle that closes when the block ends
+  # @yieldparam database [Database]
+  # @return [Database, Object] open handle or block result
+  # @example Store and read a value
+  #   XitDB.memory do |db|
+  #     db.transaction { |root| root["score"] = 10 }
+  #     db.snapshot["score"] # => 10
+  #   end
+  # @see Database.memory
   def self.memory(hash: :sha1, &block)
     if block
       Database.memory(hash: hash, &block)

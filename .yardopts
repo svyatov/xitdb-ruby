@@ -1,0 +1,6 @@
+--markup markdown
+--readme docs/learning.md
+--files README.md,docs/portable.md,docs/ruby.md,docs/core.md,docs/ruby-profile-v1.md,GLOSSARY.md
+--title "xitdb for Ruby"
+--output-dir doc
+lib/**/*.rb

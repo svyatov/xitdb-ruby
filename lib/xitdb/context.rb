@@ -2,12 +2,41 @@
 
 module XitDB
   # Owns one captured root or one transaction's logical root.
+  #
+  # A path is a sequence of map keys or array positions from the root.
+  # Views share this context so they agree on lifetime, writes, and stream locks.
+  # The explicit copy operation is available through a view's context.
+  #
+  # @see #copy_from
   class Context
+    # A weakly retained observation of a view's path and membership generation.
     Location = Struct.new(:path, :membership, :expired)
     private_constant :Location
 
+    # @!attribute [r] database
+    #   Handle that owns this context's storage.
+    #   @return [Database]
+    # @!attribute [r] profile
+    #   Rules for interpreting this context's values.
+    #   @return [Profiles::Portable, Profiles::Ruby]
+    # @!attribute [r] transaction
+    #   Writer whose lifetime this context shares, or nil for snapshots.
+    #   @return [Core::Transaction, nil]
+    # @!attribute [r] root
+    #   Stored logical root, updated only after a successful mutation.
+    #   @return [Core::Slot]
+    # @!attribute [r] reference_proof
+    #   Captured trailer bytes used to validate safe reference sharing.
+    #   @return [String, nil]
     attr_reader :database, :profile, :transaction, :root, :reference_proof
 
+    # Capture the root, readable byte boundary, and optional transaction for a family of views.
+    # @param database [Database]
+    # @param root [Core::Slot] logical root
+    # @param bound [Integer] exclusive byte boundary of the captured commit
+    # @param transaction [Core::Transaction, nil] active writer, or nil for a snapshot
+    # @param readonly [Boolean] forbid writes even when a transaction exists
+    # @param reference_proof [String, nil] captured trailer bytes proving the file generation
     def initialize(database:, root:, bound:, transaction: nil, readonly: false, reference_proof: nil)
       @database = database
       @profile = database.profile
@@ -24,11 +53,16 @@ module XitDB
       ).freeze
     end
 
+    # Require an open database and, for writable views, an active transaction.
+    # @return [void]
     def check!
       database.core.check_open!
       transaction&.check_active!
     end
 
+    # Keep storage open for one read operation and validate this context.
+    # @yield perform the read
+    # @return [Object] block result
     def read
       database.core.with_operation do
         check!
@@ -36,6 +70,9 @@ module XitDB
       end
     end
 
+    # Require a writable context and permit entry into a logical mutation.
+    # @return [void]
+    # @raise [ReadOnlyError] if this context is read-only
     def writable!
       check!
       raise ReadOnlyError, "view is read-only" if @readonly || !transaction
@@ -43,6 +80,9 @@ module XitDB
       transaction.check_logical_mutation!
     end
 
+    # Retrieve the active writer after checking context lifetime and permissions.
+    # @return [Core::Transaction]
+    # @raise [ReadOnlyError] if no writable transaction exists
     def writable_transaction
       check!
       raise ReadOnlyError, "view is read-only" if @readonly
@@ -50,15 +90,28 @@ module XitDB
       transaction || raise(ReadOnlyError, "view is read-only")
     end
 
+    # Interpret a slot as a collection under the selected profile.
+    # @param slot [Core::Slot]
+    # @param path [Array<Object>] diagnostic and view location
+    # @return [Profiles::Portable::Adapter, Ruby::Containers]
+    # @raise [ExpiredViewError] if the slot no longer names a collection
     def collection(slot, path:)
       profile.container(slot, context: self, path: path) || raise(ExpiredViewError, "view location is not a collection")
     end
 
+    # Return the exclusive byte boundary this context may read.
+    # @return [Integer] transaction length or captured commit boundary
     def read_bound
       check!
       transaction ? transaction.length : @bound
     end
 
+    # Check whether a destination can safely reuse this context's stored references.
+    #
+    # Matching paths alone are insufficient. Storage identity, profile, header, and
+    # commit proof must agree; transaction references require the same transaction.
+    # @param destination [Context]
+    # @return [Boolean]
     def reference_compatible?(destination)
       check!
       destination.check!
@@ -76,6 +129,9 @@ module XitDB
       false
     end
 
+    # Create a storage cursor with this context's lifetime and readable boundary.
+    # @param slot [Core::Slot]
+    # @return [Core::Cursor]
     def cursor(slot)
       check!
       if transaction
@@ -85,6 +141,10 @@ module XitDB
       end
     end
 
+    # Follow selectors from the logical root to a stored slot.
+    # @param path [Array<Object>]
+    # @return [Core::Slot]
+    # @raise [ExpiredViewError] if any selected location is absent
     def resolve(path)
       check!
       slot = root
@@ -95,16 +155,33 @@ module XitDB
       slot
     end
 
+    # Choose a public view class that resolves its value by location.
+    # @param _slot [Core::Slot] accepted for the profile protocol; location determines the value
+    # @param path [Array<Object>]
+    # @param kind [Symbol] logical collection kind
+    # @return [Views::Base]
     def view(_slot, path:, kind:)
       klass = { map: Views::Map, sorted_map: Views::SortedMap, array: Views::Array,
                 linked_array: Views::LinkedArray, set: Views::Set, sorted_set: Views::SortedSet }.fetch(kind)
       klass.new(context: self, path: path, kind: kind)
     end
 
+    # Report whether a successful mutation published a different logical root.
+    # @return [Boolean]
     def changed?
       @changed
     end
 
+    # Copy a view into this transaction, including across files or profiles.
+    #
+    # Assignment can share compatible references. This operation explicitly copies
+    # logical contents and can transform unsupported values and keys.
+    # @param view [Views::Base] source collection
+    # @param at [Array<Object>] destination selectors; an empty path replaces the root
+    # @param transform [#call, nil] callback receiving value:, path:, and role:
+    # @return [Object] destination's decoded value
+    # @raise [TypeError] if the source, path, or transform is invalid
+    # @raise [KeyCollisionError] if transformed keys collide
     def copy_from(view, at:, transform: nil)
       writable!
       raise TypeError, "copy source must be a view" unless Object.instance_method(:is_a?).bind_call(view, Views::Base)
@@ -125,6 +202,17 @@ module XitDB
     end
 
     # Publish the logical root only after the complete operation succeeds.
+    # Change a collection and rebuild ancestor references only after success.
+    #
+    # A checkpoint records temporary writes. Failure restores that checkpoint,
+    # so a partially encoded value cannot become the context's root.
+    # @param path [Array<Object>] collection location
+    # @param targets [Array<Array<Object>>, nil] exact affected entry paths
+    # @param positions [Range, nil] affected array positions
+    # @yield [cursor] change the selected storage slot
+    # @yieldparam cursor [Core::Cursor]
+    # @return [Object] block result
+    # @raise [ConcurrentModificationError] if the change overlaps an active stream
     def mutate(path, targets: nil, positions: nil)
       writable!
       transaction = writable_transaction
@@ -163,6 +251,11 @@ module XitDB
       end
     end
 
+    # Reserve a byte location while a reader or writer block is active.
+    # @param path [Array<Object>]
+    # @param write [Boolean] whether this stream writes
+    # @return [Array] registration token for release_stream
+    # @raise [ConcurrentModificationError] if an overlapping stream includes a writer
     def register_stream(path, write:)
       check!
       key = path_key(path)
@@ -178,10 +271,16 @@ module XitDB
       registration
     end
 
+    # Release the exact reservation token when a stream block ends.
+    # @param registration [Array]
+    # @return [void]
     def release_stream(registration)
       @streams&.delete_if { |item| item.equal?(registration) }
     end
 
+    # Track a transaction view's location without keeping the view alive.
+    # @param path [Array<Object>]
+    # @return [Location, nil] nil for a snapshot context
     def observe(path)
       check!
       locations = @locations
@@ -192,10 +291,17 @@ module XitDB
       location
     end
 
+    # Expire observed views at or below a replaced location.
+    # @param path [Array<Object>]
+    # @return [void]
     def replace_location(path)
       each_location(path) { |location| location.expired = true }
     end
 
+    # Expire child array views whose positions can have shifted.
+    # @param path [Array<Object>] parent collection
+    # @param start [Integer] first affected position
+    # @return [void]
     def invalidate_positions(path, start)
       each_location(path) do |location|
         index = location.path[path.size]
@@ -203,14 +309,25 @@ module XitDB
       end
     end
 
+    # Advance the generation checked by iterators at this collection.
+    # @param path [Array<Object>]
+    # @return [void]
     def change_membership(path)
       each_location(path) { |location| location.membership += 1 if location.path.size == path.size }
     end
 
+    # Expire descendants while retaining a view of the collection itself.
+    # @param path [Array<Object>]
+    # @return [void]
     def invalidate_children(path)
       each_location(path) { |location| location.expired = true if location.path.size > path.size }
     end
 
+    # Reject a mutation whose paths or shifted positions affect an active byte stream.
+    # @param path [Array<Object>]
+    # @param targets [Array<Array<Object>>, nil]
+    # @param positions [Range, nil]
+    # @return [void]
     def check_stream_mutation!(path, targets: nil, positions: nil)
       streams = @streams
       return if !streams || streams.empty?
@@ -226,10 +343,14 @@ module XitDB
 
     private
 
+    # Translate exact mutation targets into profile-aware identity paths.
+    # @return [Array<Array<Object>>]
     def mutation_keys(path, targets, positions)
       (targets || (positions ? [] : [path])).map { |target| path_key(target) }
     end
 
+    # Freeze the source structure and require a map when replacing the root.
+    # @return [Array(Context, Object)] source context and adapter
     def capture_copy_source(view, at)
       view.check!
       source_slot = view.slot
@@ -245,6 +366,8 @@ module XitDB
       [source, source_adapter]
     end
 
+    # Validate destination selectors and own mutable key values before copying.
+    # @return [Array<Object>] normalized destination path
     def copy_location(at)
       # @type var location: path
       location = []
@@ -267,6 +390,8 @@ module XitDB
       location
     end
 
+    # Normalize a copy position and validate native array growth bounds.
+    # @return [Integer]
     def copy_array_position(selector, size)
       selector = Integer.try_convert(selector) || raise(TypeError, "array position must be an Integer")
       long_max = (1 << (([0].pack("l!").bytesize * 8) - 1)) - 1
@@ -279,6 +404,8 @@ module XitDB
       selector
     end
 
+    # Guard both source and destination transactions while performing a logical copy.
+    # @return [void]
     def perform_copy(source, source_adapter, location, parent, transform)
       operation = lambda do
         mutate(location.empty? ? [] : parent, targets: [location]) do |cursor|
@@ -293,6 +420,8 @@ module XitDB
       end
     end
 
+    # Encode copied contents and replace the root or selected child entry.
+    # @return [void]
     def assign_copy(cursor, source, source_adapter, location, parent, transform)
       copied = Conversion.new(source, self, transform: transform).copy(source.root, adapter: source_adapter)
       if location.empty?
@@ -308,6 +437,8 @@ module XitDB
       end
     end
 
+    # Expire replaced views and update membership after a successful copy.
+    # @return [void]
     def refresh_copy_location(location, parent, present)
       if location.empty?
         invalidate_children([])
@@ -318,16 +449,24 @@ module XitDB
       end
     end
 
+    # Test whether an active stream uses an affected array position or ancestor.
+    # @return [Boolean]
     def position_conflict?(parent, active, positions)
       return false unless parent && positions && overlapping_paths?(parent, active)
 
       active.size <= parent.size || positions.cover?(active[parent.size])
     end
 
+    # Test whether either identity path is a prefix of the other.
+    # @return [Boolean]
     def overlapping_paths?(left, right)
       left.first(right.size).eql?(right) || right.first(left.size).eql?(left)
     end
 
+    # Visit live descendant observations and discard expired weak references.
+    # @yield [location]
+    # @yieldparam location [Location]
+    # @return [void]
     def each_location(path)
       key = path_key(path)
       retained = ObjectSpace::WeakMap.new
@@ -340,6 +479,8 @@ module XitDB
       @locations = retained
     end
 
+    # Represent each selector using its parent collection's key identity rules.
+    # @return [Array<Object>]
     def path_key(path)
       slot = root
       path.each_with_index.map do |selector, index|

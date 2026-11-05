@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Shows portable values, snapshots, history, byte streams, compaction, and incremental replication.
+# Temporary files are removed after the example.
+
 require "xitdb"
 require "json"
 require "tmpdir"

@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Load the portable public API: databases, snapshots, and collection views.
+# Use require "xitdb/ruby" to add native Ruby value encoding.
+
 require_relative "xitdb/version"
 require_relative "xitdb/errors"
 require_relative "xitdb/core"

@@ -4,7 +4,15 @@ require_relative "errors"
 
 module XitDB
   # Rejects objects with altered method behavior before encoding them.
+  # @api private
   module InputGuard
+    # Reject objects whose per-object methods can change native encoding behavior.
+    #
+    # Bound native methods inspect the object without trusting its own overrides.
+    # @param value [Object]
+    # @param path [Array<Object>] logical location for a value error
+    # @return [void]
+    # @raise [UnsupportedValueError] if singleton behavior or removed methods are detected
     def self.check!(value, path: [])
       unless Object.instance_method(:is_a?).bind_call(value, Object)
         raise UnsupportedValueError.new("unsupported Ruby object", path: path)

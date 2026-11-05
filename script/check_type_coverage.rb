@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Checks that Steep reports every library file with no untyped calls.
+# Exits unsuccessfully when file coverage or call coverage is incomplete.
+
 require "csv"
 require "open3"
 

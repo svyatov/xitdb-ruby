@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+# Regression tests for radix arrays, sparse slots, snapshots, and child cursor lifetimes.
+
 require "test_helper"
 require "tmpdir"
 require "weakref"
 require_relative "../support/fault_store"
 
+# Covers radix arrays, sparse slots, snapshots, and child cursor lifetimes.
+# @api private
 class ArrayListTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks that constructing a writable empty array persists its type.
   def test_constructing_a_writable_empty_array_persists_its_type
     Dir.mktmpdir do |dir|
       path = File.join(dir, "empty-array.xit")
@@ -28,6 +33,7 @@ class ArrayListTest < Minitest::Test
     assert_equal original_size, core.committed_size
   end
 
+  # Checks reading a missing child does not initialize a writable parent.
   def test_reading_a_missing_child_does_not_initialize_a_writable_parent
     Core::Database.memory.transaction do |root|
       length = root.transaction.length
@@ -38,6 +44,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks radix boundaries and shared history.
   def test_radix_boundaries_and_shared_history
     core = Core::Database.memory
     snapshots = {}
@@ -65,6 +72,7 @@ class ArrayListTest < Minitest::Test
     snapshots.each { |length, snapshot| assert_equal length, snapshot.each.count }
   end
 
+  # Checks that holes remain distinct from occupied nulls and that negative indexes select from the end.
   def test_sparse_slots_occupied_nulls_and_negative_indexes
     Core::Database.memory.transaction do |root|
       list = Core::ArrayList.new(root)
@@ -86,6 +94,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks truncation reduces depth and clears reappended slots.
   def test_truncation_reduces_depth_and_clears_reappended_slots
     core = Core::Database.memory
     core.transaction do |root|
@@ -112,6 +121,7 @@ class ArrayListTest < Minitest::Test
     assert_equal 257, old.each.count
   end
 
+  # Checks that nested children reacquire paths after freeze.
   def test_nested_children_reacquire_paths_after_freeze
     core = Core::Database.memory
     core.transaction do |root|
@@ -135,6 +145,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks replacing or truncating a child invalidates old descendants.
   def test_replacing_or_truncating_a_child_invalidates_old_descendants
     Core::Database.memory.transaction do |root|
       list = Core::ArrayList.new(root)
@@ -153,6 +164,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks checkpoint restore preserves existing children.
   def test_checkpoint_restore_preserves_existing_children
     Core::Database.memory.transaction do |root|
       list = Core::ArrayList.new(root)
@@ -171,6 +183,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks replacement expires descendants obtained through another view.
   def test_replacement_expires_descendants_obtained_through_another_view
     Core::Database.memory.transaction do |root|
       outer = Core::ArrayList.new(root)
@@ -185,6 +198,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks reopened files and captured child bounds.
   def test_reopened_files_and_captured_child_bounds
     Dir.mktmpdir do |dir|
       path = File.join(dir, "array.xit")
@@ -210,6 +224,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks failed mutation restores state and releases operation checkpoints.
   def test_failed_mutation_restores_state_and_releases_operation_checkpoints
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -233,6 +248,7 @@ class ArrayListTest < Minitest::Test
     store.fault = nil if store
   end
 
+  # Checks malformed headers and blocks respect read boundary.
   def test_malformed_headers_and_blocks_respect_read_boundary
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -244,6 +260,7 @@ class ArrayListTest < Minitest::Test
     end
   end
 
+  # Checks nested path reads do not repeat ancestor traversal exponentially.
   def test_nested_path_reads_do_not_repeat_ancestor_traversal_exponentially
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -265,6 +282,7 @@ class ArrayListTest < Minitest::Test
     assert_operator reads, :<, 2_000
   end
 
+  # Checks sparse branches preserve positions during iteration.
   def test_sparse_branches_preserve_positions_during_iteration
     core = Core::Database.memory
     core.transaction do |root|
@@ -294,6 +312,7 @@ class ArrayListTest < Minitest::Test
     assert_empty list.get(15)
   end
 
+  # Checks dead children release their cache entries.
   def test_dead_children_release_their_cache_entries
     Core::Database.memory.transaction do |root|
       list = Core::ArrayList.new(root)

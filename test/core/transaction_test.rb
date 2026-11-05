@@ -1,17 +1,24 @@
 # frozen_string_literal: true
 
+# Regression tests for logical mutation ownership and guard release across early exits.
+
 require "English"
 require "test_helper"
 
+# Covers logical mutation ownership and guard release across early exits.
+# @api private
 class CoreLogicalMutationTest < Minitest::Test
+  # Creates a raw in-memory database for guard assertions.
   def setup
     @database = XitDB::Core::Database.memory
   end
 
+  # Closes the raw database after each guard test.
   def teardown
     @database.close
   end
 
+  # Checks logical mutation guard rejects nested entries and retains outer ownership.
   def test_logical_mutation_guard_rejects_nested_entries_and_retains_outer_ownership
     @database.transaction do |cursor|
       transaction = cursor.transaction
@@ -29,6 +36,7 @@ class CoreLogicalMutationTest < Minitest::Test
     assert_equal [1, 2], XitDB::Core::ArrayList.new(@database.root_cursor).map(&:value)
   end
 
+  # Checks logical mutation guard releases after exceptions and nonlocal exits.
   def test_logical_mutation_guard_releases_after_exceptions_and_nonlocal_exits
     @database.transaction do |cursor|
       transaction = cursor.transaction
@@ -40,6 +48,7 @@ class CoreLogicalMutationTest < Minitest::Test
     end
   end
 
+  # Checks logical mutation guard checks thread ownership and expiry.
   def test_logical_mutation_guard_checks_thread_ownership_and_expiry
     transaction = nil
     @database.transaction do |cursor|
@@ -61,6 +70,9 @@ class CoreLogicalMutationTest < Minitest::Test
 
   private
 
+  # Returns from the logical mutation guard to exercise its ensure cleanup.
+  # @param transaction [XitDB::Core::Transaction] transaction holding the guard
+  # @return [Symbol] exit marker
   def leave_guard(transaction)
     transaction.with_logical_mutation { return :returned }
   end

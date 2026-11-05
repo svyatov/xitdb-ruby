@@ -1,5 +1,16 @@
 # frozen_string_literal: true
 
+# Loads the advanced binary storage API in XitDB::Core.
+#
+# A Slot describes one value. A Cursor locates it. A Database owns the byte
+# store and publishes root changes through a transaction.
+# Collections in this API accept slots and encoded keys, not ordinary Ruby values.
+# Most applications should start with XitDB::Database.
+#
+# @see XitDB::Core::Database
+# @see XitDB::Core::Slot
+# @see XitDB::Core::Cursor
+
 require_relative "errors"
 require_relative "core/format"
 require_relative "core/hasher"

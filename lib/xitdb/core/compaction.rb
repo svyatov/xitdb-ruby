@@ -4,11 +4,22 @@ require_relative "offset_map"
 
 module XitDB
   module Core
-    # Copies reachable records into a new database.
+    # A copier that retains reachable records and remaps their byte offsets.
+    #
+    # An explicit work stack avoids recursive traversal. The offset table preserves sharing between copied records.
+    # @api private
     class Compaction
+      # Slot tags whose value field contains data rather than a record offset.
       INLINE_TAGS = %i[none uint int float short_bytes].freeze
+      # Bytes in a block of sixteen copied slot descriptors.
       BLOCK_SIZE = 16 * Slot::SIZE
 
+      # Creates a copier bound to one source view and destination transaction.
+      # @param source [Database] database containing the source records
+      # @param cursor [Cursor] view locating this collection or value
+      # @param transaction [Transaction] active destination transaction
+      # @param offsets [OffsetMap] lookup table retaining source-to-destination offset mappings
+      # @return [Compaction]
       def initialize(source, cursor, transaction, offsets)
         @source = source
         @bound = cursor.bound
@@ -17,6 +28,9 @@ module XitDB
         @stack = []
       end
 
+      # Copies a reachable slot graph and rewrites pointers to destination offsets.
+      # @param slot [Slot] stored value or record descriptor
+      # @return [Slot]
       def copy(slot)
         result = remap(slot)
         @stack.pop&.call until @stack.empty?
@@ -25,10 +39,12 @@ module XitDB
 
       private
 
+      # Reads source bytes within the captured view boundary.
       def read(offset, size)
         @source.read_at(offset, size, bound: @bound)
       end
 
+      # Decodes a slot and rejects tags the copier cannot interpret.
       def parse(bytes)
         slot = Slot.parse(bytes)
         raise CorruptionError, "unknown compaction slot tag" unless Slot::TAGS.include?(slot.tag)
@@ -36,12 +52,14 @@ module XitDB
         slot
       end
 
+      # Keeps inline values unchanged and rewrites external pointers.
       def remap(slot)
         return slot if INLINE_TAGS.include?(slot.tag)
 
         Slot.new(tag: slot.tag, full: slot.full, value: remap_pointer(slot))
       end
 
+      # Selects the record layout that determines which child pointers require copying.
       def remap_pointer(slot)
         case slot.tag
         when :bytes then copy_bytes(slot)
@@ -61,10 +79,12 @@ module XitDB
         end
       end
 
+      # Reserves a copied record and schedules child slots for rewriting.
       def reserve_slots(source, size, start, count)
         reserve(source, size) { |origin, target| slots(origin, target, start, count) }
       end
 
+      # Reuses a known offset or reserves storage before scheduling pointer rewrites.
       def reserve(source, size, cache: true)
         mapped = @offsets.fetch(source) if cache
         return mapped if mapped
@@ -76,6 +96,7 @@ module XitDB
         target
       end
 
+      # Copies a byte payload in chunks and records its destination offset.
       def copy_bytes(slot)
         mapped = @offsets.fetch(slot.value)
         return mapped if mapped
@@ -91,6 +112,7 @@ module XitDB
         target
       end
 
+      # Rewrites child slots in a previously reserved destination record.
       def slots(source, target, start, count)
         count.times do |index|
           offset = start + (index * Slot::SIZE)
@@ -99,6 +121,7 @@ module XitDB
         end
       end
 
+      # Copies an array root using only elements inside its visible count.
       def array_header(source, target)
         size, pointer = Format.pair(read(source, 16), "Q>Q>")
         shift = [((size - 1).bit_length - 1) / 4, 0].max
@@ -106,12 +129,14 @@ module XitDB
         @transaction.write_at(target, [size, mapped].pack("Q>Q>"))
       end
 
+      # Shares full copied blocks and separately copies partially visible blocks.
       def array_index(source, size, shift)
         return reserve_slots(source, BLOCK_SIZE, 0, 16) if size == 1 << ((shift + 1) * 4)
 
         reserve(source, BLOCK_SIZE, cache: false) { |origin, target| partial_array(origin, target, size, shift) }
       end
 
+      # Clears hidden positions and remaps only visible slots in a partial array block.
       def partial_array(source, target, size, shift)
         # Partial blocks can be shared by arrays with different visible sizes.
         # Copy them separately and clear every slot outside this array's size.
@@ -134,11 +159,13 @@ module XitDB
         end
       end
 
+      # Rewrites a counted tree header to its copied root node.
       def tree_header(source, target, sorted)
         size, pointer = Format.pair(read(source, 16), "Q>Q>")
         @transaction.write_at(target, [size, tree_node(pointer, sorted)].pack("Q>Q>"))
       end
 
+      # Reserves a tree node according to its kind and sorted layout.
       def tree_node(source, sorted)
         mapped = @offsets.fetch(source)
         return mapped if mapped
@@ -158,6 +185,7 @@ module XitDB
         end
       end
 
+      # Rewrites child node pointers and sorted separator slots in a branch.
       def tree_branch(source, target, sorted)
         16.times do |index|
           offset = 2 + (index * Slot::SIZE)

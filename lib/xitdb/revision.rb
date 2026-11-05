@@ -2,7 +2,17 @@
 
 module XitDB
   # Identifies a history entry and verifies its file generation and trailer.
+  #
+  # Obtain this opaque token from {Snapshot#revision}. Pass it to
+  # {Database#snapshot} to read that state again through a compatible handle.
+  # A token is not a portable index for another database or file generation.
   class Revision
+    # Record a history position and the proof of its file generation.
+    # @api private
+    # @param file_id [Integer] file's random identity
+    # @param trailer_position [Integer] byte offset of the commit record
+    # @param checksum [Integer] integrity proof for that record
+    # @param index [Integer] logical history position
     def initialize(file_id:, trailer_position:, checksum:, index:)
       @file_id = file_id
       @trailer_position = trailer_position
@@ -11,6 +21,11 @@ module XitDB
       freeze
     end
 
+    # Validate the saved proof and read the corresponding root.
+    # @api private
+    # @param database [Database]
+    # @return [Snapshot]
+    # @raise [ForeignRevisionError] if the file identity or saved commit proof differs
     def resolve(database)
       core = database.core
       current = core.root_cursor
@@ -35,6 +50,8 @@ module XitDB
       raise ForeignRevisionError, "revision history is no longer valid"
     end
 
+    # Describe the token without exposing its internal proof fields.
+    # @return [String]
     def inspect
       "#<XitDB::Revision>"
     end

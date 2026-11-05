@@ -1,17 +1,24 @@
 # frozen_string_literal: true
 
+# Regression tests for owned copies of values and rejection of caller-defined object behavior.
+
 require "test_helper"
 require "tmpdir"
 
+# Covers owned copies of values and rejection of caller-defined object behavior.
+# @api private
 class PublicOwnershipTest < Minitest::Test
+  # Creates an in-memory portable database for each test.
   def setup
     @db = XitDB.memory
   end
 
+  # Closes the portable database if the test has not already closed it.
   def teardown
     @db.close unless @db.closed?
   end
 
+  # Checks assignment captures values without aliases.
   def test_assignment_captures_values_without_aliases
     @db.transaction do |root|
       root["a"] = [1]
@@ -37,18 +44,27 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks rejects private singleton keys and values without copy hooks.
   def test_rejects_private_singleton_keys_and_values_without_copy_hooks
     input = +"text"
     class << input
       private
 
+      # Adds singleton behavior that value validation must reject.
       def hidden = :singleton_behavior
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def singleton_methods(*) = raise("must not call singleton_methods")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def singleton_class = raise("must not call singleton_class")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def class = raise("must not call class")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def is_a?(*) = raise("must not call is_a?")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def dup = raise("must not call dup")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def freeze = raise("must not call freeze")
+      # Makes an object hook observable to detect use of caller-defined behavior.
       def initialize_dup(*) = raise("must not call initialize_dup")
     end
     @db.transaction do |root|
@@ -68,6 +84,7 @@ class PublicOwnershipTest < Minitest::Test
     assert_equal "text", input
   end
 
+  # Checks rejects basic object keys and values with immutable error paths.
   def test_rejects_basic_object_keys_and_values_with_immutable_error_paths
     @db.transaction do |root|
       root["kept"] = 1
@@ -84,6 +101,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks rejects extensions without calling their identity hooks.
   def test_rejects_extensions_without_calling_their_identity_hooks
     %i[true false mutate raise].each do |behavior|
       input = +"text"
@@ -91,6 +109,7 @@ class PublicOwnershipTest < Minitest::Test
       extension = Module.new do
         private
 
+        # Adds singleton behavior that value validation must reject.
         def hidden = :singleton_behavior
       end
       extension.define_singleton_method(:equal?) do |*|
@@ -114,6 +133,7 @@ class PublicOwnershipTest < Minitest::Test
     assert_equal [nil, 1, 1.0, "text"], @db.snapshot["frozen"].to_ruby
   end
 
+  # Checks rejects removed string methods before key or value consumption.
   def test_rejects_removed_string_methods_before_key_or_value_consumption
     %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
       input = +"text"
@@ -131,6 +151,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks rejects removed container methods before consumption.
   def test_rejects_removed_container_methods_before_consumption
     [[[1], :each], [[1], :reverse], [{ "key" => 1 }, :each_pair], [Set[1], :each]].each do |input, method|
       input.singleton_class.undef_method(method)
@@ -145,6 +166,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks fresh root remains usable after rejecting removed methods.
   def test_fresh_root_remains_usable_after_rejecting_removed_methods
     input = [1]
     input.singleton_class.undef_method(:reverse)
@@ -158,6 +180,7 @@ class PublicOwnershipTest < Minitest::Test
     assert_equal({ "valid" => [1] }, @db.snapshot.to_ruby)
   end
 
+  # Checks rescued assignment is atomic.
   def test_rescued_assignment_is_atomic
     @db.transaction do |root|
       root["items"] = [[1], [2]]
@@ -178,6 +201,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks separate handles to the same file capture views slices and concat.
   def test_separate_handles_to_the_same_file_capture_views_slices_and_concat
     Dir.mktmpdir do |directory|
       path = File.join(directory, "source.xit")
@@ -208,6 +232,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks copied files with identical headers reject direct references.
   def test_copied_files_with_identical_headers_reject_direct_references
     Dir.mktmpdir do |directory|
       path = File.join(directory, "source.xit")
@@ -230,6 +255,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks same inode restore rejects a stale source capture.
   def test_same_inode_restore_rejects_a_stale_source_capture
     Dir.mktmpdir do |directory|
       path = File.join(directory, "source.xit")
@@ -257,6 +283,7 @@ class PublicOwnershipTest < Minitest::Test
     end
   end
 
+  # Checks expired source views cannot enter a later transaction.
   def test_expired_source_views_cannot_enter_a_later_transaction
     expired = nil
     @db.transaction do |root|
@@ -272,6 +299,7 @@ class PublicOwnershipTest < Minitest::Test
     assert_equal 1, @db.history.size
   end
 
+  # Checks logical equality and inspection do not expose storage identity.
   def test_logical_equality_and_inspection_do_not_expose_storage_identity
     key = "location" * 1000
     snapshot = @db.transaction do |root|

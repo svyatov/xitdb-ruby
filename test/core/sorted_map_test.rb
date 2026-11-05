@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+# Regression tests for byte-ordered maps and sets, rank lookup, bounded seeks, and node validation.
+
 require "test_helper"
 require "tmpdir"
 require "weakref"
 require_relative "../support/fault_store"
 
+# Covers byte-ordered maps and sets, rank lookup, bounded seeks, and node validation.
+# @api private
 class SortedMapTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks reference records store key before value.
   def test_reference_records_store_key_before_value
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -29,6 +34,7 @@ class SortedMapTest < Minitest::Test
     end
   end
 
+  # Checks that sorted byte keys agree across iteration, rank lookup, and prefix seeks.
   def test_byte_order_rank_and_prefix_seek
     Core::Database.memory.transaction do |root|
       index = Core::SortedMap.new(root)
@@ -48,6 +54,7 @@ class SortedMapTest < Minitest::Test
     end
   end
 
+  # Checks sets keep key only members and maps can replace them.
   def test_sets_keep_key_only_members_and_maps_can_replace_them
     Core::Database.memory.transaction do |root|
       set = Core::SortedSet.new(root)
@@ -72,6 +79,7 @@ class SortedMapTest < Minitest::Test
     end
   end
 
+  # Checks seeded edits counts empty leaves and old roots.
   def test_seeded_edits_counts_empty_leaves_and_old_roots
     db = Core::Database.memory
     keys = Array.new(513) { |i| format("k%04d", i) }
@@ -103,6 +111,7 @@ class SortedMapTest < Minitest::Test
     assert_equal 512, old.at(-1).last.value
   end
 
+  # Checks nested children keep identity and restore after failed updates.
   def test_nested_children_keep_identity_and_restore_after_failed_updates
     store = FaultStore.new(Core::MemoryStore.new)
     db = Core::Database.new(store: store)
@@ -144,6 +153,7 @@ class SortedMapTest < Minitest::Test
     end
   end
 
+  # Checks tail seek reads only a bounded path.
   def test_tail_seek_reads_only_a_bounded_path
     store = FaultStore.new(Core::MemoryStore.new)
     db = Core::Database.new(store: store)
@@ -162,6 +172,7 @@ class SortedMapTest < Minitest::Test
     assert_operator store.events.count { |name, _| name == :read_at }, :<, 30
   end
 
+  # Checks sorted children propagate through hashes and sorted parents.
   def test_sorted_children_propagate_through_hashes_and_sorted_parents
     db = Core::Database.memory
     retained = nil
@@ -192,6 +203,7 @@ class SortedMapTest < Minitest::Test
     assert_equal %w[a b c], Core::SortedSet.new(nested_cursor).map(&:first)
   end
 
+  # Checks malformed nodes records cycles and captured bounds fail.
   def test_malformed_nodes_records_cycles_and_captured_bounds_fail
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -218,6 +230,7 @@ class SortedMapTest < Minitest::Test
     end
   end
 
+  # Checks empty types read only and invalid inputs.
   def test_empty_types_read_only_and_invalid_inputs
     Dir.mktmpdir do |dir|
       [Core::SortedMap, Core::SortedSet].each do |klass|
@@ -251,6 +264,11 @@ class SortedMapTest < Minitest::Test
 
   private
 
+  # Reads raw bytes within a cursor's snapshot boundary.
+  # @param cursor [XitDB::Core::Cursor] cursor supplying database and read bound
+  # @param offset [Integer] absolute byte offset
+  # @param length [Integer] byte count
+  # @return [String] binary bytes
   def db_read(cursor, offset, length)
     cursor.database.read_at(offset, length, bound: cursor.bound)
   end

@@ -2,12 +2,24 @@
 
 module XitDB
   module Core
-    # A byte-ordered map backed by a counted B-tree.
+    # A map that orders binary string keys by their bytes.
+    #
+    # A counted tree supports key lookup, insertion rank, and indexed access.
+    #
+    # Iteration yields binary key strings and stored value slots, including empty value slots for sets.
     class SortedMap
       include Enumerable
 
+      # @!attribute [r] cursor
+      #   View locating this collection.
+      #   @return [Cursor]
       attr_reader :cursor
 
+      # Opens a map or set whose keys follow binary byte order.
+      # @param cursor [Cursor] view locating this collection or value
+      # @param set [Boolean] whether a new collection stores keys without values
+      # @return [SortedMap]
+      # @raise [InvalidValueError] if the cursor holds an incompatible collection tag
       def initialize(cursor, set: false)
         @cursor = cursor
         tag = if cursor.slot.tag == :none
@@ -21,53 +33,100 @@ module XitDB
         @tree = Tree.new(cursor, tag: tag)
       end
 
+      # Returns the total number of keys.
+      # @return [Integer]
       def size
         @tree.size
       end
 
+      # Reads the value for an exact binary key.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [Slot, nil]
       def get(key_bytes)
         entry = @tree.find(key_bytes)
         @tree.record(entry).last if entry
       end
 
+      # Tests whether an exact binary key exists.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [Boolean]
       def include?(key_bytes)
         !@tree.find(key_bytes).nil?
       end
 
+      # Stores or replaces a value for a binary key.
+      # @param key_bytes [String] binary key compared in byte order
+      # @param value [Slot] value slot to store
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
       def put(key_bytes, value:)
         replace_child(key_bytes, value)
       end
 
+      # Adds a binary key without replacing an existing entry.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
       def add(key_bytes)
         @tree.store(key_bytes, key_only: true)
         self
       end
 
+      # Removes an exact key and invalidates its value views.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [Boolean]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
       def remove(key_bytes)
         @tree.remove(key_bytes)
       end
 
+      # Counts keys strictly smaller than this key, including when the key is absent.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [Integer]
       def rank(key_bytes)
         @tree.locate(key_bytes).last
       end
 
+      # Reads a pair by sorted index, counting negative indexes from the end.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [Array(String, Slot), nil]
       def at(index)
         entry = @tree.at(index)
         decode(entry) if entry
       end
 
+      # Visits key and value pairs in ascending binary key order.
+      # @return [self, Enumerator<Array>]
+      # @yield [entry] receives the binary key and value slot as a pair
+      # @yieldparam entry [Array(String, Slot)] binary key and stored value slot
+      # @yieldreturn [Object] ignored
+      # @note Without a block, returns an Enumerator.
       def each(&block)
         return enum_for(:each) unless block
 
         each_from_index(0, &block)
       end
 
+      # Visits pairs from the first key greater than or equal to the supplied key.
+      # @param key_bytes [String] binary key compared in byte order
+      # @return [self, Enumerator<Array>]
+      # @yield [entry] receives the binary key and value slot as a pair
+      # @yieldparam entry [Array(String, Slot)] binary key and stored value slot
+      # @yieldreturn [Object] ignored
+      # @note Without a block, returns an Enumerator.
       def each_from(key_bytes, &block)
         return enum_for(:each_from, key_bytes) unless block
 
         each_from_index(rank(key_bytes), &block)
       end
 
+      # Visits sorted pairs from an index, counting negative indexes from the end.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [self, Enumerator<Array>]
+      # @yield [entry] receives the binary key and value slot as a pair
+      # @yieldparam entry [Array(String, Slot)] binary key and stored value slot
+      # @yieldreturn [Object] ignored
+      # @note Without a block, returns an Enumerator.
       def each_from_index(index)
         return enum_for(:each_from_index, index) unless block_given?
 
@@ -75,6 +134,10 @@ module XitDB
         self
       end
 
+      # Finds a value view, optionally creating a key with an empty value.
+      # @param key_bytes [String] binary key compared in byte order
+      # @param create [Boolean] whether to create an empty element when the requested position is absent
+      # @return [Cursor, nil]
       def cursor_at(key_bytes, create: false)
         slot = get(key_bytes)
         if !slot && create
@@ -84,6 +147,12 @@ module XitDB
         cursor.hash_child(key_bytes.b.freeze, slot) if slot
       end
 
+      # Stores a child value and forwards ownership and propagation options.
+      # @param key_bytes [String] binary key compared in byte order
+      # @param slot [Slot] stored value or record descriptor
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @api private
       def replace_child(key_bytes, slot, **)
         @tree.store(key_bytes, value: slot, **)
         self
@@ -91,18 +160,40 @@ module XitDB
 
       private
 
+      # Reads a sorted entry into its binary key and value slot.
       def decode(entry)
         key, value = @tree.record(entry)
         [cursor.database.read_bytes(key, bound: cursor.bound).bytes, value]
       end
 
-      # Maintains sorted records and branch separators.
+      # Sorted record storage and separator-key maintenance for the counted tree.
+      # @api private
       class Tree < BTree
+        # Bytes in a sorted branch containing slots, separator keys, and subtree counts.
         BRANCH_SIZE = 418
-        # A mutable sorted node and its separators.
+        # A mutable in-memory node used while rebuilding a stored tree path.
+        # @api private
         class Node
+          # @!attribute [rw] kind
+          #   Zero for a leaf, or one for a branch.
+          #   @return [Integer]
+          # @!attribute [rw] slots
+          #   Leaf entries or branch pointer slots.
+          #   @return [Array<Slot>]
+          # @!attribute [rw] counts
+          #   Number of elements under each branch pointer.
+          #   @return [Array<Integer>]
+          # @!attribute [rw] separators
+          #   Key slots that separate adjacent child ranges.
+          #   @return [Array<Slot>]
           attr_accessor :kind, :slots, :counts, :separators
 
+          # Builds a sorted leaf or branch with separator keys.
+          # @param kind [Integer] zero for a leaf, or one for a branch
+          # @param slots [Array<Slot>] leaf values or branch pointer slots
+          # @param counts [Array<Integer>] element count beneath each branch pointer
+          # @param separators [Array<Slot>] keys separating child ranges
+          # @return [Node]
           def initialize(kind, slots, counts, separators)
             @kind = kind
             @slots = slots
@@ -110,11 +201,16 @@ module XitDB
             @separators = separators
           end
 
+          # Counts leaf entries or sums child subtree counts.
+          # @return [Integer]
           def size
             kind.zero? ? slots.size : counts.sum
           end
         end
 
+        # Decodes a key-only slot or a record containing key and value slots.
+        # @param entry [Slot] stored sorted entry descriptor
+        # @return [Array(Slot, Slot)]
         def record(entry)
           return [entry, Slot.new] if %i[bytes short_bytes].include?(entry.tag)
           raise CorruptionError, "invalid sorted entry" unless %i[kv_pair sorted_kv_pair].include?(entry.tag)
@@ -130,11 +226,17 @@ module XitDB
           [key, value]
         end
 
+        # Finds the stored entry for an exact binary key.
+        # @param key [String] binary key compared in byte order
+        # @return [Slot, nil]
         def find(key)
           _path, node, index, found, = locate(key)
           node.slots[index] if found
         end
 
+        # Finds a key's leaf position, presence, rank, and ancestor path.
+        # @param key [String] binary key compared in byte order
+        # @return [Array]
         def locate(key)
           raise TypeError, "sorted key must be a String" unless key.is_a?(String)
 
@@ -165,6 +267,14 @@ module XitDB
           end
         end
 
+        # Inserts a key-only entry or replaces its value, copying the search path.
+        # @param key [String] binary key compared in byte order
+        # @param value [Slot, nil] value slot; nil is permitted when key_only is true
+        # @param key_only [Boolean] whether to add a key without storing a value
+        # @param owner [Cursor, nil] child view to preserve during replacement
+        # @param collection [Boolean] whether this is an internal copied collection update
+        # @param propagate [Boolean] whether to update parent collection paths immediately
+        # @return [self]
         def store(key, value: nil, key_only: false, owner: nil, collection: false, propagate: true)
           unless key_only
             raise TypeError, "expected Slot" unless value
@@ -185,6 +295,10 @@ module XitDB
           self
         end
 
+        # Removes a key and collapses redundant root levels.
+        # @param key [String] binary key compared in byte order
+        # @return [Boolean]
+        # @raise [ReadOnlyError] if the collection has no writable transaction
         def remove(key)
           mutate do |transaction|
             count, pointer = header
@@ -215,6 +329,7 @@ module XitDB
 
         private
 
+        # Writes a key-only slot or a separate key/value record into a leaf.
         def store_leaf(transaction, key, node, index, found, key_only, value)
           key_slot = found ? record(node.slots[index]).first : cursor.database.bytes(key)
           entry = if key_only
@@ -227,6 +342,7 @@ module XitDB
           found ? node.slots[index] = entry : node.slots.insert(index, entry)
         end
 
+        # Rebuilds ancestors and separators after a leaf insertion or replacement.
         def write_path(transaction, path, node, pointer)
           result = split_node(transaction, node, pointer)
           path.reverse_each do |parent_pointer, parent, child_index|
@@ -241,6 +357,7 @@ module XitDB
                                            result.map { |_, size, _| size }, [Slot.new, split_separator(result)]))
         end
 
+        # Removes redundant single-child roots while rejecting cycles.
         def collapse_sorted_root(transaction, node, old_pointer, count)
           unless node.kind == 1 && node.slots.size == 1
             node = Node.new(0, [], [], []) if node.slots.empty?
@@ -261,10 +378,12 @@ module XitDB
           end
         end
 
+        # Retrieves the key separating two nodes after a split.
         def split_separator(result)
           result.last.last || raise(CorruptionError, "missing sorted split separator")
         end
 
+        # Finds the first index whose yielded comparison is true using binary search.
         def lower_bound(size)
           left = 0
           right = size
@@ -275,12 +394,14 @@ module XitDB
           left
         end
 
+        # Reads and validates bytes from a sorted key slot.
         def key_bytes(slot)
           raise CorruptionError, "invalid sorted key" unless %i[bytes short_bytes].include?(slot.tag)
 
           cursor.database.read_bytes(slot, bound: cursor.bound).bytes
         end
 
+        # Decodes slots, separators, and counts, then checks expected subtree size.
         def read_node(pointer, expected, bound: cursor.bound)
           kind, num = Format.pair(read(pointer, 2, bound: bound), "CC")
           validate_header(kind, num)
@@ -297,12 +418,14 @@ module XitDB
           node
         end
 
+        # Checks the kind and occupied slot count of a sorted node.
         def validate_header(kind, count)
           return if [0, 1].include?(kind) && count <= CAPACITY && (kind.zero? || count.positive?)
 
           raise CorruptionError, "invalid sorted node header"
         end
 
+        # Checks that leaf entries and branch separators use permitted tags.
         def valid_node?(node)
           if node.kind.zero?
             tags = %i[bytes short_bytes kv_pair sorted_kv_pair]
@@ -315,6 +438,7 @@ module XitDB
           end
         end
 
+        # Encodes a sorted node, copying storage below the writable boundary.
         def write_node(transaction, node, old_pointer = nil)
           bytes = [node.kind, node.slots.size].pack("CC")
           bytes << padded_slots(node.slots)
@@ -332,10 +456,12 @@ module XitDB
           end
         end
 
+        # Encodes occupied slots and fills unused positions with zero bytes.
         def padded_slots(slots)
           slots.map(&:to_bytes).join + ("\0".b * ((CAPACITY - slots.size) * 9))
         end
 
+        # Splits an overflowing sorted node and retains the new boundary key.
         def split_node(transaction, node, old_pointer)
           return [[write_node(transaction, node, old_pointer), node.size, nil]] if node.slots.size <= CAPACITY
 
@@ -351,8 +477,12 @@ module XitDB
       private_constant :Tree
     end
 
-    # A byte-ordered collection of keys.
+    # A byte-ordered set of binary string keys.
     class SortedSet < SortedMap
+      # Opens a sorted key-only collection.
+      # @param cursor [Cursor] view locating this collection or value
+      # @return [SortedSet]
+      # @raise [InvalidValueError] if the cursor holds an incompatible collection tag
       def initialize(cursor)
         super(cursor, set: true)
       end

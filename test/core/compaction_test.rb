@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+# Regression tests for graph preservation, scratch storage bounds, and compaction cleanup after failures.
+
 require "test_helper"
 require "xitdb/ruby"
 require "tmpdir"
 
+# Covers graph preservation, scratch storage bounds, and compaction cleanup after failures.
+# @api private
 class CompactionTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks short external bytes keep their representation and tag.
   def test_short_external_bytes_keep_their_representation_and_tag
     Dir.mktmpdir do |dir|
       source = Core::Database.memory
@@ -27,6 +32,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks compaction preserves cycles tags and latest history.
   def test_compaction_preserves_cycles_tags_and_latest_history
     Dir.mktmpdir do |dir|
       source = Core::Database.open(File.join(dir, "source.xit"))
@@ -66,6 +72,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks public profiles keep latest history and source snapshots.
   def test_public_profiles_keep_latest_history_and_source_snapshots
     [XitDB, XitDB::Ruby].each do |api|
       Dir.mktmpdir do |dir|
@@ -99,6 +106,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that compaction preserves empty histories and raw inline roots.
   def test_empty_histories_and_arbitrary_inline_roots
     Dir.mktmpdir do |dir|
       source = Core::Database.memory(hash_id: "cust", hash_size: 11)
@@ -127,6 +135,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that sorted churn reclaims empty routes before compaction.
   def test_sorted_churn_reclaims_empty_routes_before_compaction
     configurations = [[Core::Database, Core::SortedMap], [Core::Database, Core::SortedSet],
                       [XitDB, XitDB.sorted_map], [XitDB, XitDB.sorted_set],
@@ -183,6 +192,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks same physical file and nonempty targets are unchanged.
   def test_same_physical_file_and_nonempty_targets_are_unchanged
     Dir.mktmpdir do |dir|
       path = File.join(dir, "source")
@@ -213,6 +223,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that offset map spills exact keys and removes its scratch file.
   def test_offset_map_spills_exact_keys_and_removes_its_scratch_file
     offsets = Core::OffsetMap.new
     16_384.times { |i| offsets.store(i, i + 50) }
@@ -240,6 +251,7 @@ class CompactionTest < Minitest::Test
     offsets&.close
   end
 
+  # Checks copy failure restores empty target and preserves source.
   def test_copy_failure_restores_empty_target_and_preserves_source
     Dir.mktmpdir do |dir|
       path = File.join(dir, "source")
@@ -261,6 +273,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks offset map close discards pending bytes after flush failure.
   def test_offset_map_close_discards_pending_bytes_after_flush_failure
     offsets = Core::OffsetMap.new
     16_385.times { |i| offsets.store(i, i + 50) }
@@ -285,6 +298,7 @@ class CompactionTest < Minitest::Test
     offsets&.close
   end
 
+  # Checks offset map cleanup retry after descriptor close failure.
   def test_offset_map_cleanup_retry_after_descriptor_close_failure
     offsets = Core::OffsetMap.new
     16_385.times { |i| offsets.store(i, i + 50) }
@@ -319,6 +333,7 @@ class CompactionTest < Minitest::Test
     offsets&.close
   end
 
+  # Checks ruby codecs are opaque and copied configuration is independent.
   def test_ruby_codecs_are_opaque_and_copied_configuration_is_independent
     type = Struct.new(:bytes)
     calls = []
@@ -355,6 +370,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that compaction copies every raw collection layout, record tag, and large byte payload.
   def test_all_raw_collection_and_record_tags_and_large_bytes
     Dir.mktmpdir do |dir|
       compacted = nil
@@ -448,6 +464,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that shared partial array blocks drop invisible tails.
   def test_shared_partial_array_blocks_drop_invisible_tails
     Dir.mktmpdir do |dir|
       source = Core::Database.memory
@@ -478,6 +495,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that deep cycle spills without recursion and interrupt cleans scratch.
   def test_deep_cycle_spills_without_recursion_and_interrupt_cleans_scratch
     Dir.mktmpdir do |dir|
       source_path = File.join(dir, "source")
@@ -550,6 +568,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks that target initialization rechecks empty state under lock.
   def test_target_initialization_rechecks_empty_state_under_lock
     Dir.mktmpdir do |dir|
       source = Core::Database.memory
@@ -569,6 +588,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks failed copy cleanup preserves competing generation or root.
   def test_failed_copy_cleanup_preserves_competing_generation_or_root
     %i[generation root].each do |change|
       Dir.mktmpdir do |dir|
@@ -606,6 +626,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks target commit faults preserve outcomes and uncertain output.
   def test_target_commit_faults_preserve_outcomes_and_uncertain_output
     [3, 4].each do |failed_sync|
       Dir.mktmpdir do |dir|
@@ -637,6 +658,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks competing commit before copy is rejected without overwriting.
   def test_competing_commit_before_copy_is_rejected_without_overwriting
     [Core::Slot.uint(99), Core::Slot.new].each do |competing_slot|
       Dir.mktmpdir do |dir|
@@ -663,6 +685,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks failed target initialization restores only known aborts.
   def test_failed_target_initialization_restores_only_known_aborts
     [1, 2].each do |failed_sync|
       Dir.mktmpdir do |dir|
@@ -689,6 +712,7 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  # Checks cleanup error does not replace copy error.
   def test_cleanup_error_does_not_replace_copy_error
     Dir.mktmpdir do |dir|
       source = Core::Database.memory
@@ -711,6 +735,11 @@ class CompactionTest < Minitest::Test
 
   private
 
+  # Intercepts target-store opening to install the requested fault.
+  # @param path [String] destination path to intercept
+  # @param configure [Proc] callback that configures the target store
+  # @yield executes the operation under test
+  # @return [Object] block result
   def with_target_store(path, configure)
     original = Core::FileStore.method(:open)
     selected = false

@@ -3,10 +3,18 @@
 module XitDB
   module Views
     # Provides key-based reads and writes for persistent maps.
+    #
+    # Portable maps require String keys. Ruby-profile maps accept typed keys
+    # and preserve insertion order. Missing keys and stored nil both read as nil;
+    # use {#key?} or {#fetch} when their difference matters.
     class Map < Base
+      # Sentinel for an omitted default, distinct from an explicit nil.
       UNSET = MissingArgument.new.freeze
       private_constant :UNSET
 
+      # Read a value, decoding a scalar or returning a nested collection view.
+      # @param key [Object] key supported by the selected profile
+      # @return [Object, nil] stored value, or nil when absent
       def [](key)
         context.read do
           stored = adapter.lookup(key)
@@ -14,6 +22,15 @@ module XitDB
         end
       end
 
+      # Read a key with an explicit missing-key policy.
+      #
+      # A fallback block takes precedence over the default argument.
+      # @param key [Object]
+      # @param default [Object] fallback when absent; omitted means raise
+      # @yield [key] compute a fallback for an absent key
+      # @yieldparam key [Object]
+      # @return [Object]
+      # @raise [KeyError] if absent without a default or block
       def fetch(key, default = UNSET)
         found, value = context.read do
           present = key?(key)
@@ -30,10 +47,17 @@ module XitDB
         raise KeyError, "key not found: #{key.inspect}"
       end
 
+      # Follow keys and array positions through nested values.
+      # @param keys [Array<Object>] successive selectors; at least one is required
+      # @return [Object, nil] selected value, or nil when a step is absent
+      # @raise [TypeError] if an intermediate value cannot be traversed
       def dig(*keys)
         context.read { dig_value(keys) }
       end
 
+      # Resolve selectors one at a time, delegating to a scalar object's dig when supported.
+      # @param keys [Array<Object>]
+      # @return [Object, nil]
       def dig_value(keys)
         raise ArgumentError, "at least one key is required" if keys.empty?
 
@@ -56,10 +80,17 @@ module XitDB
       end
       private :dig_value
 
+      # Test presence independently of the stored value, including a stored nil.
+      # @param key [Object]
+      # @return [Boolean]
       def key?(key)
         context.read { !adapter.lookup(key).nil? }
       end
 
+      # Visit keys in this map's profile-defined order.
+      # @yield [key]
+      # @yieldparam key [Object]
+      # @return [self, Enumerator] self with a block, otherwise an enumerator
       def each_key(&block)
         return enum_for(:each_key) unless block
 
@@ -67,6 +98,10 @@ module XitDB
         self
       end
 
+      # Visit values without building an intermediate Ruby Array.
+      # @yield [value]
+      # @yieldparam value [Object]
+      # @return [self, Enumerator]
       def each_value
         return enum_for(:each_value) unless block_given?
 
@@ -74,14 +109,27 @@ module XitDB
         self
       end
 
+      # Collect the keys into an independent Ruby Array.
+      # @return [::Array<Object>]
       def keys
         context.read { each_key.to_a }
       end
 
+      # Collect values into a Ruby Array; nested collections remain database views.
+      # @return [::Array<Object>]
+      # @see Base#to_ruby
       def values
         context.read { each_value.to_a }
       end
 
+      # Insert or replace one entry in the active transaction.
+      #
+      # Replacing a collection expires views of that location and its children.
+      # @param key [Object] key supported by the profile
+      # @param value [Object] supported scalar, container, declaration, or compatible view
+      # @return [Object] assigned value
+      # @raise [ReadOnlyError] if this view is not writable
+      # @raise [ForeignValueError] if an assigned view cannot share this storage
       def []=(key, value)
         check!
         context.writable!
@@ -97,6 +145,14 @@ module XitDB
         value
       end
 
+      # Remove an entry, returning its value or a fallback for an absent key.
+      #
+      # A removed collection remains a captured view until its transaction ends.
+      # @param key [Object]
+      # @yield [key] optional fallback when the key is absent
+      # @yieldparam key [Object]
+      # @return [Object, nil]
+      # @raise [ReadOnlyError] if this view is not writable
       def delete(key)
         check!
         context.writable!
@@ -121,6 +177,9 @@ module XitDB
         value
       end
 
+      # Remove every entry and expire child views.
+      # @return [self]
+      # @raise [ReadOnlyError] if this view is not writable
       def clear
         check!
         context.writable!
@@ -131,6 +190,12 @@ module XitDB
         self
       end
 
+      # Assign all entries from a Ruby Hash as one logical mutation.
+      #
+      # An encoding failure leaves the map unchanged. Duplicate keys replace values.
+      # @param hash [::Hash] entries to assign
+      # @return [self]
+      # @raise [TypeError] if the argument is not an exact Ruby Hash
       def merge!(hash)
         check!
         context.writable!

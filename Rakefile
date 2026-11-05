@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Development tasks for style, types, tests, and compatibility checks.
+# The default task runs the repository's local quality checks.
+
 require "bundler/setup"
 require "rake/testtask"
 

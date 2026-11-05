@@ -1,14 +1,20 @@
 # frozen_string_literal: true
 
+# Builds and installs the gem in a temporary directory so tests can exercise packaged files.
+
 require "bundler"
 require "json"
 require "open3"
 require "tmpdir"
 require "rubygems/package"
 
+# Provides isolated gem installation and packaged-example execution.
+# @api private
 module PackageHelpers
   ROOT = File.expand_path("../..", __dir__)
 
+  # Builds and installs the gem locally in a temporary isolated bundle.
+  # @yieldparam spec [Gem::Specification] built specification
   def with_built_package
     Dir.mktmpdir("xitdb-package-") do |directory|
       artifact = File.join(directory, "xitdb.gem")
@@ -32,6 +38,9 @@ module PackageHelpers
     end
   end
 
+  # Runs an example from the installed gem and parses its JSON output.
+  # @param name [String] basename without extension
+  # @return [Hash] parsed example result
   def packaged_example(name)
     directory, environment, = @package
     path = File.join(@package[3], "examples", "#{name}.rb")
@@ -40,6 +49,11 @@ module PackageHelpers
     JSON.parse(package_command(environment, Gem.ruby, @package[4], "exec", Gem.ruby, path, chdir: directory))
   end
 
+  # Runs a package command outside the checkout bundle and raises on failure.
+  # @param environment [Hash] child environment variables
+  # @param command [Array<String>] executable and arguments
+  # @param options [Hash] options for Open3.capture2e
+  # @return [String] combined output
   def package_command(environment, *command, **options)
     output, status = Bundler.with_unbundled_env { Open3.capture2e(environment, *command, **options) }
     raise "#{command.join(" ")} failed (#{status.exitstatus}):\n#{output}" unless status.success?

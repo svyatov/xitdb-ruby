@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+# Regression tests for Ruby scalar encoding, exact values, immutable decoding, and malformed payloads.
+
 require_relative "test_helper"
 require "json"
 require "open3"
 
+# Covers Ruby scalar encoding, exact values, immutable decoding, and malformed payloads.
+# @api private
 class RubyScalarsTest < RubyProfileTest
   Scalars = XitDB::Ruby::Scalars
 
+  # Checks scalar decoding and encoding against the versioned literal fixture bytes.
   def test_literal_scalar_fixtures
     values = {
       "nil" => nil, "false" => false, "true" => true, "zero" => 0,
@@ -38,6 +43,7 @@ class RubyScalarsTest < RubyProfileTest
     end
   end
 
+  # Checks all empty encoding identities and string ownership.
   def test_all_empty_encoding_identities_and_string_ownership
     Encoding.list.each do |encoding|
       value = "".dup.force_encoding(encoding)
@@ -61,6 +67,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_equal "é".b.to_sym, round_trip("é".b.to_sym)
   end
 
+  # Checks arbitrary-size integers and exact floating-point bit patterns through scalar encoding.
   def test_huge_integers_and_float_bit_patterns
     [-(2**4096), 2**4096].each { |value| assert_equal value, round_trip(value) }
     %w[0000000000000000 8000000000000000 7ff8000000000001 fff8000000000042 7ff0000000000001].each do |hex|
@@ -70,6 +77,7 @@ class RubyScalarsTest < RubyProfileTest
     end
   end
 
+  # Checks binary strings, format tags, and opaque values for unregistered codecs.
   def test_binary_tagged_and_unknown_custom_payloads
     assert_equal Encoding::BINARY, decode_payload("6162", format_tag: nil).encoding
     assert_predicate decode_payload("", format_tag: nil), :frozen?
@@ -92,6 +100,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_equal opaque.bytes, @core.read_bytes(store(opaque)).bytes
   end
 
+  # Checks rejection of unsupported scalar versions, type identifiers, and string encodings.
   def test_unknown_versions_types_and_encodings
     %w[02 0100 01ff].each do |hex|
       assert_raises(XitDB::UnsupportedEncodingError) { decode_payload(hex) }
@@ -100,6 +109,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_raises(XitDB::UnsupportedEncodingError) { decode_payload("01020362616400") }
   end
 
+  # Checks malformed payload boundaries.
   def test_malformed_payload_boundaries
     %w[01 0103 010302 01030100 0101055554462d3802ff 0101ff 010101ff00
        01040100 0104000100 010400020001 010a0461636d65 010a0461636d6502ff
@@ -110,6 +120,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_raises(XitDB::InvalidValueError) { Scalars.decode(XitDB::Core::Slot.new(tag: :array_list), core: @core) }
   end
 
+  # Checks truncation and captured core bound.
   def test_truncation_and_captured_core_bound
     hex = "0101055554462d3802c3a9"
 
@@ -121,25 +132,30 @@ class RubyScalarsTest < RubyProfileTest
     assert_raises(XitDB::CorruptionError) { Scalars.decode(slot, core: @core, bound: old_bound) }
   end
 
+  # Checks rejection of unsupported scalar classes and objects with singleton behavior.
   def test_unsupported_inputs
     [Object.new, [], {}, proc {}, /a/].each do |value|
       assert_raises(XitDB::UnsupportedValueError) { store(value) }
     end
     value = +"text"
+    # Adds singleton behavior that value or key validation must reject.
     def value.special = :singleton_behavior
     assert_raises(XitDB::UnsupportedValueError) { store(value) }
   end
 
+  # Checks rejects all singleton behavior without calling input reflection.
   def test_rejects_all_singleton_behavior_without_calling_input_reflection
     singleton_inputs.each do |value|
       assert_raises(XitDB::UnsupportedValueError) { store(value) }
     end
   end
 
+  # Checks rejects basic object without object methods.
   def test_rejects_basic_object_without_object_methods
     assert_raises(XitDB::UnsupportedValueError) { store(BasicObject.new) }
   end
 
+  # Checks rejects extensions without calling their identity hooks.
   def test_rejects_extensions_without_calling_their_identity_hooks
     each_identity_hook_input do |value, calls, behavior|
       assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { store(value) }
@@ -149,6 +165,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_equal "text", round_trip("text")
   end
 
+  # Checks rejects removed encoding unrelated and private inherited methods.
   def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
     %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
       value = +"text"
@@ -159,6 +176,7 @@ class RubyScalarsTest < RubyProfileTest
     end
   end
 
+  # Checks string validation is nonmutating and warning clean.
   def test_string_validation_is_nonmutating_and_warning_clean
     program = <<~RUBY
       require "xitdb/ruby"
@@ -181,6 +199,7 @@ class RubyScalarsTest < RubyProfileTest
     assert_empty errors
   end
 
+  # Checks rejects private overrides of existing methods without calling them.
   def test_rejects_private_overrides_of_existing_methods_without_calling_them
     prepend_modes = [false, true]
     %i[initialize_copy puts].each do |name|

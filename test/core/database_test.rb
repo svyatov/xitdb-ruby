@@ -1,14 +1,19 @@
 # frozen_string_literal: true
 
+# Regression tests for raw database commits, snapshot bounds, rollback, and publication outcomes.
+
 require "English"
 require "test_helper"
 require "tmpdir"
 require "weakref"
 require_relative "../support/fault_store"
 
+# Covers raw database commits, snapshot bounds, rollback, and publication outcomes.
+# @api private
 class DatabaseTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks empty initialization can be disabled without changing raw defaults.
   def test_empty_initialization_can_be_disabled_without_changing_raw_defaults
     store = Core::MemoryStore.new
     assert_raises(XitDB::CorruptionError) { Core::Database.new(store: store, initialize_empty: false) }
@@ -31,6 +36,7 @@ class DatabaseTest < Minitest::Test
     store&.close
   end
 
+  # Checks empty-file initialization and rollback when the transaction block raises.
   def test_empty_file_and_exception_rollback
     core = Core::Database.memory(file_id: 1)
 
@@ -47,6 +53,7 @@ class DatabaseTest < Minitest::Test
     assert_equal 62, core.committed_size
   end
 
+  # Checks scalars and old cursor keep exact bits.
   def test_scalars_and_old_cursor_keep_exact_bits
     core = Core::Database.memory
     old = core.root_cursor
@@ -59,6 +66,7 @@ class DatabaseTest < Minitest::Test
     assert_empty old.slot
   end
 
+  # Checks bytes preserve zero bytes and unknown tags.
   def test_bytes_preserve_zero_bytes_and_unknown_tags
     core = Core::Database.memory(hash_id: "what", hash_size: 7)
     [["", nil, :short_bytes], ["12345678", nil, :short_bytes],
@@ -78,6 +86,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks early exits abort and next commits.
   def test_early_exits_abort_and_next_commits
     core = Core::Database.memory
     core.transaction do |cursor|
@@ -107,6 +116,7 @@ class DatabaseTest < Minitest::Test
     assert_equal 5, core.root_cursor.slot.value
   end
 
+  # Checks that publication faults classify durability and never retry.
   def test_publication_faults_classify_durability_and_never_retry
     uncertain_points = %i[header_write header_sync]
     %i[append data_sync header_write header_sync].each do |point|
@@ -147,6 +157,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks that file reopen refresh tail discard and readonly.
   def test_file_reopen_refresh_tail_discard_and_readonly
     Dir.mktmpdir do |dir|
       path = File.join(dir, "test.xit")
@@ -170,6 +181,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks corruption is rejected without changing input.
   def test_corruption_is_rejected_without_changing_input
     store = Core::MemoryStore.new
     Core::Database.new(store: store, file_id: 1)
@@ -183,6 +195,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks byte lengths are checked against snapshot bound.
   def test_byte_lengths_are_checked_against_snapshot_bound
     core = Core::Database.memory
     old = core.root_cursor
@@ -192,6 +205,7 @@ class DatabaseTest < Minitest::Test
     assert_raises(XitDB::CorruptionError) { core.read_bytes(Core::Slot.new(tag: :bytes, value: (1 << 64) - 1)) }
   end
 
+  # Checks transaction ownership checkpoint freeze and cancel.
   def test_transaction_ownership_checkpoint_freeze_and_cancel
     core = Core::Database.memory
     owned = nil
@@ -229,6 +243,7 @@ class DatabaseTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { core.root_cursor }
   end
 
+  # Checks trailer not cached header supplies root and initial id is zero.
   def test_trailer_not_cached_header_supplies_root_and_initial_id_is_zero
     store = Core::MemoryStore.new
     core = Core::Database.new(store: store, file_id: 1)
@@ -242,6 +257,7 @@ class DatabaseTest < Minitest::Test
     assert_equal 42, Core::Database.new(store: store).root_cursor.slot.value
   end
 
+  # Checks empty database matches independent go fixture.
   def test_empty_database_matches_independent_go_fixture
     store = Core::MemoryStore.new
     Core::Database.new(store: store, file_id: 1)
@@ -250,6 +266,7 @@ class DatabaseTest < Minitest::Test
     assert_equal expected, store.read_at(0, store.length).unpack1("H*")
   end
 
+  # Checks cleanup failure preserves caller error and requires reopen.
   def test_cleanup_failure_preserves_caller_error_and_requires_reopen
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -260,6 +277,7 @@ class DatabaseTest < Minitest::Test
     assert_predicate core, :needs_reopen?
   end
 
+  # Checks cancelled publication reports cleanup failure.
   def test_cancelled_publication_reports_cleanup_failure
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -271,6 +289,7 @@ class DatabaseTest < Minitest::Test
     assert_predicate core, :needs_reopen?
   end
 
+  # Checks that failure after header sync is committed.
   def test_failure_after_header_sync_is_committed
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -281,6 +300,7 @@ class DatabaseTest < Minitest::Test
     assert_predicate core, :needs_reopen?
   end
 
+  # Checks interrupt during publication is unknown after header attempt.
   def test_interrupt_during_publication_is_unknown_after_header_attempt
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -290,6 +310,7 @@ class DatabaseTest < Minitest::Test
     assert_instance_of Interrupt, error.cause
   end
 
+  # Checks checkpoint discards later checkpoints even after reallocation.
   def test_checkpoint_discards_later_checkpoints_even_after_reallocation
     core = Core::Database.memory
     core.transaction do |root|
@@ -304,6 +325,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks freeze protects allocated bytes and snapshot reads.
   def test_freeze_protects_allocated_bytes_and_snapshot_reads
     core = Core::Database.memory
     core.transaction do |root|
@@ -322,6 +344,7 @@ class DatabaseTest < Minitest::Test
     assert_equal "captured bytes", old.read_bytes.bytes
   end
 
+  # Checks external length is validated before reading payload.
   def test_external_length_is_validated_before_reading_payload
     store = Core::MemoryStore.new
     core = Core::Database.new(store: store)
@@ -332,6 +355,7 @@ class DatabaseTest < Minitest::Test
     assert_raises(XitDB::CorruptionError) { core.root_cursor.read_bytes }
   end
 
+  # Checks that partial file writes and sync failures reopen at observed root.
   def test_partial_file_writes_and_sync_failures_reopen_at_observed_root
     uncertain_points = %i[header header_sync]
     %i[trailer data_sync header header_sync].each do |point|
@@ -379,6 +403,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks unknown hash profile reopens and mismatch preserves file.
   def test_unknown_hash_profile_reopens_and_mismatch_preserves_file
     store = Core::MemoryStore.new
     Core::Database.new(store: store, hash_id: "????", hash_size: 7, file_id: 55)
@@ -391,6 +416,7 @@ class DatabaseTest < Minitest::Test
     assert_equal original, store.read_at(0, store.length)
   end
 
+  # Checks application IO failure is not a commit failure.
   def test_application_io_failure_is_not_a_commit_failure
     core = Core::Database.memory
     original = IOError.new("application I/O")
@@ -407,6 +433,7 @@ class DatabaseTest < Minitest::Test
     assert_equal 62, core.committed_size
   end
 
+  # Checks release failure does not replace application exception.
   def test_release_failure_does_not_replace_application_exception
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -417,6 +444,7 @@ class DatabaseTest < Minitest::Test
     assert_predicate core, :needs_reopen?
   end
 
+  # Checks release failure preserves throw break and nonlocal return.
   def test_release_failure_preserves_throw_break_and_nonlocal_return
     exit_kinds = %i[throw break return]
     %i[memory file].each do |kind|
@@ -447,6 +475,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks temporary cursors are not owned by transaction registry.
   def test_temporary_cursors_are_not_owned_by_transaction_registry
     transaction, registry, references = Thread.new do
       retained = nil
@@ -466,6 +495,7 @@ class DatabaseTest < Minitest::Test
     assert_raises(XitDB::ExpiredViewError) { transaction.check_active! }
   end
 
+  # Checks released checkpoints do not retain completed operations.
   def test_released_checkpoints_do_not_retain_completed_operations
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -481,6 +511,7 @@ class DatabaseTest < Minitest::Test
     end
   end
 
+  # Checks restore releases snapshot ownership and preserves live cursors.
   def test_restore_releases_snapshot_ownership_and_preserves_live_cursors
     checkpoint, reference = Thread.new do
       retained = nil
@@ -506,6 +537,7 @@ class DatabaseTest < Minitest::Test
     refute_predicate reference, :weakref_alive?, "consumed checkpoint #{checkpoint.object_id} retained a cursor"
   end
 
+  # Checks expiration releases snapshots even when an expired cursor is retained.
   def test_expiration_releases_snapshots_even_when_an_expired_cursor_is_retained
     expired = checkpoint = reference = nil
     Core::Database.memory.transaction do |root|
@@ -518,6 +550,7 @@ class DatabaseTest < Minitest::Test
     assert checkpoint
   end
 
+  # Checks live replaced slots survive GC and checkpoint release.
   def test_live_replaced_slots_survive_gc_and_checkpoint_release
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -533,19 +566,31 @@ class DatabaseTest < Minitest::Test
 
   private
 
+  # Creates a weak cursor reference without retaining the cursor on the caller stack.
+  # @param transaction [XitDB::Core::Transaction] owning transaction
+  # @return [WeakRef] reference for collection assertions
   def temporary_cursor_reference(transaction)
     WeakRef.new(transaction.cursor(slot: Core::Slot.uint(1)))
   end
 
+  # Captures a checkpoint and a weak reference to a temporary cursor.
+  # @param transaction [XitDB::Core::Transaction] owning transaction
+  # @return [Array] checkpoint and weak cursor reference
   def checkpoint_with_temporary_cursor(transaction)
     cursor = transaction.cursor(slot: Core::Slot.uint(2))
     [transaction.checkpoint, WeakRef.new(cursor)]
   end
 
+  # Leaves a transaction through a method return to exercise nonlocal rollback.
+  # @param core [XitDB::Core::Database] database under test
+  # @return [Symbol] original exit marker
   def return_from_transaction(core)
     core.transaction { return :original_exit }
   end
 
+  # Writes a slot, then leaves the enclosing method to exercise rollback.
+  # @param core [XitDB::Core::Database] database under test
+  # @return [nil]
   def nonlocal_return(core)
     core.transaction do |cursor|
       cursor.replace(Core::Slot.uint(3))

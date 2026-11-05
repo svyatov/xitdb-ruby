@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+# Regression tests for hash-trie collisions, raw key identity, counts, and live child paths.
+
 require "test_helper"
 require "weakref"
 require "tmpdir"
 require_relative "../support/fault_store"
 
+# Covers hash-trie collisions, raw key identity, counts, and live child paths.
+# @api private
 class HashMapTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks shared hash prefixes and exact counts.
   def test_shared_hash_prefixes_and_exact_counts
     first_hash = ["1#{"a" * 39}"].pack("H*")
     second_hash = ["2#{"a" * 39}"].pack("H*")
@@ -26,6 +31,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks all collection tags preserve empty values and raw keys.
   def test_all_collection_tags_preserve_empty_values_and_raw_keys
     [Core::HashMap, Core::HashSet, Core::CountedHashMap, Core::CountedHashSet].zip(
       %i[hash_map hash_set counted_hash_map counted_hash_set]
@@ -63,6 +69,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks hash children propagate through arrays and removal expires aliases.
   def test_hash_children_propagate_through_arrays_and_removal_expires_aliases
     core = Core::Database.memory
     retained = nil
@@ -99,6 +106,7 @@ class HashMapTest < Minitest::Test
     assert_equal 99, Core::HashMap.from_cursor(Core::ArrayList.new(core.root_cursor).cursor_at(0)).get(hash(7)).value
   end
 
+  # Checks nested hash updates restore and preserve old roots.
   def test_nested_hash_updates_restore_and_preserve_old_roots
     core = Core::Database.memory
     core.transaction do |root|
@@ -123,6 +131,7 @@ class HashMapTest < Minitest::Test
     assert_equal 2, Core::HashSet.new(Core::HashMap.new(core.root_cursor).cursor_at(hash(1))).size
   end
 
+  # Checks missing reads never initialize a parent.
   def test_missing_reads_never_initialize_a_parent
     core = Core::Database.memory
     original_size = core.committed_size
@@ -139,6 +148,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks invalid hashes and internal slots leave state unchanged.
   def test_invalid_hashes_and_internal_slots_leave_state_unchanged
     Core::Database.memory.transaction do |root|
       map = Core::HashMap.new(root)
@@ -158,6 +168,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks raw hash identity uses bytes in every string encoding.
   def test_raw_hash_identity_uses_bytes_in_every_string_encoding
     Core::Database.memory.transaction do |root|
       map = Core::CountedHashMap.new(root)
@@ -179,6 +190,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks configured hash width controls the deepest split.
   def test_configured_hash_width_controls_the_deepest_split
     [[1, "test"], [32, "sha2"]].each do |width, id|
       core = Core::Database.memory(hash_size: width, hash_id: id)
@@ -198,6 +210,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks many shared branches collapse after removal without changing snapshots.
   def test_many_shared_branches_collapse_after_removal_without_changing_snapshots
     core = Core::Database.memory
     hashes = Array.new(100) { |i| [format("%04x", i) + ("a" * 36)].pack("H*") }
@@ -221,6 +234,7 @@ class HashMapTest < Minitest::Test
     assert_equal 100, old.get(hashes.last).value
   end
 
+  # Checks failed mutation restores allocation and live views.
   def test_failed_mutation_restores_allocation_and_live_views
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
@@ -245,6 +259,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks corrupt branches records and captured bounds fail.
   def test_corrupt_branches_records_and_captured_bounds_fail
     core = Core::Database.memory
     core.transaction do |root|
@@ -264,6 +279,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks empty physical types survive reopening.
   def test_empty_physical_types_survive_reopening
     Dir.mktmpdir do |dir|
       [Core::HashMap, Core::HashSet, Core::CountedHashMap, Core::CountedHashSet].each do |klass|
@@ -277,6 +293,7 @@ class HashMapTest < Minitest::Test
     end
   end
 
+  # Checks transient hash children are reclaimed.
   def test_transient_hash_children_are_reclaimed
     Core::Database.memory.transaction do |root|
       map = Core::HashMap.new(root)
@@ -293,6 +310,9 @@ class HashMapTest < Minitest::Test
 
   private
 
+  # Encodes a fixture integer as a deterministic 20-byte trie hash.
+  # @param number [Integer] fixture hash value
+  # @return [String] binary hash bytes
   def hash(number)
     [format("%040x", number)].pack("H*")
   end

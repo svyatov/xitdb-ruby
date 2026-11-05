@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+# Regression tests for linked-array splits, concatenation, slices, and view ownership.
+
 require "test_helper"
 require "tmpdir"
 require_relative "../support/fault_store"
 
+# Covers linked-array splits, concatenation, slices, and view ownership.
+# @api private
 class LinkedArrayListTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks that slot equality compares tag occupancy and raw payload.
   def test_slot_equality_compares_tag_occupancy_and_raw_payload
     slot = Core::Slot.float(-0.0)
 
@@ -17,6 +22,7 @@ class LinkedArrayListTest < Minitest::Test
     refute_equal slot, nil
   end
 
+  # Checks split concat and root collapse.
   def test_split_concat_and_root_collapse
     Core::Database.memory.transaction do |root|
       list = Core::LinkedArrayList.new(root)
@@ -43,6 +49,7 @@ class LinkedArrayListTest < Minitest::Test
     end
   end
 
+  # Checks slices and concatenation preserve sources and detached ownership.
   def test_slices_and_concatenation_preserve_sources_and_detached_ownership
     Dir.mktmpdir do |dir|
       path = File.join(dir, "shared.xit")
@@ -83,6 +90,7 @@ class LinkedArrayListTest < Minitest::Test
     end
   end
 
+  # Checks concatenation with empty operands, different tree heights, and the same array on both sides.
   def test_empty_operands_unequal_heights_and_self_concatenation
     Core::Database.memory.transaction do |root|
       list = Core::LinkedArrayList.new(root)
@@ -113,6 +121,7 @@ class LinkedArrayListTest < Minitest::Test
     end
   end
 
+  # Checks seeded splits and slices preserve every rank.
   def test_seeded_splits_and_slices_preserve_every_rank
     Core::Database.memory.transaction do |root|
       tree = Core::BTree.new(root)
@@ -133,6 +142,7 @@ class LinkedArrayListTest < Minitest::Test
     end
   end
 
+  # Checks shared handles expire and snapshot operand keeps its values.
   def test_shared_handles_expire_and_snapshot_operand_keeps_its_values
     db = Core::Database.memory
     db.transaction { |root| Core::LinkedArrayList.new(root).append(Core::Slot.uint(1)) }
@@ -152,6 +162,7 @@ class LinkedArrayListTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { old.concat(old) }
   end
 
+  # Checks cross database rejection and failed shared operation roll back.
   def test_cross_database_rejection_and_failed_shared_operation_roll_back
     store = FaultStore.new(Core::MemoryStore.new)
     foreign = Core::Database.memory

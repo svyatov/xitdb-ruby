@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Runs isolated benchmark workloads with a 256 MiB memory limit.
+# Use --output PATH to save the JSON report.
+
 require "optparse"
 require_relative "../test/stress/workload"
 

@@ -1,21 +1,28 @@
 # frozen_string_literal: true
 
+# Regression tests for file and memory storage, buffered writes, writer locks, and failure recovery.
+
 require "test_helper"
 require "tmpdir"
 require "timeout"
 
+# Covers file and memory storage, buffered writes, writer locks, and failure recovery.
+# @api private
 class StoreTest < Minitest::Test
+  # Creates a temporary file path and a registry of stores to close.
   def setup
     @directory = Dir.mktmpdir("xitdb-store")
     @path = File.join(@directory, "data.xit")
     @stores = []
   end
 
+  # Closes tracked stores and removes the temporary directory.
   def teardown
     @stores.each { |store| store.close unless store.closed? }
     FileUtils.remove_entry(@directory)
   end
 
+  # Checks exclusive creation and existing only open preserve file identity.
   def test_exclusive_creation_and_existing_only_open_preserve_file_identity
     assert_raises(Errno::ENOENT) { file_store(create: false) }
     refute_path_exists @path
@@ -31,6 +38,7 @@ class StoreTest < Minitest::Test
     assert_equal "kept", File.binread(@path)
   end
 
+  # Checks that storage identity follows the open file and distinguishes copies.
   def test_storage_identity_follows_the_open_file_and_distinguishes_copies
     original = file_store
     original.write_at(0, "kept")
@@ -55,6 +63,7 @@ class StoreTest < Minitest::Test
     refute_equal first.storage_identity, second.storage_identity
   end
 
+  # Checks creation rejects dangling symlinks and preserves existing targets.
   def test_creation_rejects_dangling_symlinks_and_preserves_existing_targets
     target = File.join(@directory, "target")
     File.symlink(target, @path)
@@ -73,6 +82,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches shared-position reads, incorrect append offsets, and oversized buffering.
+  # Checks positional reads and bounded pending writes.
   def test_positional_reads_and_bounded_pending_writes
     each_store do |store|
       store.write_at(0, "abcdef")
@@ -94,6 +104,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches character indexing, retained caller strings, and short reads at EOF.
+  # Checks binary ownership and exact reads.
   def test_binary_ownership_and_exact_reads
     each_store do |store|
       source = +"é\xff".b
@@ -120,6 +131,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches stale buffered overwrites and reads that omit either disk segment.
+  # Checks reads span disk and pending window.
   def test_reads_span_disk_and_pending_window
     store = file_store(buffer_limit: 4)
     store.write_at(0, "abcdefghij")
@@ -134,6 +146,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches discarded prefixes, buffered rollback writes, and missing zero extension.
+  # Checks truncate and sparse writes.
   def test_truncate_and_sparse_writes
     each_store do |store|
       store.write_at(3, "xy")
@@ -161,6 +174,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches a missing flush before fsync or close, and writable readonly handles.
+  # Checks sync close and readonly guards.
   def test_sync_close_and_readonly_guards
     store = file_store
     store.append("abc")
@@ -188,6 +202,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches forgotten open-state checks and Ruby's implicit numeric coercions.
+  # Checks that both stores reject invalid ranges and operations after close.
   def test_invalid_arguments_and_closed_operations
     each_store do |store|
       refute_predicate store, :readonly?
@@ -217,6 +232,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches unhandled EINTR, skipped short-write suffixes, and short-read truncation.
+  # Checks that file operations complete correctly after short or interrupted system calls.
   def test_partial_and_interrupted_syscalls
     store = file_store(buffer_limit: 4)
     interrupted = false
@@ -242,6 +258,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches clearing pending bytes after an unsuccessful or zero-length write.
+  # Checks flush failures retain pending bytes for retry.
   def test_flush_failures_retain_pending_bytes_for_retry
     store = file_store
     store.append("abcdef")
@@ -273,6 +290,7 @@ class StoreTest < Minitest::Test
   end
 
   # Disposable scratch files can close even when pending writes cannot flush.
+  # Checks discard close releases file after buffered flush failure.
   def test_discard_close_releases_file_after_buffered_flush_failure
     store = file_store
     store.append("kept")
@@ -298,6 +316,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches a raised close error that nevertheless loses the writable handle.
+  # Checks failed close preserves the store for recovery.
   def test_failed_close_preserves_the_store_for_recovery
     store = file_store
     store.append("abc")
@@ -316,6 +335,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches a missing writer mutex while allowing snapshot reads during a write.
+  # Checks writer blocks serialize without blocking reads.
   def test_writer_blocks_serialize_without_blocking_reads
     each_store do |store|
       store.write_at(0, "abc")
@@ -346,6 +366,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches pathname-only or per-handle serialization when flock does not contend locally.
+  # Checks that separate handles share a writer mutex by inode.
   def test_separate_handles_share_a_writer_mutex_by_inode
     first = file_store
     alias_path = File.join(@directory, "alias.xit")
@@ -366,6 +387,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches a missing advisory lock across cooperating processes.
+  # Checks writer lock contends with another process.
   def test_writer_lock_contends_with_another_process
     store = file_store
     ready_reader, ready_writer = IO.pipe
@@ -398,6 +420,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches unsafe close during a writer block and locks retained by invalid arguments.
+  # Checks lock state and close wait for active writer.
   def test_lock_state_and_close_wait_for_active_writer
     each_store do |store|
       store.with_exclusive_lock do
@@ -440,6 +463,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches releasing an inode registry entry twice when two closers wait together.
+  # Checks concurrent close is idempotent.
   def test_concurrent_close_is_idempotent
     each_store do |store|
       entered = Queue.new
@@ -466,6 +490,7 @@ class StoreTest < Minitest::Test
   end
 
   # Catches an incorrect default limit or buffering an individual oversized write.
+  # Checks default buffer limit is two mebibytes.
   def test_default_buffer_limit_is_two_mebibytes
     store = file_store
     store.write_at(0, "a" * (2 * 1024 * 1024))
@@ -481,6 +506,7 @@ class StoreTest < Minitest::Test
     assert_equal "cc", store.read_at((2 * 1024 * 1024) - 1, 2)
   end
 
+  # Checks unlock failure preserves pending exit and disables writes.
   def test_unlock_failure_preserves_pending_exit_and_disables_writes
     store = file_store
     failure = IOError.new("unlock failed")
@@ -502,6 +528,7 @@ class StoreTest < Minitest::Test
     assert_equal(:locked, file_store.with_exclusive_lock { :locked })
   end
 
+  # Checks unlock failure after normal return remains an error.
   def test_unlock_failure_after_normal_return_remains_an_error
     store = file_store
     fault_file(store, :flock) do |original, mode|
@@ -513,6 +540,7 @@ class StoreTest < Minitest::Test
     assert_raises(XitDB::TransactionStateError) { store.with_exclusive_lock { flunk "must not run" } }
   end
 
+  # Checks waiting writer cannot enter after release failure.
   def test_waiting_writer_cannot_enter_after_release_failure
     store = XitDB::Core::MemoryStore.new
     @stores << store
@@ -556,6 +584,8 @@ class StoreTest < Minitest::Test
 
   private
 
+  # Runs assertions against both memory storage and file storage.
+  # @yieldparam store [XitDB::Core::MemoryStore, XitDB::Core::FileStore] storage implementation
   def each_store
     memory = XitDB::Core::MemoryStore.new
     @stores << memory
@@ -563,12 +593,18 @@ class StoreTest < Minitest::Test
     yield file_store
   end
 
+  # Opens a file store and registers it for test cleanup.
+  # @return [XitDB::Core::FileStore] tracked store
   def file_store(**)
     store = XitDB::Core::FileStore.open(@path, **)
     @stores << store
     store
   end
 
+  # Replaces one underlying file method with a fault-injection callback.
+  # @param store [XitDB::Core::FileStore] store to intercept
+  # @param method [Symbol] file method to replace
+  # @yieldparam original [Method] original file operation
   def fault_file(store, method, &)
     file = store.instance_variable_get(:@file)
     original = file.method(method)

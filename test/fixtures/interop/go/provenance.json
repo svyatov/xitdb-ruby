@@ -3,12 +3,12 @@
   "revision": "86db69bc728d2e9bdd015f9cefa23df40beaab65",
   "source_sha256": "4bd4cc1c108935565a6ad61941e72be66f691c1cd5a8ca41316b1216a0d6b4b1",
   "runtime": "go version go1.27.3 darwin/arm64",
-  "generated_at": "2026-11-05T15:56:15Z",
+  "generated_at": "2026-11-05T18:10:37Z",
   "producer": "pinned upstream library through test/interop/go",
   "fetch_command": "gh api repos/xit-vcs/xitdb-go/tarball/86db69bc728d2e9bdd015f9cefa23df40beaab65",
   "generate_command": "ruby script/interop.rb --generate-fixtures",
-  "generator_sha256": "df72f8e2704e6b60855433e589028dda9ca4283d9d1fef39629a89901f54fad7",
+  "generator_sha256": "e60d8e4fae82baff6046d6ebc94d7d84b6dafa3fce837217ff1280ea1bea4c14",
   "adapter_sha256": "8efdad7ce12427f33f70b9ba2243004409d3639475ffdfe92beaebe05ae72b73",
   "manifest_sha256": "8a32777b647cf299ac638f889901eaa6bd01868571b56e18bb293501cf9e299b",
-  "fixture_sha256": "3e3048305b4fddd89402a776d54dec8921f7f7a7999cfc422f15a64a11418104"
+  "fixture_sha256": "ba105979110ff4bc4e0e879694dcf69dd59c97cd784c9dc88b3e038bb2cddd35"
 }

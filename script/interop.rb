@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Drives binary compatibility checks against pinned upstream implementations.
+# Use --all for all cases or --generate-fixtures to rebuild fixtures.
+
 require "digest"
 require "json"
 require "open3"
@@ -8,6 +11,7 @@ require "tmpdir"
 require_relative "../lib/xitdb/core"
 
 # Runs binary compatibility cases against the pinned reference implementations.
+# @api private
 module Interop
   ROOT = File.expand_path("..", __dir__)
   MANIFEST = JSON.parse(File.read(File.join(ROOT, "test/interop/manifest.json")))
@@ -15,6 +19,11 @@ module Interop
              sorted_set].freeze
   TOOL_ROOT = File.expand_path("~/.local/share/mise/installs")
 
+  # Verifies pinned source and prepares an adapter in a temporary directory.
+  # @param name [String] reference name from the manifest
+  # @yieldparam invoke [Proc] adapter taking operation, case, path, and optional hash settings
+  # @yieldparam dir [String] temporary directory
+  # @return [Object] block result
   def self.with_reference(name)
     pin = MANIFEST.fetch("references").fetch(name)
     source = ENV.fetch("XITDB_#{name.upcase}_REFERENCE", "/private/tmp/xitdb-reference-#{name}")
@@ -66,6 +75,9 @@ module Interop
     end
   end
 
+  # Builds the normalized tree expected from the shared all-kinds fixture.
+  # @param linked_hole [Boolean] whether the linked array retains its first empty slot
+  # @return [Hash] tagged tree with raw bits and entries
   def self.expected_tree(linked_hole: false)
     items = MANIFEST.fetch("scalars").dup
     collection_sizes = [0, 17]
@@ -91,6 +103,9 @@ module Interop
       "items" => [{ "tag" => "uint", "full" => false, "bits" => "7" }, { "tag" => "array_list", "items" => items }] }
   end
 
+  # Converts a raw cursor tree into the adapter's JSON-compatible representation.
+  # @param cursor [XitDB::Core::Cursor] bounded cursor
+  # @return [Hash] tagged scalar or normalized collection
   def self.normalized(cursor)
     core = XitDB::Core
     slot = cursor.slot
@@ -114,15 +129,26 @@ module Interop
     { "tag" => slot.tag.to_s, "items" => items }
   end
 
+  # Reads and normalizes a database without changing its file.
+  # @param path [String] database path
+  # @return [Hash] normalized root
   def self.read_tree(path)
     XitDB::Core::Database.open(path, readonly: true) { |db| normalized(db.root_cursor) }
   end
 
+  # Writes a full base image and incremental delta beside the source file.
+  # @param db [XitDB::Core::Database] committed source
+  # @param path [String] prefix for .base and .delta files
+  # @param first [Integer] boundary between the two exports
   def self.export_parts(db, path, first)
     File.open("#{path}.base", "wb") { |io| db.read_committed(0, first, io) }
     File.open("#{path}.delta", "wb") { |io| db.read_committed(first, db.committed_size, io) }
   end
 
+  # Writes the Ruby all-kinds fixture and its base and delta exports.
+  # @param path [String] destination path
+  # @param hash_size [Integer] hash width in bytes
+  # @param hash_id [String] four-byte hash identifier
   def self.write_tree(path, hash_size: 20, hash_id: "sha1")
     core = XitDB::Core
     collection_sizes = [0, 17]
@@ -179,6 +205,8 @@ module Interop
     end
   end
 
+  # Checks that Ruby rejects an interrupted delta and then applies the complete reference delta.
+  # @param path [String] reference path with exported replication parts
   def self.check_ruby_replication(path)
     core = XitDB::Core
     base = File.binread("#{path}.reference.base")
@@ -200,6 +228,10 @@ module Interop
     end
   end
 
+  # Checks compaction and interrupted replication in both implementations.
+  # @param invoke [Proc] reference adapter
+  # @param path [String] source path with base and delta exports
+  # @param expected [Hash] normalized source tree
   def self.check_maintenance(invoke, path, expected)
     original = File.binread(path)
     invoke.call("compact", "all-kinds", path)
@@ -216,6 +248,9 @@ module Interop
     assert_equal compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
   end
 
+  # Checks that reference maintenance preserves Ruby values and unknown codec bytes.
+  # @param invoke [Proc] reference adapter
+  # @param dir [String] scratch directory
   def self.check_opaque(invoke, dir)
     require_relative "../lib/xitdb/ruby"
     path = File.join(dir, "opaque.xit")
@@ -245,6 +280,9 @@ module Interop
     end
   end
 
+  # Reads the runtime version for fixture provenance.
+  # @param name [String] reference name
+  # @return [String, nil] runtime description for a supported reference
   def self.runtime(name)
     env = { "MISE_CACHE_DIR" => "/private/tmp/xitdb-mise-cache" }
     case name
@@ -255,6 +293,7 @@ module Interop
     end
   end
 
+  # Generates independent upstream fixtures and records source, adapter, and generator checksums.
   def self.generate_fixtures
     require "fileutils"
     require "time"
@@ -287,6 +326,8 @@ module Interop
     end
   end
 
+  # Checks all-kinds files and maintenance in both directions between Ruby and a reference.
+  # @param name [String] reference name
   def self.check_reference(name)
     with_reference(name) do |invoke, dir|
       path = File.join(dir, "reference.xit")
@@ -305,6 +346,10 @@ module Interop
          "and opaque rb01 maintenance passed in both directions"
   end
 
+  # Repeats all-kinds and maintenance checks with a 48-byte SHA-384 profile.
+  # @param name [String] reference name
+  # @param invoke [Proc] reference adapter
+  # @param dir [String] scratch directory
   def self.check_sha384(name, invoke, dir)
     path = File.join(dir, "sha384-reference.xit")
     assert_reference_result(name, invoke.call("write", "all-kinds", path, { id: "s384", size: 48 }))
@@ -316,6 +361,10 @@ module Interop
     check_maintenance(invoke, ruby_path, expected_tree(linked_hole: true))
   end
 
+  # Checks tree contents, iteration counts, and reference-specific integer behavior.
+  # @param name [String] reference name
+  # @param result [Hash] adapter response
+  # @param linked_hole [Boolean] whether the source retains a linked-array hole
   def self.assert_reference_result(name, result, linked_hole: false)
     assert_equal expected_tree(linked_hole: linked_hole), result.fetch("tree")
     assert_equal [2, 34, 0, 16, 0, linked_hole ? 16 : 17], result.fetch("iteration")
@@ -341,6 +390,7 @@ module Interop
     assert_equal %w[18446744073709551615 9223372036854775808 9223372036854775809], result.fetch("writer_rejections")
   end
 
+  # Parses command-line options and runs selected checks or fixture generation.
   def self.run
     options = { reference: "go", case: "empty" }
     OptionParser.new do |parser|
@@ -375,6 +425,8 @@ module Interop
     run_go_case(options[:case])
   end
 
+  # Builds the pinned Go adapter and runs one bidirectional compatibility case.
+  # @param name [String] case name
   def self.run_go_case(name)
     options = { reference: "go", case: name }
     raise "unsupported reference: #{options[:reference]}" unless options[:reference] == "go"
@@ -413,6 +465,8 @@ module Interop
     puts "Go #{options[:case]}: Ruby-to-Go and Go-to-Ruby passed"
   end
 
+  # Checks the Go module and source checksum against the pinned manifest.
+  # @param path [String] upstream source directory
   def self.verify_source(path)
     pin = MANIFEST.fetch("references").fetch("go")
     unless File.file?(File.join(path, "go.mod"))
@@ -429,6 +483,9 @@ module Interop
     raise "Go reference differs from pinned source #{pin.fetch("revision")}"
   end
 
+  # Runs an external command and raises with captured output if it fails.
+  # @param args [Array] executable, arguments, and optional environment
+  # @return [String] standard output
   def self.command(*args, **)
     output, error, status = Open3.capture3(*args, **)
     raise "#{args.inspect} failed: #{error}\n#{output}" unless status.success?
@@ -436,6 +493,13 @@ module Interop
     output
   end
 
+  # Sends a JSON request to the Go adapter and parses its response.
+  # @param binary [String] compiled adapter path
+  # @param operation [String] adapter operation
+  # @param name [String] case name
+  # @param path [String] database path
+  # @param value [Object, nil] case-specific values
+  # @return [Object] parsed response
   def self.adapter(binary, operation, name, path, value = nil)
     request = { operation: operation, case: name, path: path, hash: MANIFEST.fetch("hash"),
                 file_id: MANIFEST.fetch("file_id"), value: value }
@@ -446,6 +510,9 @@ module Interop
     JSON.parse(command(binary, stdin_data: JSON.generate(request)))
   end
 
+  # Checks that both implementations produce the exact empty database fixture.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.empty(binary, dir)
     expected = File.read(File.join(ROOT, "test/fixtures/core/empty-v1.hex")).strip
     ruby_path = File.join(dir, "ruby.xit")
@@ -459,6 +526,9 @@ module Interop
     end
   end
 
+  # Checks every scalar vector in both writing and reading directions.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.scalars(binary, dir)
     ruby_path = File.join(dir, "ruby.xit")
     go_path = File.join(dir, "go.xit")
@@ -482,10 +552,16 @@ module Interop
     puts "#{MANIFEST.fetch("scalars").length} scalar vectors checked in both directions"
   end
 
+  # Normalizes the root scalar of a raw database.
+  # @param db [XitDB::Core::Database] open database
+  # @return [Hash] tag, occupancy, and raw payload
   def self.read_value(db)
     read_cursor_value(db.root_cursor)
   end
 
+  # Normalizes raw scalar bits or byte payloads without numeric conversion.
+  # @param cursor [XitDB::Core::Cursor] scalar cursor
+  # @return [Hash] JSON-compatible scalar
   def self.read_cursor_value(cursor)
     slot = cursor.slot
     value = { "tag" => slot.tag.to_s, "full" => slot.full }
@@ -497,6 +573,9 @@ module Interop
     end
   end
 
+  # Checks radix boundary lengths, holes, and occupied nulls in both implementations.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.array_list(binary, dir)
     [0, 1, 15, 16, 17, 255, 256, 257].each do |length|
       values = Array.new(length) do |index|
@@ -526,10 +605,18 @@ module Interop
     puts "8 array lengths checked with sparse slots and occupied nulls in both directions"
   end
 
+  # Stops the script when an observation differs from its expected value.
+  # @param expected [Object] expected value
+  # @param actual [Object] observed value
+  # @raise [RuntimeError] if the values differ
+  # @return [nil]
   def self.assert_equal(expected, actual)
     raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
   end
 
+  # Checks exports and incremental application with exact bytes, checksums, and opaque tags.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.replication(binary, dir)
     core = XitDB::Core
     payload = "opaque\0replication".b * 6000
@@ -574,6 +661,9 @@ module Interop
          "bytes, commit checksums, and opaque payload tags"
   end
 
+  # Checks compaction of shared cyclic graphs and tagged bytes in both implementations.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.compaction(binary, dir)
     core = XitDB::Core
     payload = "opaque\0payload".b * 6000
@@ -624,6 +714,10 @@ module Interop
          "large, and unknown-tagged bytes"
   end
 
+  # Checks that a compacted graph preserves cycles, sharing, and opaque payloads.
+  # @param db [XitDB::Core::Database] compacted database
+  # @param kind [String] history or raw graph fixture
+  # @param payload [String] expected external payload
   def self.assert_compaction_graph(db, kind, payload)
     core = XitDB::Core
     graph = db.root_cursor.slot
@@ -643,6 +737,9 @@ module Interop
     assert_equal "\xff\0".b, db.read_bytes(children[3]).format_tag
   end
 
+  # Checks each hash collection tag with collisions, removals, and key-only records.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.hash_collections(binary, dir)
     scalar = ->(tag, bits = "0", full = false) { { "tag" => tag, "bits" => bits, "full" => full } }
     hashes = ["1#{"a" * 39}", "2#{"a" * 39}", "3#{"a" * 39}", "#{"0" * 39}1", "#{"0" * 39}f"]
@@ -706,6 +803,10 @@ module Interop
          "key-only records, and occupied nulls"
   end
 
+  # Restores a raw slot from a scalar fixture description.
+  # @param db [XitDB::Core::Database] destination for byte allocations
+  # @param value [Hash] scalar description
+  # @return [XitDB::Core::Slot] constructed slot
   def self.hash_slot(db, value)
     if value.key?("hex")
       db.bytes([value.fetch("hex")].pack("H*"), format_tag: value["format_tag"] && [value["format_tag"]].pack("H*"))
@@ -715,6 +816,9 @@ module Interop
     end
   end
 
+  # Checks linked-array insertion at tree boundaries in both implementations.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.linked_array_insert(binary, dir)
     [0, 17, 257, 4097].each do |length|
       random = Random.new(61)
@@ -751,10 +855,17 @@ module Interop
     puts "4 linked-array lengths checked with seeded insertion, per-insert counts, rank reads, and suffix iteration"
   end
 
+  # Normalizes a raw hash record slot within its database read boundary.
+  # @param db [XitDB::Core::Database] containing database
+  # @param slot [XitDB::Core::Slot] stored key or value
+  # @return [Hash] normalized scalar
   def self.hash_value(db, slot)
     read_cursor_value(XitDB::Core::Cursor.new(database: db, slot: slot, bound: db.committed_size))
   end
 
+  # Checks sorted maps and sets with binary keys, ranks, and prefix seeks.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.sorted_collections(binary, dir)
     collection_sizes = [0, 17, 257, 4097]
     %w[sorted_map sorted_set].each do |tag|
@@ -822,6 +933,9 @@ module Interop
          "removal, ranks, and suffix iteration"
   end
 
+  # Checks linked-array deletion, root collapse, splitting, concatenation, and slicing.
+  # @param binary [String] compiled Go adapter path
+  # @param dir [String] scratch directory
   def self.linked_array_edit(binary, dir)
     [0, 1, 17, 257, 4097].each do |length|
       oracle = (0...length).to_a

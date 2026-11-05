@@ -1,14 +1,19 @@
 # frozen_string_literal: true
 
+# Regression tests for large-data operations under a hard memory budget and benchmark reports.
+
 require "test_helper"
 require "json"
 require "open3"
 require "tmpdir"
 require_relative "workload"
 
+# Covers large-data operations under a hard memory budget and benchmark reports.
+# @api private
 class MemoryStressTest < Minitest::Test
   ROOT = File.expand_path("../..", __dir__)
 
+  # Checks fixture uses profile specific sorted keys.
   def test_fixture_uses_profile_specific_sorted_keys
     %w[portable ruby].each do |profile|
       database = BoundedWorkload.open_database(profile)
@@ -25,6 +30,7 @@ class MemoryStressTest < Minitest::Test
     end
   end
 
+  # Checks converted string verification reads both profiles incrementally.
   def test_converted_string_verification_reads_both_profiles_incrementally
     Dir.mktmpdir("xitdb-byte-check-") do |directory|
       %w[portable ruby].each do |profile|
@@ -46,6 +52,7 @@ class MemoryStressTest < Minitest::Test
     end
   end
 
+  # Checks lookup, pagination, conversion, and compaction when the dataset exceeds the container memory limit.
   def test_lookup_pagination_conversion_and_compaction_below_dataset_size
     output = if ENV["XITDB_STRESS_REPORT"]
                File.read(ENV.fetch("XITDB_STRESS_REPORT"))
@@ -82,6 +89,7 @@ class MemoryStressTest < Minitest::Test
     assert_equal 0, report.fetch("memory_events").fetch("oom_kill")
   end
 
+  # Checks benchmark records measured samples and bounded history diagnostic.
   def test_benchmark_records_measured_samples_and_bounded_history_diagnostic
     Dir.mktmpdir("xitdb-benchmark-test-") do |directory|
       path = File.join(directory, "benchmark.json")

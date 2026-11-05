@@ -1,26 +1,38 @@
 # frozen_string_literal: true
 
+# Regression tests for portable scalar encoding, strict keys, and exact integer boundaries.
+
 require "test_helper"
 
+# Covers portable scalar encoding, strict keys, and exact integer boundaries.
+# @api private
 class PortableProfileTest < Minitest::Test
   Core = XitDB::Core
 
+  # Creates a raw memory database for portable scalar allocations.
   def setup
     @core = Core::Database.memory
   end
 
+  # Closes the raw scalar fixture database.
   def teardown
     @core.close
   end
 
+  # Returns the portable profile used by the scalar fixtures.
+  # @return [XitDB::Profiles::Portable] cached profile
   def profile
     @profile ||= XitDB::Profiles::Portable.new
   end
 
+  # Encodes one portable scalar using the test memory database.
+  # @param value [Object] Ruby scalar
+  # @return [XitDB::Core::Slot] encoded slot
   def encode(value)
     profile.encode_scalar(value, core: @core)
   end
 
+  # Checks portable scalar boundaries and rejection of keys outside the portable string contract.
   def test_portable_types_and_strict_keys
     assert_raises(XitDB::UnsupportedValueError) { profile.key_bytes(:name) }
     assert_equal "name".b, profile.key_bytes("name")
@@ -28,6 +40,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(RangeError) { encode(2**64) }
   end
 
+  # Checks signed and unsigned payloads decode exactly.
   def test_signed_and_unsigned_payloads_decode_exactly
     [[-(2**63), :int, 0x8000000000000000], [-1, :int, 0xffffffffffffffff],
      [0, :int, 0], [(2**63) - 1, :int, 0x7fffffffffffffff],
@@ -47,6 +60,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(TypeError) { XitDB.uint(1.0) }
   end
 
+  # Checks that nil occupies a slot and unsupported scalars raise.
   def test_nil_occupies_a_slot_and_unsupported_scalars_raise
     assert encode(nil).full
     assert_nil profile.decode_scalar(encode(nil), core: @core)
@@ -56,6 +70,7 @@ class PortableProfileTest < Minitest::Test
     end
   end
 
+  # Checks float payloads preserve bits.
   def test_float_payloads_preserve_bits
     [[1.5, 0x3ff8000000000000], [-0.0, 0x8000000000000000],
      [Float::INFINITY, 0x7ff0000000000000], [-Float::INFINITY, 0xfff0000000000000]].each do |value, bits|
@@ -68,6 +83,7 @@ class PortableProfileTest < Minitest::Test
     assert_predicate profile.decode_scalar(encode(Float::NAN), core: @core), :nan?
   end
 
+  # Checks string bytes determine read encoding.
   def test_string_bytes_determine_read_encoding
     [["hello", Encoding::UTF_8], ["\xc3\xa9".b, Encoding::UTF_8], ["\xff".b, Encoding::BINARY],
      ["\xc3".b, Encoding::BINARY], ["\0abcdefgh".b, Encoding::UTF_8], ["", Encoding::UTF_8]].each do |input, encoding|
@@ -94,6 +110,7 @@ class PortableProfileTest < Minitest::Test
     assert_equal Encoding::BINARY, key.encoding
   end
 
+  # Checks tagged bytes are opaque immutable values.
   def test_tagged_bytes_are_opaque_immutable_values
     data = +"\0opaque bytes"
     tag = +"\xff\0".b
@@ -113,6 +130,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(XitDB::UnsupportedValueError) { profile.key_bytes(declaration) }
   end
 
+  # Checks decode uses the supplied snapshot bound.
   def test_decode_uses_the_supplied_snapshot_bound
     old = @core.root_cursor
     @core.transaction { |root| root.replace(encode("longer than eight bytes")) }
@@ -124,6 +142,7 @@ class PortableProfileTest < Minitest::Test
     end
   end
 
+  # Checks all collection declarations capture immutable metadata.
   def test_all_collection_declarations_capture_immutable_metadata
     declarations = [[XitDB.map, :hash_map, false], [XitDB.map(counted: true), :counted_hash_map, true],
                     [XitDB.set, :hash_set, false], [XitDB.set(counted: true), :counted_hash_set, true],
@@ -139,6 +158,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(ArgumentError) { XitDB.set(counted: nil) }
   end
 
+  # Checks builtin hashers match independent vectors.
   def test_builtin_hashers_match_independent_vectors
     [[Core::Hasher.sha1, "sha1", 20, "a9993e364706816aba3e25717850c26c9cd0d89d"],
      [Core::Hasher.sha256, "sha2", 32, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"],
@@ -159,6 +179,7 @@ class PortableProfileTest < Minitest::Test
     assert_raises(TypeError) { XitDB::Profiles::Portable.new(hasher: :sha1) }
   end
 
+  # Checks custom hashers validate identifiers and digest widths.
   def test_custom_hashers_validate_identifiers_and_digest_widths
     id = +"test"
     result = +"12"

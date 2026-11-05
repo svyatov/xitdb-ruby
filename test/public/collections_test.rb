@@ -1,18 +1,25 @@
 # frozen_string_literal: true
 
+# Regression tests for public collections, nested views, assignment, and bounded lookup work.
+
 require "English"
 require "test_helper"
 require "timeout"
 
+# Covers public collections, nested views, assignment, and bounded lookup work.
+# @api private
 class PublicCollectionsTest < Minitest::Test
+  # Creates an in-memory portable database for each test.
   def setup
     @db = XitDB.memory
   end
 
+  # Closes the portable database if the test has not already closed it.
   def teardown
     @db.close unless @db.closed?
   end
 
+  # Checks sparse array gaps, set membership, and ranked pages through the public collection views.
   def test_array_gaps_sets_and_sorted_pages
     @db.transaction do |root|
       root["items"] = []
@@ -43,6 +50,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_kind_of(::Array, sorted.map { |key, _| key })
   end
 
+  # Checks portable string subclass keys do not call type hooks.
   def test_portable_string_subclass_keys_do_not_call_type_hooks
     calls = []
     klass = Class.new(String) do
@@ -69,6 +77,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_empty calls
   end
 
+  # Checks array supported reads match ruby.
   def test_array_supported_reads_match_ruby
     @db.transaction { |root| root["items"] = [0, 1, 2, 3] }
     items = @db.snapshot["items"]
@@ -98,6 +107,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { items.push(1) }
   end
 
+  # Checks that map dig traverses positional views with read guards.
   def test_map_dig_traverses_positional_views_with_read_guards
     [XitDB.array, XitDB.linked_array].each do |declaration|
       retained = nil
@@ -135,6 +145,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { snapshot.dig("items", 0) }
   end
 
+  # Checks seeded array mutations match independent ruby arrays.
   def test_seeded_array_mutations_match_independent_ruby_arrays
     [XitDB.array, XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -186,6 +197,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks slices capture values and assignment copies only selected slots.
   def test_slices_capture_values_and_assignment_copies_only_selected_slots
     [XitDB.array, XitDB.linked_array].each do |declaration|
       captured = nil
@@ -225,6 +237,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks removed nested values survive position changes.
   def test_removed_nested_values_survive_position_changes
     @db.transaction do |root|
       root["items"] = [{ "a" => [1] }, [2], [3]]
@@ -237,6 +250,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks that linked split preserves source and concat persists.
   def test_linked_split_preserves_source_and_concat_persists
     @db.transaction do |root|
       root["items"] = XitDB.linked_array
@@ -257,6 +271,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_equal [0, 1, 2, 3, 2, 3] * 2, @db.snapshot["items"].to_ruby
   end
 
+  # Checks sets and sorted sets support mutation and eager enumerables.
   def test_sets_and_sorted_sets_support_mutation_and_eager_enumerables
     [XitDB.set, XitDB.set(counted: true), XitDB.sorted_set].each do |declaration|
       @db.transaction do |root|
@@ -284,6 +299,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks array iteration preserves replacements and rejects order changes.
   def test_array_iteration_preserves_replacements_and_rejects_order_changes
     @db.transaction do |root|
       root["items"] = [[1], [2], [3]]
@@ -299,6 +315,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks array argument boundaries and atomic failure.
   def test_array_argument_boundaries_and_atomic_failure
     [XitDB.array, XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -337,6 +354,7 @@ class PublicCollectionsTest < Minitest::Test
     @db_other&.close unless @db_other&.closed?
   end
 
+  # Checks linked slices and sorted pages seek without scanning skipped values.
   def test_linked_slices_and_sorted_pages_seek_without_scanning_skipped_values
     @db.transaction do |root|
       root["linked"] = XitDB.linked_array
@@ -378,6 +396,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks sorted iteration and snapshot pages keep their owner.
   def test_sorted_iteration_and_snapshot_pages_keep_their_owner
     @db.transaction do |root|
       root["items"] = XitDB.sorted_map
@@ -402,6 +421,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { page.to_a }
   end
 
+  # Checks counted end reads keep transaction children writable.
   def test_counted_end_reads_keep_transaction_children_writable
     @db.transaction do |root|
       root["items"] = [[1], [2]]
@@ -423,6 +443,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { items.first(0) }
   end
 
+  # Checks integer conversion limits match ruby.
   def test_integer_conversion_limits_match_ruby
     @db.transaction do |root|
       root["items"] = [1, 2]
@@ -435,6 +456,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks empty linked concat preserves revision and iterator.
   def test_empty_linked_concat_preserves_revision_and_iterator
     @db.transaction do |root|
       root["items"] = XitDB.linked_array
@@ -454,6 +476,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_equal revisions, @db.history.size
   end
 
+  # Checks oversized array growth rejects before gap allocation.
   def test_oversized_array_growth_rejects_before_gap_allocation
     @db.transaction do |root|
       root["items"] = []
@@ -467,6 +490,7 @@ class PublicCollectionsTest < Minitest::Test
     end
   end
 
+  # Checks empty pages still check database lifetime.
   def test_empty_pages_still_check_database_lifetime
     @db.transaction { |root| root["sorted"] = XitDB.sorted_set }
     items = @db.snapshot["sorted"]
@@ -474,6 +498,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { items.page(offset: 0, limit: 0).to_a }
   end
 
+  # Checks bulk predicates reject subclasses without running hooks.
   def test_bulk_predicates_reject_subclasses_without_running_hooks
     @db.transaction do |root|
       root["items"] = [1]
@@ -506,6 +531,7 @@ class PublicCollectionsTest < Minitest::Test
     assert_equal({ "items" => [1, 2, 3], "other" => [2] }, @db.snapshot.to_ruby)
   end
 
+  # Checks coercion callbacks can read but cannot start logical writes.
   def test_coercion_callbacks_can_read_but_cannot_start_logical_writes
     [[], XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
@@ -542,10 +568,16 @@ class PublicCollectionsTest < Minitest::Test
 
   private
 
+  # Compares a decoded value with a Ruby expectation, including nil.
+  # @param expected [Object] expected Ruby value
+  # @param actual [Object] decoded value
   def assert_ruby_value(expected, actual)
     expected.nil? ? assert_nil(actual) : assert_equal(expected, actual)
   end
 
+  # Counts raw database reads during the supplied operation.
+  # @yield executes the measured operation
+  # @return [Integer] read_at call count
   def count_reads(&)
     count = 0
     trace = TracePoint.new(:call) do |event|

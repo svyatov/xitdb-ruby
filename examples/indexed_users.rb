@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Shows a user map with a sorted name index, rank lookup, and pagination.
+# Prints the selected names as JSON.
+
 require "xitdb"
 require "json"
 

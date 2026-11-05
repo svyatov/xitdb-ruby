@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# Shows Ruby values, custom codecs, typed keys, copying between databases, and conversion to the portable profile.
+
 require "xitdb/ruby"
 require "json"
 require "tmpdir"

@@ -1,17 +1,35 @@
 # frozen_string_literal: true
 
 module XitDB
+  # Advanced binary storage API for slots, cursors, collections, and transactions.
+  #
+  # A slot describes a stored value. A cursor locates a value inside a database.
+  # This layer handles encoded bytes and slots; XitDB::Database accepts application values.
   module Core
-    # A persistent vector with sixteen-way branches.
+    # An indexed slot list stored in a tree with sixteen positions per block.
+    #
+    # Each branch uses four index bits. Missing branches read as empty slots inside the visible list length.
+    #
+    # Writes copy protected blocks so earlier views keep their values.
     class ArrayList
       include Enumerable
 
+      # Bytes storing the visible element count and root block offset.
       HEADER_SIZE = 16
+      # Bytes in one block of sixteen slot descriptors.
       BLOCK_SIZE = 16 * Slot::SIZE
+      # A zero-filled block representing sixteen unused positions.
       EMPTY_BLOCK = ("\0".b * BLOCK_SIZE).freeze
 
+      # @!attribute [r] cursor
+      #   View locating this collection.
+      #   @return [Cursor]
       attr_reader :cursor
 
+      # Opens an indexed list, initializing an empty writable cursor when needed.
+      # @param cursor [Cursor] view locating this collection or value
+      # @return [ArrayList]
+      # @raise [InvalidValueError] if the cursor holds an incompatible collection tag
       def initialize(cursor)
         @cursor = cursor
         unless %i[none array_list].include?(cursor.slot.tag)
@@ -26,10 +44,15 @@ module XitDB
         end
       end
 
+      # Returns the number of visible elements.
+      # @return [Integer]
       def size
         header.first
       end
 
+      # Reads an element, with negative indexes counted from the end.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [Slot, nil]
       def get(index)
         count, pointer = header
         index = resolve_index(index, count)
@@ -39,6 +62,10 @@ module XitDB
         read_element(pointer, index, depth(count))
       end
 
+      # Returns an element view, optionally appending an empty slot at the list end.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @param create [Boolean] whether to create an empty element when the requested position is absent
+      # @return [Cursor, nil]
       def cursor_at(index, create: false)
         count = size
         resolved = resolve_index(index, count)
@@ -56,6 +83,10 @@ module XitDB
         cursor.array_child(resolved, slot)
       end
 
+      # Adds a slot at the end and grows branch depth when needed.
+      # @param slot [Slot] stored value or record descriptor
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
       def append(slot)
         validate_slot(slot)
         mutate do |transaction|
@@ -73,12 +104,27 @@ module XitDB
         self
       end
 
+      # Replaces an element at an existing index.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @param slot [Slot] stored value or record descriptor
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def put(index, slot)
         replace_child(index, slot)
         self
       end
 
-      # A child write updates its current path, including ancestors copied by freeze.
+      # Replaces a child slot while preserving the owning cursor when supplied.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @param slot [Slot] stored value or record descriptor
+      # @param owner [Cursor, nil] child view to preserve during replacement
+      # @param collection [Boolean] whether this is an internal copied collection update
+      # @param propagate [Boolean] whether to update parent collection paths immediately
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
+      # @api private
       def replace_child(index, slot, owner: nil, collection: false, propagate: true)
         validate_slot(slot)
         index = resolve_index(index, size)
@@ -94,6 +140,11 @@ module XitDB
         self
       end
 
+      # Keeps the first count elements and invalidates removed element views.
+      # @param count [Integer] number of elements to retain
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def truncate(count)
         Format.integer(count, 0..Format::UINT64_MAX)
         raise IndexError, "array size outside list" if count > size
@@ -120,6 +171,12 @@ module XitDB
         self
       end
 
+      # Visits visible slots in index order, including empty positions.
+      # @return [self, Enumerator<Slot>]
+      # @yield [slot] receives each visible element
+      # @yieldparam slot [Slot] stored element
+      # @yieldreturn [Object] ignored
+      # @note Without a block, returns an Enumerator.
       def each
         return enum_for(:each) unless block_given?
 
@@ -151,6 +208,7 @@ module XitDB
 
       private
 
+      # Builds reverse traversal frames for the visible branches of one block.
       def branches(block, shift, base, count)
         # @type var result: Array[[Integer?, Integer, Integer]]
         result = []
@@ -166,6 +224,7 @@ module XitDB
         result
       end
 
+      # Reads the element count and root block pointer.
       def header
         slot = cursor.slot
         return [0, nil] if slot.tag == :none
@@ -176,10 +235,12 @@ module XitDB
         [count, pointer]
       end
 
+      # Calculates branch depth for an element count.
       def depth(count)
         [((count - 1).bit_length - 1) / 4, 0].max
       end
 
+      # Normalizes a negative index and returns nil outside the visible list.
       def resolve_index(index, count)
         raise TypeError, "array index must be an Integer" unless index.is_a?(Integer)
 
@@ -187,10 +248,12 @@ module XitDB
         index if index >= 0 && index < count
       end
 
+      # Reads bytes inside the collection cursor's boundary.
       def read(offset, length)
         cursor.database.read_at(offset, length, bound: cursor.bound)
       end
 
+      # Decodes a slot and rejects unrecognized array tags.
       def parse_slot(bytes)
         slot = Slot.parse(bytes)
         raise CorruptionError, "unknown array slot tag" unless Slot::TAGS.include?(slot.tag)
@@ -198,10 +261,12 @@ module XitDB
         slot
       end
 
+      # Reads and validates one slot at an absolute offset.
       def read_slot(offset)
         parse_slot(read(offset, Slot::SIZE))
       end
 
+      # Follows four index bits per level to find a leaf or empty branch.
       def read_element(pointer, index, shift)
         loop do
           read(pointer, BLOCK_SIZE)
@@ -219,12 +284,14 @@ module XitDB
         end
       end
 
+      # Rejects unknown slots and branch pointers supplied as list elements.
       def validate_slot(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown slot tag" unless Slot::TAGS.include?(slot.tag)
         raise InvalidValueError, "index slot is internal to array branches" if slot.tag == :index
       end
 
+      # Runs a write with a checkpoint and restores it on any exception.
       def mutate
         cursor.slot
         transaction = cursor.transaction
@@ -241,6 +308,7 @@ module XitDB
         end
       end
 
+      # Allocates a header and obtains a writable root block.
       def writable_header(transaction)
         count, pointer = header
         if pointer.nil?
@@ -254,11 +322,13 @@ module XitDB
         [count, pointer, start]
       end
 
+      # Copies a block only when it lies below the transaction's writable boundary.
       def copy_block(transaction, pointer)
         block = transaction.read_at(pointer, BLOCK_SIZE)
         pointer < transaction.mutable_start ? transaction.append(block) : pointer
       end
 
+      # Copies or allocates the branch path and returns the writable leaf offset.
       def writable_element(transaction, pointer, index, shift)
         loop do
           position = pointer + (((index >> (shift * 4)) & 15) * Slot::SIZE)

@@ -1,18 +1,25 @@
 # frozen_string_literal: true
 
+# Regression tests for public snapshots, history, transactions, value validation, and database lifetimes.
+
 require "English"
 require "test_helper"
 require "tmpdir"
 
+# Covers public snapshots, history, transactions, value validation, and database lifetimes.
+# @api private
 class PublicDatabaseTest < Minitest::Test
+  # Creates an in-memory portable database for each test.
   def setup
     @db = XitDB.memory
   end
 
+  # Closes the portable database if the test has not already closed it.
   def teardown
     @db&.close unless @db&.closed?
   end
 
+  # Checks that snapshots retain prior revisions, revert creates the expected state, and early exits abort writes.
   def test_snapshot_history_revert_and_block_exits
     assert_nil @db.snapshot.revision
     assert_empty @db.snapshot
@@ -56,6 +63,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_equal 0, @db.snapshot["visits"]
   end
 
+  # Checks map reads mutations and materialization.
   def test_map_reads_mutations_and_materialization
     snapshot = @db.transaction do |root|
       root["profile"] = { "name" => "Ada", "visits" => 0 }
@@ -91,6 +99,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { snapshot.delete("absent") }
   end
 
+  # Checks atomic inputs and value ownership.
   def test_atomic_inputs_and_value_ownership
     input = { "name" => +"Ada", "nested" => [1, { "x" => 2 }] }
     @db.transaction do |root|
@@ -129,6 +138,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks assigning a virtual empty snapshot captures an empty map.
   def test_assigning_a_virtual_empty_snapshot_captures_an_empty_map
     empty = @db.snapshot
     snapshot = @db.transaction { |root| root["copy"] = empty }
@@ -137,6 +147,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_empty empty
   end
 
+  # Checks view lifetimes and committed reads.
   def test_view_lifetimes_and_committed_reads
     @db.transaction { |root| root["child"] = { "value" => 1 } }
     snapshot = @db.snapshot
@@ -169,6 +180,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_raises(XitDB::ClosedError) { snapshot.size }
   end
 
+  # Checks iterators detect membership changes but allow value edits.
   def test_iterators_detect_membership_changes_but_allow_value_edits
     @db.transaction do |root|
       initial_values = { "a" => { "n" => 1 }, "b" => { "n" => 2 } }
@@ -187,6 +199,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks all portable containers have generic reads.
   def test_all_portable_containers_have_generic_reads
     @db.transaction do |root|
       root["array"] = [1, "two", { "three" => 3 }]
@@ -209,6 +222,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_equal 3, snapshot["array"].size
   end
 
+  # Checks file reopening, configured hash selection, and revision identity across handles.
   def test_file_opening_hashes_and_revision_identity
     Dir.mktmpdir do |dir|
       path = File.join(dir, "db.xit")
@@ -245,6 +259,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks reserved ruby profile identifier is rejected before creation.
   def test_reserved_ruby_profile_identifier_is_rejected_before_creation
     hasher = XitDB::Core::Hasher.new(id: "rb01", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
     assert_raises(XitDB::ProfileMismatchError) { XitDB.memory(hash: hasher) }
@@ -255,6 +270,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks existing empty file is rejected unchanged while missing path is created.
   def test_existing_empty_file_is_rejected_unchanged_while_missing_path_is_created
     Dir.mktmpdir do |dir|
       empty_path = File.join(dir, "empty.xit")
@@ -275,6 +291,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks existing path removed during creation fallback is not recreated.
   def test_existing_path_removed_during_creation_fallback_is_not_recreated
     Dir.mktmpdir do |dir|
       path = File.join(dir, "removed.xit")
@@ -294,6 +311,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks restored file rejects stale proof even with same file identity.
   def test_restored_file_rejects_stale_proof_even_with_same_file_identity
     Dir.mktmpdir do |dir|
       path = File.join(dir, "db.xit")
@@ -314,6 +332,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks clear keeps collection views live and expires children.
   def test_clear_keeps_collection_views_live_and_expires_children
     @db.transaction do |root|
       root["map"] = { "child" => { "n" => 1 } }
@@ -331,6 +350,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks noop and failed operations do not create a revision.
   def test_noop_and_failed_operations_do_not_create_a_revision
     @db.transaction do |root|
       root.merge!({})
@@ -342,6 +362,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_equal 0, @db.history.size
   end
 
+  # Checks deep value traversal and rejection of cyclic graphs during Ruby materialization.
   def test_deep_values_and_cyclic_upstream_graphs
     value = "leaf"
     1100.times { value = [value] }
@@ -364,6 +385,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_equal ["cycle", 0], error.path
   end
 
+  # Checks open rejects invalid history roots and resolves sha2 widths.
   def test_open_rejects_invalid_history_roots_and_resolves_sha2_widths
     Dir.mktmpdir do |dir|
       %i[sha1 sha256 sha384 sha512].each do |algorithm|
@@ -382,12 +404,14 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks inspect is bounded without reading collection entries.
   def test_inspect_is_bounded_without_reading_collection_entries
     @db.transaction { |root| root["x" * 10_000] = { "n" => 1 } }
 
     assert_operator @db.snapshot["x" * 10_000].inspect.bytesize, :<, 300
   end
 
+  # Checks rejected set members and map keys report the assignment path.
   def test_rejected_set_members_and_map_keys_report_the_assignment_path
     @db.transaction do |root|
       error = assert_raises(XitDB::UnsupportedValueError) { root["bad"] = Set[%w[a b]] }
@@ -400,6 +424,7 @@ class PublicDatabaseTest < Minitest::Test
     assert_nil @db.snapshot.revision
   end
 
+  # Checks transaction rejects a new invalid root before yielding.
   def test_transaction_rejects_a_new_invalid_root_before_yielding
     @db.core.transaction { |cursor| XitDB::Core::ArrayList.new(cursor).append(XitDB::Core::Slot.int(1)) }
     called = false
@@ -407,6 +432,7 @@ class PublicDatabaseTest < Minitest::Test
     refute called
   end
 
+  # Checks that profile adapters edit every container layout.
   def test_profile_adapters_edit_every_container_layout
     declarations = [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map,
                     XitDB.set, XitDB.set(counted: true), XitDB.sorted_set,
@@ -441,6 +467,7 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks hash callback failure keeps its identity and rolls back assignment.
   def test_hash_callback_failure_keeps_its_identity_and_rolls_back_assignment
     failure = StopIteration.new("digest callback failed")
     hasher = XitDB::Core::Hasher.new(id: "test", size: 20) do |bytes|
@@ -458,8 +485,10 @@ class PublicDatabaseTest < Minitest::Test
     end
   end
 
+  # Checks singleton behavior and container subclasses are rejected.
   def test_singleton_behavior_and_container_subclasses_are_rejected
     string = +"value"
+    # Adds singleton behavior that value or key validation must reject.
     def string.special = 1
     extended = +"value"
     extended.extend(Module.new { def special = 1 })
@@ -475,6 +504,7 @@ class PublicDatabaseTest < Minitest::Test
 
   private
 
+  # Leaves a transaction through a method return to exercise nonlocal rollback.
   def return_from_transaction
     @db.transaction do |root|
       root["visits"] = 10

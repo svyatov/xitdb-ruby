@@ -2,14 +2,32 @@
 
 module XitDB
   module Core
-    # Reads and writes inline or external byte payloads.
+    # Storage helpers for byte payloads and optional two-byte application format tags.
+    #
+    # Small zero-free payloads can fit in a slot. Other payloads use an external record with an unsigned 64-bit length.
+    # @api private
     module Bytes
+      # Maximum source bytes requested per chunk when appending an external payload.
       CHUNK_SIZE = 64 * 1024
 
-      # A bounded reader for one immutable byte payload.
+      # An immutable reader for one byte payload within a fixed database boundary.
+      # @api private
       class Source
+        # @!attribute [r] size
+        #   Declared number of payload or digest bytes.
+        #   @return [Integer]
+        # @!attribute [r] format_tag
+        #   Optional frozen two-byte application format identifier.
+        #   @return [String, nil]
         attr_reader :size, :format_tag
 
+        # Builds a frozen reader limited to one payload and storage boundary.
+        # @param database [Database] database that owns the stored records
+        # @param location [String, Integer] inline payload bytes or absolute payload offset
+        # @param size [Integer] number of bytes
+        # @param format_tag [String, nil] optional two-byte application format identifier
+        # @param bound [Integer] exclusive upper byte boundary for reads
+        # @return [Source]
         def initialize(database, location, size, format_tag, bound)
           @database = database
           @location = location
@@ -19,6 +37,12 @@ module XitDB
           freeze
         end
 
+        # Reads an exact range inside this payload.
+        # @param position [Integer] zero-based byte offset inside the payload
+        # @param length [Integer] number of bytes
+        # @return [String]
+        # @raise [InvalidValueError] if the requested range exceeds the payload
+        # @raise [TypeError] if position or length is not an Integer
         def read(position, length)
           @database.check_open!
           unless position.is_a?(Integer) && length.is_a?(Integer)
@@ -38,11 +62,31 @@ module XitDB
       end
       private_constant :Source
 
+      # Opens an inline or external byte slot without loading its full payload.
+      # @param database [Database] database that owns the stored records
+      # @param slot [Slot] stored value or record descriptor
+      # @param bound [Integer] exclusive upper byte boundary for reads
+      # @return [Source]
+      # @raise [InvalidValueError] if slot does not describe bytes
       def self.open(database, slot, bound:)
         location, size, format_tag = parse(database, slot, bound)
         Source.new(database, location, size, format_tag, bound)
       end
 
+      # Stores bytes in a slot when they fit, or appends an external payload.
+      # @param transaction [Transaction] active destination transaction
+      # @param size [Integer] number of bytes
+      # @param format_tag [String, nil] optional two-byte application format identifier
+      # @param prefix [String] bytes to place before the source payload
+      # @param representation [Symbol] :automatic for eligible inline values, or :external
+      # @return [Slot]
+      # @yield [position, length] provides an exact chunk of source bytes
+      # @yieldparam position [Integer] byte offset inside the source, excluding prefix
+      # @yieldparam length [Integer] exact number of bytes requested
+      # @yieldreturn [String] exactly length bytes
+      # @raise [EOFError] if the reader is absent or returns too few bytes
+      # @raise [ArgumentError] if the format tag, representation, or chunk length is invalid
+      # @raise [RangeError] if the total payload exceeds unsigned 64-bit storage
       def self.append(transaction, size:, format_tag: nil, prefix: "".b, representation: :automatic, &reader)
         transaction.check_active!
         validate_source(size, prefix, representation, format_tag)
@@ -67,6 +111,7 @@ module XitDB
         Slot.new(tag: :bytes, value: offset, full: !format_tag.nil?)
       end
 
+      # Checks the source size, prefix, storage mode, and optional format tag.
       def self.validate_source(size, prefix, representation, format_tag)
         raise TypeError, "size must be an Integer" unless size.is_a?(Integer)
         raise ArgumentError, "size must be nonnegative" if size.negative?
@@ -77,12 +122,14 @@ module XitDB
         raise ArgumentError, "format_tag must contain two bytes"
       end
 
+      # Reads a small payload once when it might fit inside a slot.
       def self.capture_inline(size, prefix, representation, capacity, &)
         return nil unless representation == :automatic && prefix.bytesize + size <= capacity
 
         prefix.b + (size.zero? ? "".b : read_chunk(0, size, &))
       end
 
+      # Appends the prefix and source in bounded chunks.
       def self.append_source(transaction, prefix, size, &)
         position = 0
         while position < prefix.bytesize
@@ -99,6 +146,7 @@ module XitDB
       end
       private_class_method :validate_source, :capture_inline, :append_source
 
+      # Requests one exact chunk and rejects invalid replies.
       def self.read_chunk(position, length)
         chunk = yield(position, length) if block_given?
         raise EOFError, "byte source ended before its declared size" if chunk.nil?
@@ -110,6 +158,7 @@ module XitDB
       end
       private_class_method :read_chunk
 
+      # Finds the payload location, length, and optional two-byte format tag.
       def self.parse(database, slot, bound)
         database.check_open!
         case slot.tag
@@ -131,7 +180,12 @@ module XitDB
       end
       private_class_method :parse
 
-      # Return inline data or its file offset, without materializing a scalar.
+      # Returns untagged inline bytes or an external offset with its byte count.
+      # @param database [Database] database that owns the stored records
+      # @param slot [Slot] stored value or record descriptor
+      # @param bound [Integer] exclusive upper byte boundary for reads
+      # @return [Array(String, Integer), Array(Integer, Integer)]
+      # @raise [InvalidValueError] if slot is not untagged bytes
       def self.locate(database, slot, bound:)
         unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
           raise InvalidValueError, "stream requires untagged bytes"
@@ -141,6 +195,13 @@ module XitDB
         [location.is_a?(String) ? location.dup : location, size]
       end
 
+      # Copies a declared byte count from an IO-like reader into a slot.
+      # @param source [#read] binary reader implementing read(length)
+      # @param size [Integer] number of bytes
+      # @param database [Database] database that owns the stored records
+      # @param transaction [Transaction] active destination transaction
+      # @return [Slot]
+      # @raise [EOFError] if the source ends before the declared size
       def self.copy(source, size:, database:, transaction:)
         if size <= 8
           bytes = source.read(size)
@@ -162,10 +223,22 @@ module XitDB
       end
     end
 
-    # An immutable byte payload and its optional format tag.
+    # An immutable copy of binary payload bytes and an optional application format tag.
     class ByteValue
+      # @!attribute [r] bytes
+      #   Frozen binary payload.
+      #   @return [String]
+      # @!attribute [r] format_tag
+      #   Optional frozen two-byte application format identifier.
+      #   @return [String, nil]
       attr_reader :bytes, :format_tag
 
+      # Copies bytes and an optional two-byte tag into a frozen value.
+      # @param bytes [String] binary input bytes
+      # @param format_tag [String, nil] optional two-byte application format identifier
+      # @return [ByteValue]
+      # @raise [TypeError] if bytes is not a String
+      # @raise [ArgumentError] if format_tag is neither nil nor a two-byte String
       def initialize(bytes, format_tag: nil)
         raise TypeError, "bytes must be a String" unless bytes.is_a?(String)
         unless format_tag.nil? || (format_tag.is_a?(String) && format_tag.bytesize == 2)

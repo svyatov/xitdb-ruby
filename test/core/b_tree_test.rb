@@ -1,13 +1,18 @@
 # frozen_string_literal: true
 
+# Regression tests for counted tree splits, deletion, rank lookup, and malformed nodes.
+
 require "test_helper"
 require "tmpdir"
 require "timeout"
 require_relative "../support/fault_store"
 
+# Covers counted tree splits, deletion, rank lookup, and malformed nodes.
+# @api private
 class BTreeTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks root collapse rejects a cyclic surviving child.
   def test_root_collapse_rejects_a_cyclic_surviving_child
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -28,6 +33,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks first middle and final deletions collapse all tree heights.
   def test_first_middle_and_final_deletions_collapse_all_tree_heights
     Core::Database.memory.transaction do |root|
       tree = Core::BTree.new(root)
@@ -57,6 +63,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks failed deletion restores live children and allocation.
   def test_failed_deletion_restores_live_children_and_allocation
     store = FaultStore.new(Core::MemoryStore.new)
     Core::Database.new(store: store).transaction do |root|
@@ -79,6 +86,7 @@ class BTreeTest < Minitest::Test
     store.fault = nil if store
   end
 
+  # Checks leaf and branch splits preserve rank.
   def test_leaf_and_branch_splits_preserve_rank
     Core::Database.memory.transaction do |root|
       tree = Core::BTree.new(root)
@@ -90,6 +98,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks seeded insertion preserves all counts and file ranks.
   def test_seeded_insertion_preserves_all_counts_and_file_ranks
     Dir.mktmpdir do |dir|
       path = File.join(dir, "tree.xit")
@@ -121,6 +130,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks that empty linked arrays retain their type and distinguish null values from missing indexes.
   def test_linked_array_empty_type_indexes_and_null_slots
     db = Core::Database.memory
 
@@ -148,6 +158,7 @@ class BTreeTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { Core::LinkedArrayList.new(db.root_cursor).append(Core::Slot.null) }
   end
 
+  # Checks nested children freeze replacement and restore.
   def test_nested_children_freeze_replacement_and_restore
     db = Core::Database.memory
     db.transaction do |root|
@@ -175,6 +186,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks failed insert restores root and operation checkpoint.
   def test_failed_insert_restores_root_and_operation_checkpoint
     store = FaultStore.new(Core::MemoryStore.new)
     Core::Database.new(store: store).transaction do |root|
@@ -195,6 +207,7 @@ class BTreeTest < Minitest::Test
     store.fault = nil if store
   end
 
+  # Checks mixed array hash and linked children keep their paths.
   def test_mixed_array_hash_and_linked_children_keep_their_paths
     db = Core::Database.memory
     hash = "\x01".b * 20
@@ -227,6 +240,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks corrupt nodes and captured bounds are rejected.
   def test_corrupt_nodes_and_captured_bounds_are_rejected
     Core::Database.memory.transaction do |root|
       tx = root.transaction
@@ -245,6 +259,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks empty file type and committed child bounds survive reopening.
   def test_empty_file_type_and_committed_child_bounds_survive_reopening
     Dir.mktmpdir do |dir|
       path = File.join(dir, "linked.xit")
@@ -278,6 +293,7 @@ class BTreeTest < Minitest::Test
     end
   end
 
+  # Checks tail iteration seeks by count instead of reading the prefix.
   def test_tail_iteration_seeks_by_count_instead_of_reading_the_prefix
     store = FaultStore.new(Core::MemoryStore.new)
     db = Core::Database.new(store: store)
@@ -297,10 +313,17 @@ class BTreeTest < Minitest::Test
 
   private
 
+  # Reads the root node pointer from a linked-array header.
+  # @param cursor [XitDB::Core::Cursor] bounded linked-array cursor
+  # @return [Integer] root node offset
   def tree_root(cursor)
     cursor.database.read_at(cursor.slot.value, 16, bound: cursor.bound).unpack("Q>Q>").last
   end
 
+  # Checks stored child counts against recursive leaf counts.
+  # @param cursor [XitDB::Core::Cursor] cursor supplying database and read bound
+  # @param pointer [Integer] subtree node offset
+  # @return [Integer] verified entry count
   def subtree_count(cursor, pointer)
     db = cursor.database
     kind, count = db.read_at(pointer, 2, bound: cursor.bound).unpack("CC")

@@ -3,26 +3,43 @@
 require "tempfile"
 
 module XitDB
+  # Block-scoped access to untagged byte values without full-value reads.
+  #
+  # Open streams through {Views::Base#open_bytes} or {Views::Base#write_bytes}.
+  # Stream methods reject access after the owning block ends.
   module Streams
     # Restricts stream access to the lifetime of its owning block.
+    # @api private
     class Handle
+      # Bind a stream handle to the snapshot or transaction that owns its bytes.
+      # @api private
+      # @param context [Context]
       def initialize(context)
         @context = context
         @active = true
       end
 
+      # Forbid further stream access after its block ends.
+      # @api private
+      # @return [void]
       def expire!
         @active = false
       end
 
       private
 
+      # Require both a live stream block and a usable database context.
+      # @return [void]
+      # @raise [ExpiredViewError] if the stream block has ended
       def check!
         raise ExpiredViewError, "byte stream block has ended" unless @active
 
         @context.check!
       end
 
+      # Convert an IO argument to a bounded native integer.
+      # @param value [Object]
+      # @return [Integer]
       def integer(value)
         result = Integer.try_convert(value) || raise(TypeError, "expected an Integer")
         limit = (1 << ((0.size * 8) - 1)) - 1
@@ -34,6 +51,11 @@ module XitDB
 
     # Reads a captured byte value with bounded storage reads.
     class Reader < Handle
+      # Capture an untagged byte value and start reading at position zero.
+      # @api private
+      # @param context [Context]
+      # @param slot [Core::Slot]
+      # @raise [InvalidValueError] if the slot is not untagged bytes
       def initialize(context, slot)
         super(context)
         unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
@@ -45,6 +67,14 @@ module XitDB
         @pos = 0
       end
 
+      # Read bytes and advance the position, optionally reusing a String buffer.
+      #
+      # Without length, read all remaining bytes and return an empty String at EOF.
+      # With positive length, return nil at EOF. A zero length returns an empty String.
+      # @param length [Integer, nil] maximum bytes; nil reads the remainder
+      # @param output [String, nil] buffer replaced with binary data
+      # @return [String, nil]
+      # @raise [ArgumentError] if length is negative
       def read(length = nil, output = nil)
         check!
         @context.read do
@@ -71,11 +101,21 @@ module XitDB
         end
       end
 
+      # Read up to length bytes, raising at the end of the stream.
+      # @param length [Integer] maximum bytes
+      # @param output [String, nil] optional reusable buffer
+      # @return [String]
+      # @raise [EOFError] if a positive-length read starts at EOF
       def readpartial(length, output = nil)
         check!
         read(integer(length), output) || raise(EOFError, "end of byte stream")
       end
 
+      # Move the position relative to the start, current position, or end.
+      # @param offset [Integer] signed byte displacement
+      # @param whence [Integer, Symbol] IO seek constant or :SET, :CUR, :END
+      # @return [Integer] zero
+      # @raise [Errno::EINVAL] if the origin is invalid or the resulting position is negative
       def seek(offset, whence = IO::SEEK_SET)
         check!
         offset = integer(offset)
@@ -98,20 +138,28 @@ module XitDB
         0
       end
 
+      # Move back to the first byte.
+      # @return [Integer] zero
       def rewind
         seek(0)
       end
 
+      # Read the current byte position within the stream.
+      # @return [Integer]
       def pos
         check!
         @pos
       end
 
+      # Read the captured value's total byte length.
+      # @return [Integer]
       def size
         check!
         @size
       end
 
+      # Report whether the position is at or beyond the captured end.
+      # @return [Boolean]
       def eof?
         check!
         @pos >= @size
@@ -120,11 +168,20 @@ module XitDB
 
     # Spools bytes before the enclosing assignment is published.
     class Writer < Handle
+      # Attach an active context to the temporary file receiving streamed bytes.
+      # @api private
+      # @param context [Context]
+      # @param spool [File] temporary binary file
       def initialize(context, spool)
         super(context)
         @spool = spool
       end
 
+      # Append the value's String representation in bounded chunks.
+      #
+      # Successful writes still require the enclosing writer block and transaction to complete.
+      # @param value [#to_s] value to convert to bytes
+      # @return [Integer] number of bytes written
       def write(value)
         check!
         bytes = value.to_s
@@ -139,6 +196,8 @@ module XitDB
         position
       end
 
+      # Read the current byte position within the stream.
+      # @return [Integer]
       def pos
         check!
         @spool.pos

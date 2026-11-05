@@ -2,31 +2,63 @@
 
 module XitDB
   module Core
-    # A counted B-tree for indexed collections.
+    # Counted tree algorithms used by linked lists and sorted collections.
+    #
+    # Leaf nodes hold slots. Branch nodes hold child pointers and the number of elements below each pointer.
+    # @api private
     class BTree
+      # Bytes storing the element count and root node offset.
       HEADER_SIZE = 16
+      # Maximum occupied slots in one leaf or branch node.
       CAPACITY = 16
+      # Number of slots placed in the left half when a full node splits.
       SPLIT_COUNT = 8
+      # Bytes in an encoded leaf, including its two-byte node header.
       LEAF_SIZE = 146
+      # Bytes in an encoded branch, including sixteen unsigned subtree counts.
       BRANCH_SIZE = 274
-      # A mutable node used while copying a B-tree path.
+      # A mutable in-memory node used while rebuilding a stored tree path.
+      # @api private
       class Node
+        # @!attribute [rw] kind
+        #   Zero for a leaf, or one for a branch.
+        #   @return [Integer]
+        # @!attribute [rw] slots
+        #   Leaf entries or branch pointer slots.
+        #   @return [Array<Slot>]
+        # @!attribute [rw] counts
+        #   Number of elements under each branch pointer.
+        #   @return [Array<Integer>]
         attr_accessor :kind, :slots, :counts
 
+        # Builds a mutable leaf or branch during a copied tree update.
+        # @param kind [Integer] zero for a leaf, or one for a branch
+        # @param slots [Array<Slot>] leaf values or branch pointer slots
+        # @param counts [Array<Integer>] element count beneath each branch pointer
+        # @return [Node]
         def initialize(kind, slots, counts)
           @kind = kind
           @slots = slots
           @counts = counts
         end
 
+        # Counts leaf slots or sums the element counts of child branches.
+        # @return [Integer]
         def size
           kind.zero? ? slots.size : counts.sum
         end
       end
       private_constant :Node
 
+      # View locating this collection.
+      # @return [Cursor]
       attr_reader :cursor
 
+      # Opens a counted tree and initializes an empty writable cursor when needed.
+      # @param cursor [Cursor] view locating this collection or value
+      # @param tag [Symbol, Integer] storage type tag
+      # @return [BTree]
+      # @raise [InvalidValueError] if the cursor holds an incompatible collection tag
       def initialize(cursor, tag: :linked_array_list)
         @cursor = cursor
         @tag = tag
@@ -42,10 +74,15 @@ module XitDB
         end
       end
 
+      # Returns the total number of elements below the root.
+      # @return [Integer]
       def size
         header.first
       end
 
+      # Reads an element by index, counting negative indexes from the end.
+      # @param index [Integer] zero-based element index; negative indexes count from the end
+      # @return [Slot, nil]
       def at(index)
         count, pointer = header
         rank = resolve_index(index, count)
@@ -55,6 +92,12 @@ module XitDB
         node.slots.fetch(rank)
       end
 
+      # Inserts a slot from index zero through size and shifts later elements.
+      # @param index [Integer] insertion position from zero through size; negative indexes are rejected
+      # @param slot [Slot] stored value or record descriptor
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def insert(index, slot)
         validate_slot(slot)
         count, pointer = header
@@ -84,6 +127,15 @@ module XitDB
         self
       end
 
+      # Replaces an existing element while preserving optional child ownership.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @param slot [Slot] stored value or record descriptor
+      # @param owner [Cursor, nil] child view to preserve during replacement
+      # @param collection [Boolean] whether this is an internal copied collection update
+      # @param propagate [Boolean] whether to update parent collection paths immediately
+      # @return [self]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def replace(index, slot, owner: nil, collection: false, propagate: true)
         validate_slot(slot)
         count, pointer = header
@@ -104,6 +156,9 @@ module XitDB
         self
       end
 
+      # Removes the indexed slot and joins small neighboring nodes when possible.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [Slot, nil]
       def delete_at(index)
         count, pointer = header
         rank = resolve_index(index, count)
@@ -125,6 +180,11 @@ module XitDB
         end
       end
 
+      # Creates detached trees that share unchanged nodes around the split index.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [Array<BTree>]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def split(index)
         count, pointer = header
         integer_index(index)
@@ -136,6 +196,12 @@ module XitDB
         end
       end
 
+      # Creates a detached tree for a range without replacing the source root.
+      # @param start [Integer] first selected index; negative indexes count from the end
+      # @param length [Integer] number of elements in the selected range
+      # @return [BTree]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [IndexError] if the index or range is outside the allowed list positions
       def slice(start, length)
         count, pointer = header
         integer_index(start)
@@ -152,6 +218,11 @@ module XitDB
         end
       end
 
+      # Creates a detached tree joining two lists from the same database.
+      # @param other [BTree] list from the same database to append to this list
+      # @return [BTree]
+      # @raise [ReadOnlyError] if the collection has no writable transaction
+      # @raise [ForeignValueError] if the other list belongs to another database
       def concat(other)
         raise TypeError, "expected BTree" unless other.is_a?(BTree)
         unless cursor.database.equal?(other.cursor.database)
@@ -169,6 +240,13 @@ module XitDB
         end
       end
 
+      # Walks leaves in order from an index, continuing through recorded ancestor paths.
+      # @param index [Integer] zero-based element index; supported negative indexes count from the end
+      # @return [self, Enumerator<Slot>]
+      # @yield [slot] receives each visible element
+      # @yieldparam slot [Slot] stored element
+      # @yieldreturn [Object] ignored
+      # @note Without a block, returns an Enumerator.
       def each_from_index(index, &block)
         return enum_for(:each_from_index, index) unless block_given?
 
@@ -196,6 +274,7 @@ module XitDB
 
       private
 
+      # Pops exhausted traversal frames until a following sibling is available.
       def next_frame(path)
         until path.empty?
           candidate = path.pop || raise(CorruptionError, "missing B-tree path")
@@ -204,6 +283,7 @@ module XitDB
         nil
       end
 
+      # Removes an empty child or merges it with a neighbor when both fit.
       def rebalance_child(transaction, node, parent, index, old_pointer)
         if node.slots.empty?
           parent.slots.delete_at(index)
@@ -215,6 +295,7 @@ module XitDB
         end
       end
 
+      # Selects an adjacent node and returns their merged node and replacement index.
       def merge_neighbor(node, parent, index)
         first = index + 1 < parent.slots.size ? index : index - 1
         neighbor_index = first == index ? first + 1 : first
@@ -228,6 +309,7 @@ module XitDB
         [node, first]
       end
 
+      # Removes redundant single-child root levels after deletion.
       def collapse_root(transaction, node, old_pointer, count)
         unless node.kind == 1 && node.slots.size == 1
           node = Node.new(0, [], []) if node.slots.empty?
@@ -248,20 +330,24 @@ module XitDB
         end
       end
 
+      # Checks that an index is an Integer.
       def integer_index(index)
         raise TypeError, "array index must be an Integer" unless index.is_a?(Integer)
       end
 
+      # Normalizes a negative index and rejects positions outside the tree.
       def resolve_index(index, count)
         integer_index(index)
         index += count if index.negative?
         index if index >= 0 && index < count
       end
 
+      # Reads a range inside the supplied or current cursor boundary.
       def read(offset, length, bound: cursor.bound)
         cursor.database.read_at(offset, length, bound: bound)
       end
 
+      # Reads root count and pointer, treating an empty slot as an empty tree.
       def header
         slot = cursor.slot
         return [0, nil] if slot.tag == :none
@@ -270,6 +356,7 @@ module XitDB
         Format.pair(read(slot.value, HEADER_SIZE), "Q>Q>")
       end
 
+      # Decodes a leaf or branch and checks its expected subtree count.
       def read_node(pointer, expected, bound: cursor.bound)
         kind, num = read_node_header(pointer, bound)
         bytes = read(pointer, kind.zero? ? LEAF_SIZE : BRANCH_SIZE, bound: bound)
@@ -281,6 +368,7 @@ module XitDB
         node
       end
 
+      # Validates the node kind and number of occupied slots.
       def read_node_header(pointer, bound)
         kind, num = Format.pair(read(pointer, 2, bound: bound), "CC")
         unless [0, 1].include?(kind) && num <= CAPACITY && (kind.zero? || num.positive?)
@@ -290,6 +378,7 @@ module XitDB
         [kind, num]
       end
 
+      # Decodes and validates a sequence of packed slots.
       def node_slots(bytes, start, count)
         Array.new(count) do |index|
           slot = Slot.parse(Format.slice(bytes, start + (index * Slot::SIZE), Slot::SIZE))
@@ -299,6 +388,7 @@ module XitDB
         end
       end
 
+      # Checks slot roles and the expected element count below a node.
       def validate_node(node, expected)
         case node.kind
         when 1 then validate_branch(node)
@@ -308,16 +398,19 @@ module XitDB
         raise CorruptionError, "invalid B-tree subtree count" unless node.size == expected
       end
 
+      # Requires branch pointers and positive child counts.
       def validate_branch(node)
         return unless node.slots.any? { |slot| slot.tag != :index } || node.counts.any?(&:zero?)
 
         raise CorruptionError, "invalid B-tree branch"
       end
 
+      # Rejects branch pointers inside leaf data.
       def validate_leaf(node)
         raise CorruptionError, "index slot in B-tree leaf" if node.slots.any? { |slot| slot.tag == :index }
       end
 
+      # Follows subtree counts to an indexed leaf, recording ancestors and rejecting cycles.
       def descend(pointer, rank, expected, insertion: false, ancestors: [])
         return [[], Node.new(0, [], []), 0] unless pointer
 
@@ -342,16 +435,19 @@ module XitDB
         end
       end
 
+      # Finds the current leaf pointer from a recorded path or root.
       def pointer_for(path, root_pointer)
         path.empty? ? root_pointer : path.last[1].slots[path.last[2]].value
       end
 
+      # Rejects unknown tags and internal branch slots as user elements.
       def validate_slot(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown slot tag" unless Slot::TAGS.include?(slot.tag)
         raise InvalidValueError, "index slot is internal to B-tree branches" if slot.tag == :index
       end
 
+      # Runs a mutation with rollback of bytes and cursors on any exception.
       def mutate
         cursor.slot
         transaction = cursor.transaction
@@ -369,7 +465,7 @@ module XitDB
         end
       end
 
-      # References retain each source cursor's read boundary while nodes are shared.
+      # Reads a shared subtree using its retained source boundary.
       def node_for(ref)
         pointer = ref[0]
         raise CorruptionError, "missing B-tree pointer" unless pointer
@@ -377,16 +473,19 @@ module XitDB
         read_node(pointer, ref[1], bound: ref[2] || cursor.bound)
       end
 
+      # Builds a child reference retaining the parent's read boundary.
       def child_ref(ref, node, index)
         [node.slots[index].value, node.counts[index], ref[2]]
       end
 
+      # Combines slots and counts from nodes at the same level.
       def merge_nodes(left, right)
         raise CorruptionError, "unequal B-tree node kinds" unless left.kind == right.kind
 
         Node.new(left.kind, left.slots + right.slots, left.counts + right.counts)
       end
 
+      # Writes one node or divides an oversized node into two references.
       def assemble(transaction, node)
         if node.slots.size <= CAPACITY
           [[write_node(transaction, node), node.size, nil]]
@@ -399,6 +498,7 @@ module XitDB
         end
       end
 
+      # Builds a branch from subtree pointers and counts.
       def branch(refs)
         slots = refs.map do |ref|
           pointer = ref[0]
@@ -409,6 +509,7 @@ module XitDB
         Node.new(1, slots, refs.map { |ref| ref[1] })
       end
 
+      # Counts branch levels while rejecting cyclic child pointers.
       def height(ref)
         levels = 0
         # @type var seen: Hash[Integer?, bool]
@@ -425,6 +526,7 @@ module XitDB
         end
       end
 
+      # Aligns tree heights and joins boundary paths while sharing other subtrees.
       def join_roots(transaction, left, right)
         return right if left[1].zero?
         return left if right[1].zero?
@@ -461,6 +563,7 @@ module XitDB
         result.size == 1 ? result.first : assemble(transaction, branch(result)).first
       end
 
+      # Builds a subtree for an adjacent range of existing children.
       def sibling_root(transaction, ref, node, range)
         indices = node.slots.each_index.to_a[range] || []
         refs = indices.map { |index| child_ref(ref, node, index) }
@@ -470,6 +573,7 @@ module XitDB
         assemble(transaction, branch(refs)).first
       end
 
+      # Divides a tree at a rank and rebuilds only the split path.
       def split_root(transaction, ref, rank)
         return [[nil, 0, nil], ref] if rank.zero?
         return [ref, [nil, 0, nil]] if rank == ref[1]
@@ -504,12 +608,14 @@ module XitDB
         [left, right]
       end
 
+      # Creates a new transaction-owned cursor for a shared subtree root.
       def detached(transaction, ref)
         pointer = ref[0] || write_node(transaction, Node.new(0, [], []))
         position = transaction.append([ref[1], pointer].pack("Q>Q>"))
         self.class.new(transaction.cursor(slot: Slot.new(tag: :linked_array_list, value: position)))
       end
 
+      # Encodes a node, reusing storage only at or above the writable boundary.
       def write_node(transaction, node, old_pointer = nil)
         bytes = [node.kind, node.slots.size].pack("CC")
         bytes << node.slots.map(&:to_bytes).join << ("\0".b * ((CAPACITY - node.slots.size) * Slot::SIZE))
@@ -522,6 +628,7 @@ module XitDB
         end
       end
 
+      # Writes one node or splits its overflow into two balanced nodes.
       def write_split(transaction, node, old_pointer)
         return [[write_node(transaction, node, old_pointer), node.size]] if node.slots.size <= CAPACITY
 
@@ -530,6 +637,7 @@ module XitDB
         [[write_node(transaction, left, old_pointer), left.size], [write_node(transaction, right), right.size]]
       end
 
+      # Updates the collection header and propagates its slot through ancestors.
       def publish(transaction, count, pointer, propagate: true)
         bytes = [count, pointer].pack("Q>Q>")
         old = cursor.slot

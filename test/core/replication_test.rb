@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
+# Regression tests for full and incremental replication, staging validation, and publication failures.
+
 require "English"
 require "test_helper"
 require "stringio"
 require "tmpdir"
 require_relative "../support/fault_store"
 
+# Covers full and incremental replication, staging validation, and publication failures.
+# @api private
 class ReplicationTest < Minitest::Test
   Core = XitDB::Core
   EMPTY = ["7869740000010014736861310000000000000001000000000000000000000000000000003e" \
@@ -15,6 +19,7 @@ class ReplicationTest < Minitest::Test
   DIVERGED = ["0800000000000000078877665544332211bd45d60798aeec1e"].pack("H*").freeze
   SECOND = ["080000000000000008123456789abcdef02f0a1a87b732917d"].pack("H*").freeze
 
+  # Checks that incremental replication resumes matching history and detects divergent commits.
   def test_incremental_replication_and_diverged_history
     source = database(image(FIRST, SECOND))
     replica = database(EMPTY)
@@ -40,6 +45,7 @@ class ReplicationTest < Minitest::Test
     assert_equal 0, source.replication_start(Core::Database.memory(file_id: 2).replica_state)
   end
 
+  # Checks historical full exports rewrite header and accept partial writes.
   def test_historical_full_exports_rewrite_header_and_accept_partial_writes
     source = database(image(FIRST, SECOND))
     output = StringIO.new("".b)
@@ -54,6 +60,7 @@ class ReplicationTest < Minitest::Test
     assert_equal EMPTY, empty.string
   end
 
+  # Checks invalid ranges and in place replacement leave committed bytes unchanged.
   def test_invalid_ranges_and_in_place_replacement_leave_committed_bytes_unchanged
     store = Core::MemoryStore.new(image(FIRST))
     db = Core::Database.new(store: store)
@@ -70,6 +77,7 @@ class ReplicationTest < Minitest::Test
     assert_equal image(FIRST), store.read_at(0, store.length)
   end
 
+  # Checks interrupted append and wrong trailers preserve last good state.
   def test_interrupted_append_and_wrong_trailers_preserve_last_good_state
     Dir.mktmpdir do |dir|
       path = File.join(dir, "replica")
@@ -96,6 +104,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks that staged full copy validates image and preserves existing targets.
   def test_staged_full_copy_validates_image_and_preserves_existing_targets
     Dir.mktmpdir do |dir|
       path = File.join(dir, "stage")
@@ -125,6 +134,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks staging rejects aliases and checks emptiness after locking.
   def test_staging_rejects_aliases_and_checks_emptiness_after_locking
     Dir.mktmpdir do |dir|
       source_path = File.join(dir, "source")
@@ -161,6 +171,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks staging rejects malformed headers root slots and trailers.
   def test_staging_rejects_malformed_headers_root_slots_and_trailers
     corruptions = [
       ->(bytes) { bytes[0, 3] = "bad" },
@@ -181,6 +192,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks transport errors nonlocal exits and cleanup failure preserve the original error.
   def test_transport_errors_nonlocal_exits_and_cleanup_failure_preserve_the_original_error
     %i[error throw cleanup_failure].each do |point|
       store = FaultStore.new(Core::MemoryStore.new(image(FIRST)))
@@ -212,6 +224,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks invalid transport progress is rejected without consuming another frame.
   def test_invalid_transport_progress_is_rejected_without_consuming_another_frame
     source = database(image(FIRST))
     [0, nil, -1, 1000].each do |progress|
@@ -230,6 +243,7 @@ class ReplicationTest < Minitest::Test
     source.close
   end
 
+  # Checks that file publication failures classify durability and recover.
   def test_file_publication_failures_classify_durability_and_recover
     outcomes = { append: :not_committed, data_sync: :not_committed, header_write: :unknown,
                  header_sync: :unknown, release: :committed }
@@ -276,6 +290,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks that actual partial file write and sync failure preserve old commit.
   def test_actual_partial_file_write_and_sync_failure_preserve_old_commit
     Dir.mktmpdir do |dir|
       path = File.join(dir, "replica")
@@ -303,6 +318,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks that staging interrupts and sync failures close the descriptor.
   def test_staging_interrupts_and_sync_failures_close_the_descriptor
     interrupted_points = %i[interrupt throw throw_in_rescue]
     Dir.mktmpdir do |dir|
@@ -359,6 +375,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks staging persistent write failure closes descriptor and retains physical bytes.
   def test_staging_persistent_write_failure_closes_descriptor_and_retains_physical_bytes
     [false, true].product([0, 3]).each do |existing, prefix_length|
       Dir.mktmpdir do |dir|
@@ -409,6 +426,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks staging transient write failure uses ordinary close to finish flushing.
   def test_staging_transient_write_failure_uses_ordinary_close_to_finish_flushing
     Dir.mktmpdir do |dir|
       path = File.join(dir, "stage")
@@ -444,6 +462,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks export is fixed during concurrent append and close waits.
   def test_export_is_fixed_during_concurrent_append_and_close_waits
     Dir.mktmpdir do |dir|
       path = File.join(dir, "source")
@@ -484,6 +503,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks application refreshes under lock and preserves snapshots.
   def test_application_refreshes_under_lock_and_preserves_snapshots
     Dir.mktmpdir do |dir|
       path = File.join(dir, "replica")
@@ -514,6 +534,7 @@ class ReplicationTest < Minitest::Test
     end
   end
 
+  # Checks opaque profile bytes bounded streaming and compaction generation.
   def test_opaque_profile_bytes_bounded_streaming_and_compaction_generation
     Dir.mktmpdir do |dir|
       source = Core::Database.memory(hash_id: "rb01", file_id: 1)
@@ -554,16 +575,27 @@ class ReplicationTest < Minitest::Test
 
   private
 
+  # Builds raw database bytes with supplied trailers and a matching cached root.
+  # @param trailers [Array<String>] serialized trailers
+  # @return [String] binary database image
   def image(*trailers)
     bytes = EMPTY + trailers.join
     bytes[20, 17] = trailers.last.byteslice(0, 9) + [bytes.bytesize].pack("Q>") unless trailers.empty?
     bytes
   end
 
+  # Opens a raw memory database from deliberately constructed fixture bytes.
+  # @param bytes [String] binary database image
+  # @return [XitDB::Core::Database] database under test
   def database(bytes)
     Core::Database.new(store: Core::MemoryStore.new(bytes))
   end
 
+  # Intercepts target-store opening to install the requested fault.
+  # @param path [String] destination path to intercept
+  # @param configure [Proc] callback that configures the target store
+  # @yield executes the operation under test
+  # @return [Object] block result
   def with_target_store(path, configure)
     original = Core::FileStore.method(:open)
     Core::FileStore.singleton_class.remove_method(:open)

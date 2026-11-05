@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Runs repository quality checks through Rake, including packaged examples.
+# A failed check produces an unsuccessful exit status.
+
 require "rbconfig"
 
 root = File.expand_path("..", __dir__)

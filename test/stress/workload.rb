@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+# Builds large fixtures and measures database operations inside a Docker memory limit.
+# The command-line entry point runs inside the container.
+
 require "json"
 require "digest"
 require "fileutils"
@@ -9,17 +12,22 @@ require "tmpdir"
 require "timeout"
 require_relative "../../lib/xitdb/ruby"
 
+# Provides bounded fixtures, measured operations, and isolated workload execution.
+# @api private
 module BoundedWorkload
   MIB = 1024 * 1024
   CHUNK = ("0123456789abcdef" * 4096).b.freeze
 
   # Retain one integer, never the maps or their entries.
+  # @api private
   module OffsetPeak
     class << self
       attr_accessor :entries
     end
     self.entries = 0
 
+    # Records the peak offset-cache entry count before closing the map.
+    # @return [Object] result from the wrapped close
     def close
       OffsetPeak.entries = [OffsetPeak.entries, peak_cache_size].max
       super
@@ -27,6 +35,11 @@ module BoundedWorkload
   end
   XitDB::Core::OffsetMap.prepend(OffsetPeak)
 
+  # Runs a workload in a read-only Docker container with a hard memory limit.
+  # @param mode [String] stress or benchmark
+  # @param limit_mib [Integer] memory limit in MiB, at least 64
+  # @param data_mib [Integer, nil] stress payload size in MiB
+  # @return [Hash] workload and host disk-space report
   def self.isolate(mode, limit_mib:, data_mib: nil)
     raise ArgumentError, "memory limit must be at least 64 MiB" if limit_mib < 64
     raise ArgumentError, "data size must be positive" if data_mib && data_mib <= 0
@@ -66,6 +79,9 @@ module BoundedWorkload
     end
   end
 
+  # Verifies Linux cgroup memory and swap limits before fixture allocation.
+  # @param limit [Integer] requested hard limit in bytes
+  # @return [Hash] verified limits and runtime details
   def self.hard_budget(limit)
     raise "isolated Linux is required" unless RUBY_PLATFORM.include?("linux")
 
@@ -80,6 +96,9 @@ module BoundedWorkload
       "ruby_description" => RUBY_DESCRIPTION, "platform" => RUBY_PLATFORM }
   end
 
+  # Measures elapsed time and Ruby allocations around an operation.
+  # @yield performs the measured operation
+  # @return [Array] result, elapsed seconds, and allocated object count
   def self.measure
     allocated = GC.stat(:total_allocated_objects)
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
@@ -87,6 +106,9 @@ module BoundedWorkload
     [value, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, GC.stat(:total_allocated_objects) - allocated]
   end
 
+  # Writes Linux cgroup and garbage collector statistics to standard error.
+  # @param phase [String] operation label
+  # @return [nil]
   def self.trace(phase)
     return unless RUBY_PLATFORM.include?("linux")
 
@@ -96,15 +118,27 @@ module BoundedWorkload
                        gc: GC.stat.slice(:heap_live_slots, :heap_allocated_pages, :malloc_increase_bytes))
   end
 
+  # Opens a file-backed or memory database with the selected value profile.
+  # @param profile [String] ruby for Ruby values, otherwise portable
+  # @param path [String, nil] path, or nil for memory storage
+  # @return [XitDB::Database] open database
   def self.open_database(profile, path = nil)
     implementation = profile == "ruby" ? XitDB::Ruby : XitDB
     path ? implementation.open(path) : implementation.memory
   end
 
+  # Builds a fixed-width key whose byte order matches its numeric index.
+  # @param index [Integer] row index
+  # @return [String] ordered row key
   def self.key(index)
     format("row-%08d", index)
   end
 
+  # Writes indexed rows, a streamed blob, and two revisions for verification.
+  # @param database [XitDB::Database] empty fixture database
+  # @param bytes [Integer] blob size
+  # @param rows [Integer] indexed row count
+  # @return [String] blob SHA-256 hexadecimal digest
   def self.fixture(database, bytes:, rows:)
     digest = Digest::SHA256.new
     database.transaction do |root|
@@ -125,6 +159,8 @@ module BoundedWorkload
     digest.hexdigest
   end
 
+  # Rejects source reads above 64 KiB to expose unbounded payload reads.
+  # @param database [XitDB::Database] handle to instrument
   def self.bound_reads(database)
     database.core.define_singleton_method(:read_at) do |offset, length, **options|
       raise "source read exceeds 64 KiB: #{length}" if length > 65_536
@@ -133,6 +169,9 @@ module BoundedWorkload
     end
   end
 
+  # Checks first, middle, and last row lookups plus an absent key.
+  # @param database [XitDB::Database] fixture database
+  # @param rows [Integer] expected row count
   def self.check_index(database, rows)
     index = database.snapshot["rows"]
     [0, rows / 2, rows - 1].each do |position|
@@ -141,6 +180,9 @@ module BoundedWorkload
     raise "absent key found" unless index["absent"].nil?
   end
 
+  # Checks all rows through pages of 37 entries without losing rank or progress.
+  # @param database [XitDB::Database] fixture database
+  # @param rows [Integer] expected row count
   def self.check_pages(database, rows)
     index = database.snapshot["rows"]
     position = 0
@@ -157,6 +199,11 @@ module BoundedWorkload
     end
   end
 
+  # Checks blob length and digest with reads of at most 64 KiB.
+  # @param database [XitDB::Database] fixture or converted database
+  # @param bytes [Integer] expected blob size
+  # @param digest [String] expected SHA-256 digest
+  # @param converted [Boolean] whether to use the conversion byte interface
   def self.check_stream(database, bytes, digest, converted: false)
     actual = Digest::SHA256.new
     count = 0
@@ -183,6 +230,14 @@ module BoundedWorkload
     raise "stream contents mismatch" unless count == bytes && actual.hexdigest == digest
   end
 
+  # Measures lookup, pagination, streaming, conversion, and compaction, then verifies results.
+  # @param database [XitDB::Database] source fixture
+  # @param profile [String] source profile
+  # @param bytes [Integer] expected blob size
+  # @param rows [Integer] expected row count
+  # @param digest [String] expected blob digest
+  # @param directory [String] scratch directory
+  # @return [Hash] timings, allocations, and output details
   def self.operations(database, profile:, bytes:, rows:, digest:, directory:)
     measurements = {}
     %w[lookup pagination stream].each do |operation|
@@ -231,6 +286,10 @@ module BoundedWorkload
     measurements
   end
 
+  # Runs the large-data fixture and measured operations for both profiles.
+  # @param directory [String] scratch directory
+  # @param bytes [Integer] blob size
+  # @return [Array<Hash>] portable and Ruby reports
   def self.stress(directory, bytes)
     %w[portable ruby].map do |profile|
       path = File.join(directory, "source.xit")
@@ -257,6 +316,9 @@ module BoundedWorkload
     end
   end
 
+  # Collects three samples for each profile, storage kind, and handle state.
+  # @param directory [String] scratch directory
+  # @return [Array<Hash>] sample timings, allocations, and statistics
   def self.benchmarks(directory)
     workloads = []
     storage_kinds = %w[file memory]
@@ -320,6 +382,9 @@ module BoundedWorkload
     workloads
   end
 
+  # Measures conversion of 25 revisions sharing arrays, with optional deep nesting.
+  # @param directory [String] scratch directory
+  # @return [Array<Hash>] reports including timeout and verification results
   def self.shared_histories(directory)
     depths = [0, 600]
     %w[portable ruby].flat_map do |profile|
