@@ -205,6 +205,19 @@ class StreamsTest < Minitest::Test
     end
   end
 
+  def test_tagged_bytes_reject_before_reading_corrupt_metadata
+    @db.close
+    store = XitDB::Core::MemoryStore.new
+    @db = XitDB::Database.new(core: XitDB::Core::Database.new(store: store), profile: XitDB::Profiles::Portable.new)
+    @db.transaction { |root| root["tagged"] = XitDB::Core::ByteValue.new("long tagged payload", format_tag: "zz") }
+    slot = @db.snapshot.adapter.lookup("tagged")
+    store.write_at(slot.value, [(1 << 64) - 1].pack("Q>"))
+    error = assert_raises(XitDB::InvalidValueError) do
+      @db.snapshot.open_bytes("tagged") { flunk "tagged reader was yielded" }
+    end
+    assert_equal "stream requires untagged bytes", error.message
+  end
+
   def test_io_argument_errors_and_conversion
     @db.transaction { |root| root["blob"] = "abc" }
     @db.snapshot.open_bytes("blob") do |io|

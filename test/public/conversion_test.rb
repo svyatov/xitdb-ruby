@@ -133,6 +133,34 @@ class ConversionTest < Minitest::Test
     assert_raises(XitDB::UnsupportedValueError) { source.convert(to: path("reserved"), profile: :ruby) }
   end
 
+  def test_short_and_empty_conversion_values_retain_external_representation
+    source = track(XitDB.memory)
+    source.transaction do |root|
+      root["empty"] = ""
+      root["short"] = "abc"
+      root["opaque"] = XitDB::Core::ByteValue.new("x", format_tag: "zz")
+    end
+    portable = track(source.convert(to: path("short-portable"), profile: :portable))
+    native = track(source.convert(to: path("short-native"), profile: :ruby))
+    restored = track(native.convert(to: path("short-restored"), profile: :portable))
+    clone = track(native.convert(to: path("short-clone"), profile: :ruby))
+
+    [portable, native, restored, clone].each do |database|
+      snapshot = database.snapshot
+      assert_equal "", snapshot["empty"]
+      assert_equal "abc", snapshot["short"]
+      assert_equal "x", snapshot["opaque"].bytes
+      assert_equal "zz", snapshot["opaque"].format_tag
+      ["empty", "short", "opaque"].each do |key|
+        assert_equal :bytes, snapshot.adapter.lookup(key).tag
+      end
+      ["empty", "short"].each do |key|
+        assert_equal database.profile.instance_of?(XitDB::Profiles::Ruby), snapshot.adapter.lookup(key).full
+      end
+      assert snapshot.adapter.lookup("opaque").full
+    end
+  end
+
   def test_copy_from_cross_file_paths_and_atomic_rollback
     source = track(XitDB::Ruby.memory)
     source.transaction { |root| root[:person] = {name: "Ada", scores: [1, 2]} }
