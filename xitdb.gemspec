@@ -14,6 +14,11 @@ Gem::Specification.new do |spec|
   spec.files = Dir["lib/**/*.rb", "sig/**/*.rbs", "sig/manifest.yaml", "examples/*.rb", "README.md", "CHANGELOG.md",
                    "LICENSE", "docs/*.md"]
   spec.require_paths = ["lib"]
+  spec.metadata["source_code_uri"] = spec.homepage
+  spec.metadata["bug_tracker_uri"] = "#{spec.homepage}/issues"
+  spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"
+  spec.metadata["documentation_uri"] = "#{spec.homepage}#readme"
+  spec.metadata["allowed_push_host"] = "https://rubygems.org"
   spec.add_dependency "bigdecimal", ">= 3.1"
   spec.add_dependency "date", ">= 3.3"
   spec.metadata["rubygems_mfa_required"] = "true"
