@@ -12,8 +12,9 @@ class TypeCoverageTest < Minitest::Test
 
   def test_plain_rake_checks_checkout_types_without_bundle_exec
     root = File.expand_path("../..", __dir__)
+    environment = { "GEM_HOME" => Gem.dir, "GEM_PATH" => Gem.path.join(File::PATH_SEPARATOR) }
     output, status = Bundler.with_unbundled_env do
-      Open3.capture2e(Gem.ruby, Gem.bin_path("rake", "rake"), "types", chdir: root)
+      Open3.capture2e(environment, Gem.ruby, Gem.bin_path("rake", "rake"), "types", chdir: root)
     end
 
     assert_predicate status, :success?, output
