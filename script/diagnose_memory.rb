@@ -17,15 +17,13 @@ Dir.mktmpdir("xitdb-diagnostic-") do |directory|
   puts command("uname", "-a")
   puts command("df", "-PTk", directory)
   name = "xitdb-diagnostic-#{SecureRandom.hex(8)}"
-  source = "require './test/stress/workload'; BoundedWorkload.hard_budget(268_435_456); " \
-           "XitDB.open('/work/source.xit') { |db| " \
-           "BoundedWorkload.fixture(db, bytes: 805_306_368, rows: 8192) }"
   begin
     id = command("docker", "run", "-d", "--pull=never", "--network=none", "--name", name,
                  "--memory", "256m", "--memory-swap", "256m", "--read-only",
                  "--mount", "type=bind,src=#{File.expand_path('..', __dir__)},dst=/repo,readonly",
                  "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/repo",
-                 "--env", "TMPDIR=/work", "ruby:4.0.9-slim", "ruby", "-e", source).strip
+                 "--env", "TMPDIR=/work", "ruby:4.0.9-slim", "ruby", "test/stress/workload.rb",
+                 "stress", "/work", "268435456", "768").strip
     state = JSON.parse(command("docker", "inspect", "--format", "{{json .State}}", id))
     entry = File.readlines("/proc/#{state.fetch('Pid')}/cgroup").find { |line| line.start_with?("0::") }
     raise "missing cgroup v2 entry" unless entry
