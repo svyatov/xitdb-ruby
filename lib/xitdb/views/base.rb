@@ -192,7 +192,7 @@ module XitDB
         path + [selector]
       end
 
-      def each_entries(entries)
+      def each_entries(entries, selectors_only: false)
         iterator = nil
         generation = nil
         exhausted = false
@@ -212,7 +212,7 @@ module XitDB
               exhausted = true
               next
             end
-            if %i[set sorted_set].include?(kind)
+            if selectors_only || %i[set sorted_set].include?(kind)
               [selector]
             else
               # Transaction entries resolve again so replacement values stay live.

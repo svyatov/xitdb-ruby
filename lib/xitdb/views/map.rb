@@ -47,7 +47,7 @@ module XitDB
       def each_key
         return enum_for(__method__) unless block_given?
 
-        each { |key, _value| yield key }
+        each_entries(-> { adapter.each_entry }, selectors_only: true) { |key| yield key }
         self
       end
 

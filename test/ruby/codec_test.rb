@@ -61,6 +61,24 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  def test_key_enumeration_never_loads_values
+    loads = 0
+    codec = money_codec(load: ->(_) { loads += 1; raise "unrequested loader" })
+    [XitDB.map, XitDB.sorted_map(key: :string)].each do |declaration|
+      XitDB::Ruby.memory(codecs: [codec]) do |db|
+        db.transaction do |root|
+          root[:items] = declaration
+          root[:items]["price"] = Money.new("100")
+          assert_equal ["price"], root[:items].keys
+          assert_equal ["price"], root[:items].each_key.to_a
+        end
+        assert_equal ["price"], db.snapshot[:items].keys
+        assert_equal ["price"], db.snapshot[:items].each_key.to_a
+        assert_equal 0, loads
+      end
+    end
+  end
+
   def test_registry_rejects_duplicates_and_builtin_overrides_before_filesystem_effects
     codec = money_codec
     builtin_types = [NilClass, FalseClass, TrueClass, Integer, Float, String, Symbol, Time,

@@ -2,6 +2,7 @@
 
 require "test_helper"
 require "objspace"
+require "xitdb/ruby"
 
 class PublicIterationTest < Minitest::Test
   def setup
@@ -80,6 +81,45 @@ class PublicIterationTest < Minitest::Test
     items.each { |child| child.size }
     GC.start
     assert_operator retained_context_bytes(items.context) - before, :<, 4096
+  end
+
+  def test_key_enumeration_does_not_read_large_values_and_keeps_lifetime_checks
+    configurations = [[XitDB, [XitDB.map, XitDB.map(counted: true), XitDB.sorted_map]],
+                      [XitDB::Ruby, [XitDB.map, XitDB.sorted_map(key: :string)]]]
+    configurations.each do |api, declarations|
+      declarations.each do |declaration|
+        api.memory do |db|
+          items = nil
+          db.transaction do |root|
+            root["items"] = declaration
+            items = root["items"].merge!({"a" => "v" * 100_000, "b" => "w" * 100_000})
+            forbidden = items.adapter.each_entry.map { |_key, slot| slot.value + 8 }
+            store = db.core.instance_variable_get(:@store)
+            original = store.method(:read_at)
+            store.define_singleton_method(:read_at) do |offset, length|
+              raise "value payload read" if forbidden.any? { |start| offset <= start && offset + length > start }
+              original.call(offset, length)
+            end
+            assert_equal %w[a b], items.keys.sort
+            assert_equal %w[a b], items.each_key.to_a.sort
+            iterator = items.each_key
+            iterator.next
+            items["c"] = 1
+            assert_raises(XitDB::ConcurrentModificationError) { iterator.next }
+            iterator = items.each_key
+            iterator.next
+            root["items"] = {}
+            assert_raises(XitDB::ExpiredViewError) { iterator.next }
+            store.singleton_class.remove_method(:read_at)
+          end
+          assert_raises(XitDB::ExpiredViewError) { items.each_key.to_a }
+          snapshot = db.snapshot
+          db.close
+          assert_raises(XitDB::ClosedError) { snapshot.keys }
+          assert_raises(XitDB::ClosedError) { snapshot.each_key.to_a }
+        end
+      end
+    end
   end
 
   def test_dropped_transaction_children_release_generation_metadata
