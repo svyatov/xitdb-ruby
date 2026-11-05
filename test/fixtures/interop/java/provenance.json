@@ -4,12 +4,12 @@
   "source_glob": "src/main/java/**/*.java",
   "source_sha256": "913f0f8b26087b7799a619eb38b3692d82266d95cf3c7182b795e6c380874185",
   "runtime": "openjdk 25.0.5 2026-10-20 LTS\nOpenJDK Runtime Environment Temurin-25.0.5+8 (build 25.0.5+8-LTS)\nOpenJDK 64-Bit Server VM Temurin-25.0.5+8 (build 25.0.5+8-LTS, mixed mode, sharing)",
-  "generated_at": "2026-11-05T08:18:03Z",
+  "generated_at": "2026-11-05T15:56:09Z",
   "producer": "pinned upstream library through test/interop/java",
   "fetch_command": "gh api repos/xit-vcs/xitdb-java/tarball/905be4a6035975846d4ffe2e76ade8929eaf9d0d",
   "generate_command": "ruby script/interop.rb --generate-fixtures",
-  "generator_sha256": "85ba9e91215c4f86010a69bdbc68632438d5624f1d6c4bf3d0a164b42bc109a7",
+  "generator_sha256": "df72f8e2704e6b60855433e589028dda9ca4283d9d1fef39629a89901f54fad7",
   "adapter_sha256": "4b7a4181c134e640aedc9646413ee2f848f1b0f528a291b3f04e159b3c05a874",
   "manifest_sha256": "8a32777b647cf299ac638f889901eaa6bd01868571b56e18bb293501cf9e299b",
-  "fixture_sha256": "9b6fba2a6d80084c744464ecdebd1a391ca507bb8689c86f4a916eebef284140"
+  "fixture_sha256": "30634a97bef6324d1f1d52832905c301ddac2ecdc8d1d98cacc1b05349ec5089"
 }

@@ -4,12 +4,12 @@
   "source_glob": "src/lib.zig",
   "source_sha256": "9ed624ae56356f534b6bd7fc27f889bbacf27e574c01467bb783f3365078663a",
   "runtime": "Zig 0.17.0",
-  "generated_at": "2026-11-05T08:18:08Z",
+  "generated_at": "2026-11-05T15:56:15Z",
   "producer": "pinned upstream library through test/interop/zig",
   "fetch_command": "gh api repos/xit-vcs/xitdb/tarball/6b93af1af3a260399fa0a0b1b268ded2cbf5eec5",
   "generate_command": "ruby script/interop.rb --generate-fixtures",
-  "generator_sha256": "85ba9e91215c4f86010a69bdbc68632438d5624f1d6c4bf3d0a164b42bc109a7",
+  "generator_sha256": "df72f8e2704e6b60855433e589028dda9ca4283d9d1fef39629a89901f54fad7",
   "adapter_sha256": "68a80a74ac5f1c597f070cbbc18f27db07e566604509065fecfae33058e73c14",
   "manifest_sha256": "8a32777b647cf299ac638f889901eaa6bd01868571b56e18bb293501cf9e299b",
-  "fixture_sha256": "239e6ba0fafbbc38070b1efd9b40ecb1dec1137fa5bb77d052993b05db6cb8ed"
+  "fixture_sha256": "476145b05b359f120ad43470cfb09b9bf8c3060d1a7e0f02abc6406a3d629d53"
 }

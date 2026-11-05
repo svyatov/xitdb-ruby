@@ -4,14 +4,12 @@
   "source_glob": "src/**/*.ts",
   "source_sha256": "e5852414c881ddea44a7c4a594a12ab6a02f9c50bf4d7701c9014a236edf2e9b",
   "runtime": "Bun 1.4.4",
-  "generated_at": "2026-11-05T08:42:01Z",
+  "generated_at": "2026-11-05T15:56:07Z",
   "producer": "pinned upstream library through test/interop/typescript",
   "fetch_command": "gh api repos/xit-vcs/xitdb-ts/tarball/01ca291fd1a57a2047ee03ca6344abd009480730",
   "generate_command": "ruby script/interop.rb --generate-fixtures",
-  "generator_sha256": "85ba9e91215c4f86010a69bdbc68632438d5624f1d6c4bf3d0a164b42bc109a7",
+  "generator_sha256": "df72f8e2704e6b60855433e589028dda9ca4283d9d1fef39629a89901f54fad7",
   "adapter_sha256": "94087b476c840e9ec51103c8973b5f4e0b35b76442dd4bbeb89161d0a149ff79",
   "manifest_sha256": "8a32777b647cf299ac638f889901eaa6bd01868571b56e18bb293501cf9e299b",
-  "fixture_sha256": "19114afab864a26f5c63364faf0d15de685d31eaa0acbcabe0d92a53ea44c89c",
-  "regenerate_command": "ruby /private/tmp/xitdb-task23-fix1-fixture.rb",
-  "regenerator_sha256": "32b21dd8ebaa13b8d5dadd838ca0d4fdfe0daf12d2d4629f79e2d0f3d8125f4d"
+  "fixture_sha256": "82af426833fbcf3d73ca519c83be45f0cf8c8b3ae7e60b0cdb7731977462ab7c"
 }
