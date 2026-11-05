@@ -181,13 +181,37 @@ module XitDB
             next false unless found
 
             node.slots.delete_at(index)
-            child_pointer = write_node(tx, node, pointer_for(path, pointer))
+            old_pointer = pointer_for(path, pointer)
             path.reverse_each do |parent_pointer, parent, child_index|
-              parent.slots[child_index] = Slot.new(tag: :index, value: child_pointer)
-              parent.counts[child_index] -= 1
-              child_pointer = write_node(tx, parent, parent_pointer)
+              if node.size.zero?
+                parent.slots.delete_at(child_index)
+                parent.counts.delete_at(child_index)
+                parent.separators.delete_at(child_index)
+                parent.separators[0] = Slot.new unless parent.separators.empty?
+              else
+                parent.slots[child_index] = Slot.new(tag: :index, value: write_node(tx, node, old_pointer))
+                parent.counts[child_index] = node.size
+              end
+              node = parent
+              old_pointer = parent_pointer
             end
-            publish(tx, count - 1, child_pointer)
+            if node.kind == 1 && node.slots.size == 1
+              root_pointer = node.slots.first.value
+              seen = {}
+              loop do
+                raise CorruptionError, "cyclic sorted branch" if seen[root_pointer]
+
+                seen[root_pointer] = true
+                child = read_node(root_pointer, count - 1)
+                break unless child.kind == 1 && child.slots.size == 1
+
+                root_pointer = child.slots.first.value
+              end
+            else
+              node = Node.new(0, [], [], []) if node.size.zero?
+              root_pointer = write_node(tx, node, old_pointer)
+            end
+            publish(tx, count - 1, root_pointer)
             cursor.invalidate_children(index: key.b)
             true
           end

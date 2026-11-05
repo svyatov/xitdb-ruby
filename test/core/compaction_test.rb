@@ -97,6 +97,52 @@ class CompactionTest < Minitest::Test
     end
   end
 
+  def test_sorted_churn_reclaims_empty_routes_before_compaction
+    configurations = [[Core::Database, Core::SortedMap], [Core::Database, Core::SortedSet],
+                      [XitDB, XitDB.sorted_map], [XitDB, XitDB.sorted_set],
+                      [XitDB::Ruby, XitDB.map], [XitDB::Ruby, XitDB.set],
+                      [XitDB::Ruby, XitDB.sorted_map(key: :string)], [XitDB::Ruby, XitDB.sorted_set(key: :string)]]
+    configurations.each do |api, declaration|
+      sizes = [0, 512].map do |churn|
+        Dir.mktmpdir do |dir|
+          source = api.open(File.join(dir, "source"))
+          source.transaction do |root|
+            if api == Core::Database
+              items = declaration.new(root)
+              add = ->(key) { declaration == Core::SortedSet ? items.add(key) : items.put(key, value: Core::Slot.uint(1)) }
+              remove = ->(key) { items.remove(key) }
+            else
+              root["items"] = declaration
+              items = root["items"]
+              add = ->(key) { items.kind.to_s.end_with?("set") ? items.add(key) : items[key] = 1 }
+              remove = ->(key) { items.delete(key) }
+            end
+            add.call("live")
+            (0...churn).each_slice(32) do |batch|
+              batch.each { |index| add.call(format("%08d", index)) }
+              batch.each { |index| remove.call(format("%08d", index)) }
+              assert_equal 1, items.size
+            end
+          end
+          original = File.binread(File.join(dir, "source"))
+          compacted = source.compact(to: File.join(dir, "target"))
+          if api == Core::Database
+            assert_equal ["live"], declaration.new(compacted.root_cursor).map(&:first)
+          else
+            expected = declaration.kind.to_s.end_with?("set") ? Set["live"] : {"live" => 1}
+            assert_equal expected, compacted.snapshot["items"].to_ruby
+          end
+          assert_equal original, File.binread(File.join(dir, "source"))
+          File.size(File.join(dir, "target"))
+        ensure
+          compacted&.close
+          source&.close
+        end
+      end
+      assert_operator sizes.last, :<=, sizes.first + 1024, "retained empty routes: #{api} #{declaration.inspect}: #{sizes}"
+    end
+  end
+
   def test_same_physical_file_and_nonempty_targets_are_unchanged
     Dir.mktmpdir do |dir|
       path = File.join(dir, "source")
