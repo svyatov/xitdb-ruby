@@ -79,6 +79,26 @@ class RubyCodecTest < Minitest::Test
     end
   end
 
+  def test_dig_traverses_native_maps_arrays_and_captured_slices
+    captured = nil
+    codec = money_codec(load: ->(_) { captured })
+    XitDB::Ruby.memory(codecs: [codec]) do |db|
+      db.transaction do |root|
+        root[:items] = XitDB.linked_array
+        root[:items].push({name: ["first"]}, {name: ["last"]})
+        captured = root[:items][1, 1]
+        root[:slice] = Money.new("reference")
+        assert_equal "first", root.dig(:items, 0, :name, 0)
+        assert_equal "last", root.dig(:slice, 0, :name, 0)
+        assert_raises(XitDB::ReadOnlyError) { root.dig(:slice, 0, :name) << "changed" }
+        root[:items][1][:name][0] = "changed"
+        assert_equal "last", root.dig(:slice, 0, :name, 0)
+      end
+      assert_equal "changed", db.snapshot.dig(:items, -1, :name, 0)
+      assert_raises(XitDB::ExpiredViewError) { db.snapshot.dig(:slice, 0) }
+    end
+  end
+
   def test_registry_rejects_duplicates_and_builtin_overrides_before_filesystem_effects
     codec = money_codec
     builtin_types = [NilClass, FalseClass, TrueClass, Integer, Float, String, Symbol, Time,

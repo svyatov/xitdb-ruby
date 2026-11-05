@@ -32,11 +32,20 @@ module XitDB
       def dig_value(keys)
         raise ArgumentError, "at least one key is required" if keys.empty?
 
-        value = self[keys.shift]
-        return value if keys.empty? || value.nil?
-        raise TypeError, "#{value.class} does not have #dig method" unless value.respond_to?(:dig)
+        value = self
+        keys.each_with_index do |key, index|
+          return nil if value.nil?
 
-        value.dig(*keys)
+          case value
+          when Map then value = value[key]
+          when Array then value = value[integer_argument(key)]
+          else
+            raise TypeError, "#{value.class} does not have #dig method" unless value.respond_to?(:dig)
+
+            return value.dig(*keys.drop(index))
+          end
+        end
+        value
       end
       private :dig_value
 

@@ -85,6 +85,39 @@ class PublicCollectionsTest < Minitest::Test
     assert_raises(XitDB::ReadOnlyError) { items.push(1) }
   end
 
+  def test_map_dig_traverses_positional_views_with_read_guards
+    [XitDB.array, XitDB.linked_array].each do |declaration|
+      retained = nil
+      @db.transaction do |root|
+        root["items"] = declaration
+        root["items"].push({"name" => "first"}, {"name" => ["last"]}, nil)
+        root["slice"] = root["items"][1, 2]
+        assert_equal "first", root.dig("items", 0, "name")
+        assert_equal "last", root.dig("items", -2, "name", 0)
+        assert_equal "last", root.dig("slice", 0, "name", 0)
+        assert_nil root.dig("missing", Object.new)
+        assert_nil root.dig("items", 20, "name")
+        assert_nil root.dig("items", 2, "name")
+        assert_raises(ArgumentError) { root.dig }
+        assert_raises(TypeError) { root.dig("items", "0") }
+        assert_raises(TypeError) { root.dig("items", 0..1) }
+        assert_raises(RangeError) { root.dig("items", 1 << 100) }
+        assert_raises(TypeError) { root.dig("items", 0, "name", 0) }
+        index = Object.new
+        database = @db
+        index.define_singleton_method(:to_int) { database.close; 0 }
+        assert_raises(XitDB::TransactionStateError) { root.dig("items", index, "name") }
+        assert_equal 3, root["items"].size
+        retained = root
+      end
+      assert_raises(XitDB::ExpiredViewError) { retained.dig("items", 0) }
+      assert_equal "first", @db.snapshot.dig("items", 0, "name")
+    end
+    snapshot = @db.snapshot
+    @db.close
+    assert_raises(XitDB::ClosedError) { snapshot.dig("items", 0) }
+  end
+
   def test_seeded_array_mutations_match_independent_ruby_arrays
     [XitDB.array, XitDB.linked_array].each do |declaration|
       @db.transaction do |root|
