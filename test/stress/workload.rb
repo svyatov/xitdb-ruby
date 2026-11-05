@@ -77,6 +77,15 @@ module BoundedWorkload
     [value, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, GC.stat(:total_allocated_objects) - allocated]
   end
 
+  def self.trace(phase)
+    return unless RUBY_PLATFORM.include?("linux")
+
+    stats = File.read("/sys/fs/cgroup/memory.stat").lines.to_h(&:split)
+    warn JSON.generate(phase: phase, memory_bytes: File.read("/sys/fs/cgroup/memory.current").to_i,
+                       memory: stats.slice("anon", "file", "file_dirty", "file_writeback"),
+                       gc: GC.stat.slice(:heap_live_slots, :heap_allocated_pages, :malloc_increase_bytes))
+  end
+
   def self.open_database(profile, path = nil)
     implementation = profile == "ruby" ? XitDB::Ruby : XitDB
     path ? implementation.open(path) : implementation.memory
@@ -167,6 +176,7 @@ module BoundedWorkload
   def self.operations(database, profile:, bytes:, rows:, digest:, directory:)
     measurements = {}
     %w[lookup pagination stream].each do |operation|
+      trace("#{profile}:#{operation}")
       _, elapsed, allocated = measure do
         case operation
         when "lookup" then check_index(database, rows)
@@ -177,6 +187,7 @@ module BoundedWorkload
       measurements[operation] = { "seconds" => elapsed, "allocations" => allocated }
     end
     %w[conversion compaction].each do |operation|
+      trace("#{profile}:#{operation}")
       path = File.join(directory, "#{operation}.xit")
       target = nil
       begin
@@ -215,6 +226,7 @@ module BoundedWorkload
       path = File.join(directory, "source.xit")
       database = open_database(profile, path)
       begin
+        trace("#{profile}:fixture")
         digest, creation, allocations = measure { fixture(database, bytes: bytes, rows: 8192) }
         size = File.size(path)
         raise "physical dataset is smaller than payload" if size < bytes
