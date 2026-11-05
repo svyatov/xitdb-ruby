@@ -228,6 +228,9 @@ class PublicDurabilityTest < Minitest::Test
       with_file_syncs do |events, _files|
         api.open(path) do |db|
           db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(2)) : root["value"] = 2 }
+          assert_equal [:file, :directory, :file], events
+          events.clear
+          db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(3)) : root["value"] = 3 }
         end
         assert_equal [:file, :file], events
       end
@@ -253,7 +256,122 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  def test_cooperating_thread_initializer_syncs_name_before_creator_resumes
+    assert_cooperating_initializer(:thread)
+  end
+
+  def test_cooperating_process_initializer_syncs_name_before_creator_resumes
+    assert_cooperating_initializer(:process)
+  end
+
+  def test_reopening_valid_uncertain_output_syncs_name_before_committing
+    path = File.join(@directory, "uncertain-replica")
+    failure = IOError.new("directory fsync failed")
+    with_file_syncs(failure: failure) do |events, files|
+      error = assert_raises(XitDB::CommitError) { create_output(XitDB::Core::Database, :replica, path) }
+      assert_equal :unknown, error.outcome
+      assert_same failure, error.cause
+      assert_equal [:file, :directory], events
+      assert files.all? { |file, _, _| file.closed? }
+    end
+    uncertain = File.binread(path)
+    with_file_syncs do |events, _files|
+      XitDB::Core::Database.open(path, readonly: true) { |db| assert_equal 1, db.root_cursor.slot.value }
+      assert_empty events
+      assert_equal uncertain, File.binread(path)
+      XitDB::Core::Database.open(path) do |db|
+        assert_empty events
+        assert_equal 1, db.root_cursor.slot.value
+        db.transaction { |root| root.replace(XitDB::Core::Slot.uint(2)) }
+        assert_equal [:file, :directory, :file], events
+        events.clear
+        db.transaction { |root| root.replace(XitDB::Core::Slot.uint(3)) }
+        assert_equal [:file, :file], events
+      end
+    end
+  end
+
+  def test_existing_handle_directory_failure_preserves_previous_commit
+    original = File.binread(@path)
+    registrations = XitDB::Core::FileStore.const_get(:WRITERS).fetch(@real.storage_identity).last
+    failure = IOError.new("existing directory fsync failed")
+    with_file_syncs(failure: failure) do |events, files|
+      XitDB.open(@path) do |db|
+        calls = 0
+        error = assert_raises(XitDB::CommitError) do
+          db.transaction { |root| calls += 1; root["counter"] = 1 }
+        end
+        assert_equal :not_committed, error.outcome
+        assert_same failure, error.cause
+        assert_equal 1, calls
+        assert_equal [:file, :directory], events
+        refute db.core.needs_reopen?
+        assert_equal 0, db.snapshot["counter"]
+        assert_equal original, File.binread(@path)
+      end
+      assert files.all? { |file, _, _| file.closed? }
+      assert_equal registrations, XitDB::Core::FileStore.const_get(:WRITERS).fetch(@real.storage_identity).last
+    end
+  end
+
   private
+
+  def assert_cooperating_initializer(cooperation)
+    path = File.join(@directory, "cooperating-#{cooperation}")
+    with_file_syncs do |events, _files|
+      # Pause the creator at the same boundary as Database.open: store opened,
+      # database construction and initialization lock not entered yet.
+      created = XitDB::Core::FileStore.open(path)
+      initialize_and_commit = lambda do
+        XitDB::Core::Database.open(path) do |second|
+          second.transaction { |root| root.replace(XitDB::Core::Slot.uint(7)) }
+        end
+        events.dup
+      end
+      observed = if cooperation == :thread
+        Thread.new(&initialize_and_commit).value
+      else
+        in_process(&initialize_and_commit)
+      end
+      assert_equal [:file, :directory, :file, :file, :file], observed, cooperation.to_s
+      before = File.binread(path)
+      creator = XitDB::Core::Database.new(store: created)
+      assert_equal 7, creator.root_cursor.slot.value
+      creator.close
+      assert_equal before, File.binread(path)
+      refute XitDB::Core::FileStore.const_get(:WRITERS).key?(created.storage_identity)
+    ensure
+      created&.close
+    end
+  end
+
+  def in_process
+    reader, writer = IO.pipe
+    pid = fork do
+      reader.close
+      begin
+        Marshal.dump([:ok, yield], writer)
+      rescue Exception => error
+        Marshal.dump([:error, error.class.name, error.message], writer)
+      ensure
+        writer.close
+      end
+      exit! 0
+    end
+    writer.close
+    result = Timeout.timeout(5) { Marshal.load(reader) }
+    _, status = Timeout.timeout(5) { Process.wait2(pid) }
+    pid = nil
+    assert status.success?
+    assert_equal :ok, result.first, result.inspect
+    result.last
+  ensure
+    if pid
+      Process.kill("KILL", pid) rescue Errno::ESRCH
+      Process.wait(pid) rescue Errno::ECHILD
+    end
+    [reader, writer].compact.each { |io| io.close unless io.closed? }
+  end
 
   def durable_output_cases
     [[XitDB::Core::Database, :open], [XitDB, :open], [XitDB::Ruby, :open],

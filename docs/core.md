@@ -99,7 +99,9 @@ Snapshot reads use positional access and do not acquire the exclusive writer loc
 Closing waits for active operations; closing inside that handle's transaction raises `TransactionStateError`.
 
 File publication synchronizes data before publishing and synchronizing the root header. A successful transaction returns after confirmed synchronization.
-New database and maintenance output names also synchronize their containing directory after the first file synchronization.
+Each writable pathname handle synchronizes its containing directory after its first file synchronization, including handles opened on existing files.
+This lets cooperating initializers and writers establish pathname durability independently. Later commits on that handle synchronize only the file.
+Opening an existing file validates its contents; it does not confirm durability of bytes left by an earlier failed publication.
 Creation rejects dangling final symlinks with `Errno::ENOENT`; open the intended target path directly. Symlinks to existing files remain supported.
 Memory handles provide atomic visibility without disk durability.
 `CommitError#outcome` is `:not_committed` before publication, `:unknown` during uncertain publication, or `:committed` after confirmed synchronization.
