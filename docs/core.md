@@ -99,6 +99,8 @@ Snapshot reads use positional access and do not acquire the exclusive writer loc
 Closing waits for active operations; closing inside that handle's transaction raises `TransactionStateError`.
 
 File publication synchronizes data before publishing and synchronizing the root header. A successful transaction returns after confirmed synchronization.
+New database and maintenance output names also synchronize their containing directory after the first file synchronization.
+Creation rejects dangling final symlinks with `Errno::ENOENT`; open the intended target path directly. Symlinks to existing files remain supported.
 Memory handles provide atomic visibility without disk durability.
 `CommitError#outcome` is `:not_committed` before publication, `:unknown` during uncertain publication, or `:committed` after confirmed synchronization.
 Uncertain publication, failed rollback, or lock-release failure requires reopening before further writes. Callbacks are never automatically retried.

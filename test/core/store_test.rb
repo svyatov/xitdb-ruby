@@ -51,6 +51,21 @@ class StoreTest < Minitest::Test
     refute_equal first.storage_identity, second.storage_identity
   end
 
+  def test_creation_rejects_dangling_symlinks_and_preserves_existing_targets
+    target = File.join(@directory, "target")
+    File.symlink(target, @path)
+    assert_raises(Errno::ENOENT) { file_store }
+    assert File.symlink?(@path)
+    assert_equal target, File.readlink(@path)
+    refute File.exist?(target)
+    File.binwrite(target, "kept")
+    store = file_store
+    assert_equal "kept", store.read_at(0, 4)
+    store.sync
+    assert_equal "kept", File.binread(target)
+    assert_equal target, File.readlink(@path)
+  end
+
   # Catches shared-position reads, incorrect append offsets, and oversized buffering.
   def test_positional_reads_and_bounded_pending_writes
     each_store do |store|

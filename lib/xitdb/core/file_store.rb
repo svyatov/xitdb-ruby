@@ -17,19 +17,31 @@ module XitDB
         raise ArgumentError, "exclusive opening requires writable creation" if exclusive && (readonly || !create)
 
         flags = readonly ? File::RDONLY : File::RDWR
-        flags |= File::CREAT if create && !readonly
-        flags |= File::EXCL if exclusive
-        file = File.open(path, flags, 0o666)
+        created = false
+        if create && !readonly
+          begin
+            file = File.open(path, flags | File::CREAT | File::EXCL, 0o666)
+            created = true
+          rescue Errno::EEXIST
+            raise if exclusive
+
+            file = File.open(path, flags)
+          end
+        else
+          file = File.open(path, flags)
+        end
         begin
-          new(file, readonly, buffer_limit)
+          directory = File.dirname(File.expand_path(path)) if created
+          new(file, readonly, buffer_limit, created_directory: directory)
         rescue Exception
           file.close
           raise
         end
       end
 
-      def initialize(file, readonly, buffer_limit)
+      def initialize(file, readonly, buffer_limit, created_directory: nil)
         @file = file.binmode
+        @created_directory = created_directory
         @readonly = readonly
         @buffer_limit = buffer_limit
         @pending = "".b
@@ -132,6 +144,12 @@ module XitDB
 
       def sync_bytes
         retry_interrupted { @file.fsync }
+        if @created_directory
+          File.open(@created_directory, File::RDONLY) do |directory|
+            retry_interrupted { directory.fsync }
+          end
+          @created_directory = nil
+        end
         nil
       end
 

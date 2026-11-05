@@ -213,7 +213,103 @@ class PublicDurabilityTest < Minitest::Test
     end
   end
 
+  def test_new_output_names_sync_the_directory_after_file_data
+    durable_output_cases.each do |api, operation|
+      path = File.join(@directory, "sync-#{api.name}-#{operation}")
+      with_file_syncs do |events, files|
+        output = create_output(api, operation, path)
+        assert_equal [:file, :directory], events.first(2), "#{api} #{operation}"
+        assert_equal 1, events.count(:directory)
+        assert files.select { |file, _, directory| directory }.all? { |file, _, _| file.closed? }
+        output.close
+      ensure
+        output&.close
+      end
+      with_file_syncs do |events, _files|
+        api.open(path) do |db|
+          db.transaction { |root| api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(2)) : root["value"] = 2 }
+        end
+        assert_equal [:file, :file], events
+      end
+    end
+  end
+
+  def test_directory_sync_failure_preserves_outcome_and_releases_owned_files
+    durable_output_cases.each do |api, operation|
+      path = File.join(@directory, "directory-failure-#{api.name}-#{operation}")
+      failure = IOError.new("directory fsync failed")
+      with_file_syncs(failure: failure) do |events, files|
+        error = assert_raises(XitDB::CommitError) { create_output(api, operation, path) }
+        assert_same failure, error.cause
+        assert_equal(operation == :replica ? :unknown : :not_committed, error.outcome)
+        assert_equal [:file, :directory], events
+        assert files.all? { |file, _, _| file.closed? }
+        files.reject { |_, _, directory| directory }.each do |_, identity, _|
+          refute XitDB::Core::FileStore.const_get(:WRITERS).key?(identity)
+        end
+        assert File.exist?(path)
+        assert_equal 0, File.size(path) if %i[compact convert].include?(operation)
+      end
+    end
+  end
+
   private
+
+  def durable_output_cases
+    [[XitDB::Core::Database, :open], [XitDB, :open], [XitDB::Ruby, :open],
+     [XitDB::Core::Database, :compact], [XitDB, :compact], [XitDB::Ruby, :compact],
+     [XitDB, :convert], [XitDB::Ruby, :convert], [XitDB::Core::Database, :replica]]
+  end
+
+  def create_output(api, operation, path)
+    return api.open(path) if operation == :open
+
+    source = api.memory
+    source.transaction do |root|
+      api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(1)) : root["value"] = 1
+    end
+    case operation
+    when :compact then source.compact(to: path)
+    when :convert then source.convert(to: path, profile: api == XitDB ? :portable : :ruby)
+    when :replica
+      store = source.instance_variable_get(:@store)
+      bytes = store.read_at(0, store.length)
+      api.copy_replica(to: path, source_io: StringIO.new(bytes), length: bytes.bytesize)
+    end
+  ensure
+    source&.close
+  end
+
+  def with_file_syncs(failure: nil)
+    events = []
+    files = []
+    original = File.method(:open)
+    File.define_singleton_method(:open) do |*args, **options, &block|
+      file = original.call(*args, **options)
+      stat = file.stat
+      directory = stat.directory?
+      files << [file, [Process.pid, stat.dev, stat.ino], directory]
+      sync = file.method(:fsync)
+      file.define_singleton_method(:fsync) do
+        events << (directory ? :directory : :file)
+        raise failure if directory && failure
+
+        sync.call
+      end
+      if block
+        begin
+          block.call(file)
+        ensure
+          file.close
+        end
+      else
+        file
+      end
+    end
+    yield events, files
+  ensure
+    File.singleton_class.remove_method(:open)
+  end
 
   def fail_sync(number)
     file = @real.instance_variable_get(:@file)
