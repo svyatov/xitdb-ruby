@@ -152,19 +152,7 @@ module XitDB
           end
           raise
         ensure
-          unless returned
-            begin
-              store.close
-            rescue Exception
-              # This unreturned staging store has no caller that can retry close.
-              # Retain physical output while releasing its private descriptor.
-              begin
-                store.close(discard: true)
-              rescue Exception
-                nil
-              end
-            end
-          end
+          store.send(:close_unreturned) unless returned
         end
       end
 

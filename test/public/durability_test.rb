@@ -4,6 +4,7 @@ require "test_helper"
 require "support/fault_store"
 require "tmpdir"
 require "timeout"
+require "xitdb/ruby"
 
 class PublicDurabilityTest < Minitest::Test
   def setup
@@ -144,6 +145,72 @@ class PublicDurabilityTest < Minitest::Test
       Process.wait(pid) rescue Errno::ECHILD
     end
     [reader, writer].compact.each { |io| io.close unless io.closed? }
+  end
+
+  def test_failed_owned_initialization_and_compaction_release_persistent_write_failures
+    [XitDB::Core::Database, XitDB, XitDB::Ruby].each do |api|
+      [[:open, 2], [:compact, 2], [:compact, 4]].each do |operation, failed_sync|
+        path = File.join(@directory, "failed-#{api.name}-#{operation}-#{failed_sync}")
+        failure = Errno::ENOSPC.new("persistent root write failure")
+        captured = physical = source = before = nil
+        original = XitDB::Core::FileStore.method(:open)
+        XitDB::Core::FileStore.singleton_class.remove_method(:open)
+        XitDB::Core::FileStore.define_singleton_method(:open) do |target, **options|
+          original.call(target, **options).tap do |store|
+            next unless target == path
+
+            captured = store
+            sync = store.method(:sync)
+            calls = 0
+            store.define_singleton_method(:sync) do
+              calls += 1
+              if calls == failed_sync
+                file = store.instance_variable_get(:@file)
+                write = file.method(:pwrite)
+                partial = true
+                file.define_singleton_method(:pwrite) do |bytes, offset|
+                  if partial
+                    partial = false
+                    write.call(bytes.byteslice(0, 3), offset)
+                  else
+                    physical ||= File.binread(path)
+                    raise failure
+                  end
+                end
+              end
+              sync.call
+            end
+          end
+        end
+        begin
+          error = assert_raises(XitDB::CommitError) do
+            if operation == :open
+              api.open(path)
+            else
+              source = api.memory
+              source.transaction do |root|
+                api == XitDB::Core::Database ? root.replace(XitDB::Core::Slot.uint(1)) : root["value"] = 1
+              end
+              before = source.respond_to?(:snapshot) ? source.snapshot.to_ruby : source.root_cursor.slot
+              source.compact(to: path)
+            end
+          end
+          assert_equal :unknown, error.outcome
+          assert_same failure, error.cause
+          assert captured.closed?, "unreturned store remains open: #{api} sync #{failed_sync}"
+          assert captured.instance_variable_get(:@file).closed?
+          refute XitDB::Core::FileStore.const_get(:WRITERS).key?(captured.storage_identity)
+          assert_equal physical, File.binread(path)
+          assert_equal before, source.respond_to?(:snapshot) ? source.snapshot.to_ruby : source.root_cursor.slot if source
+        ensure
+          XitDB::Core::FileStore.singleton_class.remove_method(:open)
+          XitDB::Core::FileStore.define_singleton_method(:open, original)
+          captured&.close(discard: true)
+          source&.close
+          source = nil
+        end
+      end
+    end
   end
 
   private

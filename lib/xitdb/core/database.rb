@@ -21,7 +21,7 @@ module XitDB
         begin
           database = new(store: store, **options)
         rescue Exception
-          store.close rescue nil
+          store.send(:close_unreturned)
           raise
         end
         return database unless block_given?
@@ -159,11 +159,7 @@ module XitDB
                 nil
               end
               target&.send(:restore_empty_target) unless published
-              begin
-                store.close
-              rescue Exception
-                nil
-              end
+              store.send(:close_unreturned)
             end
           end
         end
@@ -278,6 +274,10 @@ module XitDB
       end
 
       private
+
+      def close_unreturned
+        @store.send(:close_unreturned)
+      end
 
       def restore_empty_target
         return if needs_reopen?

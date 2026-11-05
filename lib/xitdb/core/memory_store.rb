@@ -5,6 +5,18 @@ require "monitor"
 module XitDB
   module Core
     module Store
+      # Only for owned stores whose construction or maintenance failed.
+      def close_unreturned
+        close
+      rescue Exception
+        begin
+          close(discard: true)
+        rescue Exception
+          nil
+        end
+      end
+      private :close_unreturned
+
       def read_at(offset, length)
         synchronize do
           position(offset)

@@ -37,7 +37,7 @@ module XitDB
         end
         database = new(core: core, profile: Profiles::Portable.new(hasher: selected), readonly: readonly)
       rescue Exception
-        store.close rescue nil
+        store.send(:close_unreturned)
         raise
       end
       return database unless block_given?
@@ -167,7 +167,7 @@ module XitDB
         end
         self.class.new(core: compacted, profile: copied_profile)
       rescue Exception
-        compacted.close
+        compacted.send(:close_unreturned)
         raise
       end
     end
@@ -235,15 +235,7 @@ module XitDB
         ensure
           unless completed
             target_core&.send(:restore_empty_target) unless published
-            begin
-              store.close
-            rescue Exception
-              begin
-                store.close(discard: true)
-              rescue Exception
-                nil
-              end
-            end
+            store.send(:close_unreturned)
           end
         end
       end

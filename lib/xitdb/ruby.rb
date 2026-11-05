@@ -16,7 +16,7 @@ module XitDB
                                   hash_id: "rb01", hash_size: 32)
         database = Database.new(core: core, profile: profile, readonly: readonly)
       rescue Exception
-        store.close rescue nil
+        store.send(:close_unreturned)
         raise
       end
       return database unless block_given?
