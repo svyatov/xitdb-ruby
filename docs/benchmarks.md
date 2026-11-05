@@ -25,6 +25,14 @@ The report records these actual limits, `memory.peak`, and `memory.events`.
 The cgroup peak includes kernel charges and file cache, not only Ruby's resident memory.
 The budget applies during fixture creation, operations, and verification.
 
+With Docker's systemd cgroup driver, the harness sets `memory.high` to 75% of the hard limit through runc's systemd annotation.
+For the 256 MiB workload, this starts reclamation at 192 MiB while retaining the 256 MiB maximum and zero swap.
+This gives the kernel time to reclaim filesystem cache before the hard limit can trigger an OOM kill.
+The child verifies the configured threshold and records `memory_high_bytes` in its report.
+Docker's cgroupfs driver retains its hard-limit behavior and records `memory_high_bytes` as `"max"`.
+See [the kernel's memory controller guide](https://docs.kernel.org/admin-guide/cgroup-v2.html#usage-guidelines)
+and [runc's systemd properties](https://github.com/opencontainers/runc/blob/main/docs/systemd.md#auxiliary-properties).
+
 Each command checks available scratch space before starting.
 Datasets use one task-owned temporary directory.
 Profiles run sequentially, and each destination closes and unlinks before the next maintenance operation.

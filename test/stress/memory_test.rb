@@ -64,6 +64,9 @@ class MemoryStressTest < Minitest::Test
     assert_equal "cgroup_v2", report.fetch("hard_limit_mechanism")
     assert_equal 268_435_456, report.fetch("memory_limit_bytes")
     assert_equal 0, report.fetch("swap_limit_bytes")
+    high = report.fetch("memory_high_bytes")
+    assert_equal 201_326_592, high unless high == "max"
+
     assert_equal(%w[portable ruby], report.fetch("profiles").map { |entry| entry.fetch("profile") })
     report.fetch("profiles").each do |entry|
       assert_operator entry.fetch("dataset_bytes"), :>, report.fetch("memory_limit_bytes")

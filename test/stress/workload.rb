@@ -40,11 +40,18 @@ module BoundedWorkload
       raise "need #{required} free bytes, found #{available}" if available < required
 
       name = "xitdb-#{SecureRandom.hex(8)}"
+      driver, status = Open3.capture2("docker", "info", "--format", "{{.CgroupDriver}}")
+      raise "Docker cgroup-driver check failed" unless status.success?
+
+      high = driver.strip == "systemd" ? (limit_mib * MIB * 3 / 4).to_s : "max"
+      reclaim = high == "max" ? [] : ["--annotation", "org.systemd.property.MemoryHigh=uint64 #{high}"]
       command = ["docker", "run", "--pull=never", "--network=none", "--rm", "--name", name,
+                 *reclaim,
                  "--memory", "#{limit_mib}m", "--memory-swap", "#{limit_mib}m", "--read-only",
                  "--mount", "type=bind,src=#{File.expand_path("../..", __dir__)},dst=/repo,readonly",
                  "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/repo",
-                 "--env", "TMPDIR=/work", "ruby:4.0.9-slim", "ruby", "test/stress/workload.rb",
+                 "--env", "TMPDIR=/work", "--env", "XITDB_MEMORY_HIGH=#{high}",
+                 "ruby:4.0.9-slim", "ruby", "test/stress/workload.rb",
                  mode, "/work", (limit_mib * MIB).to_s, (data_mib || 1).to_s]
       begin
         stdout, stderr, result = Open3.capture3(*command)
@@ -64,9 +71,12 @@ module BoundedWorkload
 
     maximum = Integer(File.read("/sys/fs/cgroup/memory.max"))
     swap = Integer(File.read("/sys/fs/cgroup/memory.swap.max"))
+    high = File.read("/sys/fs/cgroup/memory.high").strip
     raise "Linux hard memory budget does not match request" unless maximum == limit && swap.zero?
+    raise "Linux reclaim threshold does not match request" unless high == ENV.fetch("XITDB_MEMORY_HIGH", "max")
 
     { "hard_limit_mechanism" => "cgroup_v2", "memory_limit_bytes" => maximum, "swap_limit_bytes" => swap,
+      "memory_high_bytes" => high == "max" ? high : Integer(high),
       "ruby_description" => RUBY_DESCRIPTION, "platform" => RUBY_PLATFORM }
   end
 
