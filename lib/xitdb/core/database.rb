@@ -228,41 +228,16 @@ module XitDB
       def bytes(data, format_tag: nil)
         tx = active_transaction
         value = ByteValue.new(data, format_tag: format_tag)
-        capacity = format_tag ? 6 : 8
-        if value.bytes.bytesize <= capacity && !value.bytes.include?("\0")
-          payload = value.bytes.ljust(capacity, "\0") + (value.format_tag || "")
-          Slot.new(tag: :short_bytes, value: payload.unpack1("Q>"), full: !format_tag.nil?)
-        else
-          offset = tx.append([value.bytes.bytesize].pack("Q>"))
-          position = 0
-          while position < value.bytes.bytesize
-            chunk = value.bytes.byteslice(position, 64 * 1024)
-            tx.append(chunk)
-            position += chunk.bytesize
-          end
-          tx.append(value.format_tag) if value.format_tag
-          Slot.new(tag: :bytes, value: offset, full: !format_tag.nil?)
+        Bytes.append(tx, size: value.bytes.bytesize, format_tag: value.format_tag) do |position, length|
+          value.bytes.byteslice(position, length)
         end
       end
 
       def read_bytes(slot, bound: nil)
         check_open!
         bound ||= committed_size
-        case slot.tag
-        when :short_bytes
-          payload = [slot.value].pack("Q>")
-          capacity = slot.full ? 6 : 8
-          data = payload.byteslice(0, capacity).split("\0", 2).first || "".b
-          ByteValue.new(data, format_tag: slot.full ? payload.byteslice(6, 2) : nil)
-        when :bytes
-          size = read_at(slot.value, 8, bound: bound).unpack1("Q>")
-          check_range!(slot.value + 8, size + (slot.full ? 2 : 0), bound)
-          data = read_at(slot.value + 8, size, bound: bound)
-          tag = read_at(slot.value + 8 + size, 2, bound: bound) if slot.full
-          ByteValue.new(data, format_tag: tag)
-        else
-          raise InvalidValueError, "slot does not contain bytes"
-        end
+        source = Bytes.open(self, slot, bound: bound)
+        ByteValue.new(source.read(0, source.size), format_tag: source.format_tag)
       end
 
       def read_at(offset, size, bound:)

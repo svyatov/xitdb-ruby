@@ -5,35 +5,134 @@ module XitDB
     module Bytes
       CHUNK_SIZE = 64 * 1024
 
+      class Source
+        attr_reader :size, :format_tag
+
+        def initialize(database, location, size, format_tag, bound)
+          @database, @location, @size, @format_tag, @bound = database, location, size, format_tag, bound
+          freeze
+        end
+
+        def read(position, length)
+          @database.check_open!
+          unless position.is_a?(Integer) && length.is_a?(Integer)
+            raise TypeError, "byte positions and lengths must be Integers"
+          end
+          if position.negative? || length.negative? || position + length > size
+            raise InvalidValueError, "truncated byte payload"
+          end
+
+          if @location.is_a?(String)
+            @location.byteslice(position, length)
+          else
+            @database.read_at(@location + position, length, bound: @bound)
+          end
+        end
+      end
+      private_constant :Source
+
+      def self.open(database, slot, bound:)
+        Source.new(database, *parse(database, slot, bound), bound)
+      end
+
+      def self.append(transaction, size:, format_tag: nil, prefix: "".b, representation: :automatic, &reader)
+        transaction.check_active!
+        raise TypeError, "size must be an Integer" unless size.is_a?(Integer)
+        raise ArgumentError, "size must be nonnegative" if size.negative?
+        raise TypeError, "prefix must be a String" unless prefix.is_a?(String)
+        unless %i[automatic external].include?(representation)
+          raise ArgumentError, "unknown byte representation"
+        end
+        unless format_tag.nil? || (format_tag.is_a?(String) && format_tag.bytesize == 2)
+          raise ArgumentError, "format_tag must contain two bytes"
+        end
+        format_tag = format_tag&.b
+        total_size = prefix.bytesize + size
+        raise RangeError, "byte payload exceeds unsigned 64-bit size" if total_size >= (1 << 64)
+        capacity = format_tag ? 6 : 8
+        if representation == :automatic && total_size <= capacity
+          captured = prefix.b + (size.zero? ? "".b : read_chunk(0, size, &reader))
+        end
+        if captured && !captured.include?("\0")
+          payload = captured.ljust(capacity, "\0") + (format_tag || "")
+          return Slot.new(tag: :short_bytes, value: payload.unpack1("Q>"), full: !format_tag.nil?)
+        end
+
+        offset = transaction.append([total_size].pack("Q>"))
+        if captured
+          transaction.append(captured)
+        else
+          position = 0
+          while position < prefix.bytesize
+            chunk = prefix.byteslice(position, CHUNK_SIZE).b
+            transaction.append(chunk)
+            position += chunk.bytesize
+          end
+          position = 0
+          while position < size
+            length = [size - position, CHUNK_SIZE].min
+            transaction.append(read_chunk(position, length, &reader))
+            position += length
+          end
+        end
+        transaction.append(format_tag) if format_tag
+        Slot.new(tag: :bytes, value: offset, full: !format_tag.nil?)
+      end
+
+      def self.read_chunk(position, length)
+        chunk = yield(position, length) if block_given?
+        raise EOFError, "byte source ended before its declared size" if chunk.nil?
+        raise TypeError, "byte source must return a String" unless chunk.is_a?(String)
+        raise EOFError, "byte source ended before its declared size" if chunk.bytesize < length
+        raise ArgumentError, "byte source returned more than requested" if chunk.bytesize > length
+
+        chunk.b
+      end
+      private_class_method :read_chunk
+
+      def self.parse(database, slot, bound)
+        database.check_open!
+        case slot.tag
+        when :short_bytes
+          payload = [slot.value].pack("Q>")
+          capacity = slot.full ? 6 : 8
+          data = (payload.byteslice(0, capacity).split("\0", 2).first || "".b).freeze
+          tag = payload.byteslice(6, 2).freeze if slot.full
+          [data, data.bytesize, tag]
+        when :bytes
+          size = database.read_at(slot.value, 8, bound: bound).unpack1("Q>")
+          offset = slot.value + 8
+          tail = database.read_at(offset + size, slot.full ? 2 : 0, bound: bound)
+          tag = tail.freeze if slot.full
+          [offset, size, tag]
+        else
+          raise InvalidValueError, "slot does not contain bytes"
+        end
+      end
+      private_class_method :parse
+
       # Return inline data or its file offset, without materializing a scalar.
       def self.locate(database, slot, bound:)
         unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
           raise InvalidValueError, "stream requires untagged bytes"
         end
-        if slot.tag == :short_bytes
-          bytes = [slot.value].pack("Q>").split("\0", 2).first || "".b
-          return [bytes, bytes.bytesize]
-        end
-
-        size = database.read_at(slot.value, 8, bound: bound).unpack1("Q>")
-        offset = slot.value + 8
-        database.read_at(offset + size, 0, bound: bound)
-        [offset, size]
+        location, size = parse(database, slot, bound)
+        [location.is_a?(String) ? location.dup : location, size]
       end
 
       def self.copy(source, size:, database:, transaction:)
         return database.bytes(source.read(size)) if size <= 8
 
-        offset = transaction.append([size].pack("Q>"))
-        remaining = size
-        while remaining.positive?
-          chunk = source.read([remaining, CHUNK_SIZE].min)
-          raise EOFError, "byte source ended before its declared size" if chunk.nil? || chunk.empty?
+        append(transaction, size: size, representation: :external) do |_position, length|
+          chunk = "".b
+          while chunk.bytesize < length
+            part = source.read(length - chunk.bytesize)
+            raise EOFError, "byte source ended before its declared size" if part.nil? || part.empty?
 
-          transaction.append(chunk)
-          remaining -= chunk.bytesize
+            chunk << part
+          end
+          chunk
         end
-        Slot.new(tag: :bytes, value: offset)
       end
     end
 
