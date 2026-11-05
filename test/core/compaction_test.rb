@@ -7,6 +7,25 @@ require "tmpdir"
 class CompactionTest < Minitest::Test
   Core = XitDB::Core
 
+  def test_short_external_bytes_keep_their_representation_and_tag
+    Dir.mktmpdir do |dir|
+      source = Core::Database.memory
+      source.transaction do |root|
+        pointer = root.transaction.append([3].pack("Q>") + "abczz")
+        root.replace(Core::Slot.new(tag: :bytes, value: pointer, full: true))
+      end
+      compacted = source.compact(to: File.join(dir, "target"))
+      slot = compacted.root_cursor.slot
+      assert_equal :bytes, slot.tag
+      assert slot.full
+      assert_equal "abc", compacted.read_bytes(slot).bytes
+      assert_equal "zz", compacted.read_bytes(slot).format_tag
+    ensure
+      compacted&.close
+      source&.close
+    end
+  end
+
   def test_compaction_preserves_cycles_tags_and_latest_history
     Dir.mktmpdir do |dir|
       source = Core::Database.open(File.join(dir, "source.xit"))
