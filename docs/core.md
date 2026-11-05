@@ -115,5 +115,9 @@ A trailer contains a root slot, commit identifier, and CRC-64/XZ checksum, occup
 An initialized empty database occupies 62 bytes. Parsing checks object ranges against committed boundaries before allocating.
 Graph traversal uses an explicit stack. Write buffers are bounded at 2 MiB, byte transfers at 64 KiB, and offset caches spill after 16,384 entries.
 
+`XitDB::Core::Bytes` owns physical byte storage, including inline selection, lengths, format tags, and bounded transfers.
+Scalar materialization, streams, conversion, and compaction use that implementation. Profiles retain payload interpretation and encoding rules.
+Compaction preserves external byte records, including short payloads and unknown format tags.
+
 The port preserves the package's [MIT license notice](../LICENSE).
 Reference revisions and source hashes are recorded in `test/interop/manifest.json` in the source checkout.
