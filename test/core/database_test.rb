@@ -392,13 +392,20 @@ class DatabaseTest < Minitest::Test
     end
   end
 
-  def test_temporary_cursors_are_reclaimed_during_transaction
-    Core::Database.memory.transaction do |root|
-      references = Array.new(200) { temporary_cursor_reference(root.transaction) }
-      GC.start
-      assert_equal 0, references.count(&:weakref_alive?)
-      assert root.slot.empty?
-    end
+  def test_temporary_cursors_are_not_owned_by_transaction_registry
+    transaction, registry, references = Thread.new do
+      retained = nil
+      Core::Database.memory.transaction do |root|
+        tx = root.transaction
+        references = Array.new(200) { temporary_cursor_reference(tx) }
+        assert root.slot.empty?
+        retained = [tx, tx.instance_variable_get(:@cursors), references]
+      end
+      retained
+    end.value
+    GC.start
+    assert_equal 0, references.count(&:weakref_alive?), "originating registry #{registry.object_id} retained temporary cursors"
+    assert_raises(XitDB::ExpiredViewError) { transaction.check_active! }
   end
 
   def test_released_checkpoints_do_not_retain_completed_operations
