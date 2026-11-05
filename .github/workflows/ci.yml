@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ruby:
+    name: Ruby ${{ matrix.ruby }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04]
+        ruby: ['3.3', '3.4', '4.0']
+        include:
+          - os: macos-15
+            ruby: '4.0'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - run: bundle exec ruby script/ci.rb
+
+  reference:
+    name: Four pinned references
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      MISE_CACHE_DIR: /private/tmp/xitdb-mise-cache
+      XITDB_GO_REFERENCE: ${{ github.workspace }}/.references/go
+      XITDB_TYPESCRIPT_REFERENCE: ${{ github.workspace }}/.references/typescript
+      XITDB_JAVA_REFERENCE: ${{ github.workspace }}/.references/java
+      XITDB_ZIG_REFERENCE: ${{ github.workspace }}/.references/zig
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: xit-vcs/xitdb-go
+          ref: 86db69bc728d2e9bdd015f9cefa23df40beaab65
+          path: .references/go
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: xit-vcs/xitdb-ts
+          ref: 01ca291fd1a57a2047ee03ca6344abd009480730
+          path: .references/typescript
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: xit-vcs/xitdb-java
+          ref: 905be4a6035975846d4ffe2e76ade8929eaf9d0d
+          path: .references/java
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: xit-vcs/xitdb
+          ref: 6b93af1af3a260399fa0a0b1b268ded2cbf5eec5
+          path: .references/zig
+          persist-credentials: false
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        with:
+          ruby-version: '4.0'
+          bundler-cache: true
+      # The harness uses these scratch paths on every platform.
+      - run: sudo install -d -m 1777 /private/tmp
+      - uses: jdx/mise-action@f5be966e4a917d54244728e6a5fdcd1d93a35e6c # v5.2.6
+        with:
+          version: 2026.11.1
+          cache: false
+          persist_github_token: false
+          tool_versions: |
+            go 1.27.3
+            bun 1.4.4
+            java temurin-25.0.5+8.0.LTS
+            zig 0.17.0
+      - run: bundle exec rake interop
+
+  linux-memory:
+    name: Linux memory limit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@de492cf36cbab201753d720ce4f4e336cd688c94 # v1
+        with:
+          ruby-version: '4.0'
+          bundler-cache: true
+      # Provision explicitly; the test itself never pulls or uses networking.
+      - run: docker pull ruby:4.0.9-slim
+      - run: bundle exec rake stress

@@ -100,7 +100,7 @@ Conversion copies shared logical nodes separately, so retained histories can inc
 An aarch64 Linux run used MRI 4.0.9 and `ruby:4.0.9-slim` on November 5, 2026.
 The 768 MiB workload completed in both profiles under a 268,435,456-byte cgroup limit with zero swap.
 The observed cgroup peak equaled that limit; OOM and OOM-kill event counts were zero.
-Both offset caches peaked at 16,384 entries and exercised disk spill.
+Both offset caches peaked at 16,384 entries. Independent inspection directly observed disk spill for the Ruby profile.
 Other validation jobs ran concurrently, and operating-system cache state was uncontrolled.
 These measurements establish this workload's completion and output cost.
 
