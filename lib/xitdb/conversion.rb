@@ -101,26 +101,17 @@ module XitDB
       attr_reader :size, :format_tag
 
       def initialize(context, slot)
-        @context = context
-        @bound = context.read_bound
-        if slot.tag == :short_bytes
-          value = context.database.core.read_bytes(slot, bound: @bound)
-          @inline = value.bytes
-          @size = @inline.bytesize
-          @format_tag = value.format_tag
-        else
-          @size = context.database.core.read_at(slot.value, 8, bound: @bound).unpack1("Q>")
-          @offset = slot.value + 8
-          context.database.core.read_at(@offset + @size + (slot.full ? 2 : 0), 0, bound: @bound)
-          @format_tag = context.database.core.read_at(@offset + @size, 2, bound: @bound) if slot.full
-        end
+        @source = Core::Bytes.open(context.database.core, slot, bound: context.read_bound)
+        @start = 0
+        @size = @source.size
+        @format_tag = @source.format_tag
       end
 
       def read(position, length)
         unless position >= 0 && length >= 0 && position + length <= size
           raise InvalidValueError, "truncated byte payload"
         end
-        @inline ? @inline.byteslice(position, length) : @context.database.core.read_at(@offset + position, length, bound: @bound)
+        @source.read(@start + position, length)
       end
 
       def unsigned(position)
@@ -144,11 +135,7 @@ module XitDB
         output = dup
         output.instance_variable_set(:@size, length)
         output.instance_variable_set(:@format_tag, nil)
-        if @inline
-          output.instance_variable_set(:@inline, @inline.byteslice(position, length))
-        else
-          output.instance_variable_set(:@offset, @offset + position)
-        end
+        output.instance_variable_set(:@start, @start + position)
         output
       end
 
@@ -162,12 +149,8 @@ module XitDB
       end
 
       def write_to(context, prefix: "".b, format_tag: @format_tag)
-        transaction = context.transaction
-        offset = transaction.append([prefix.bytesize + size].pack("Q>"))
-        transaction.append(prefix) unless prefix.empty?
-        each_chunk { |chunk| transaction.append(chunk) }
-        transaction.append(format_tag) if format_tag
-        Core::Slot.new(tag: :bytes, value: offset, full: !format_tag.nil?)
+        Core::Bytes.append(context.transaction, size: size, prefix: prefix, format_tag: format_tag,
+                           representation: :external) { |position, length| read(position, length) }
       end
 
       private

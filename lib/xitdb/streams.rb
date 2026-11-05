@@ -34,8 +34,11 @@ module XitDB
     class Reader < Handle
       def initialize(context, slot)
         super(context)
-        @bound = context.read_bound
-        @source, @size = Core::Bytes.locate(context.database.core, slot, bound: @bound)
+        unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
+          raise InvalidValueError, "stream requires untagged bytes"
+        end
+        @source = Core::Bytes.open(context.database.core, slot, bound: context.read_bound)
+        @size = @source.size
         @pos = 0
       end
 
@@ -53,12 +56,7 @@ module XitDB
           remaining = [count, [@size - @pos, 0].max].min
           while remaining.positive?
             size = [remaining, Core::Bytes::CHUNK_SIZE].min
-            chunk = if @source.is_a?(String)
-              @source.byteslice(@pos, size)
-            else
-              @context.database.core.read_at(@source + @pos, size, bound: @bound)
-            end
-            output << chunk
+            output << @source.read(@pos, size)
             @pos += size
             remaining -= size
           end
