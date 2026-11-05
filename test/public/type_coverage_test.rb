@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "bundler"
 require "fileutils"
 require "open3"
 require "tmpdir"
@@ -8,6 +9,16 @@ require "tmpdir"
 # Checks the real Steep CLI and the repository's coverage gate in isolated projects.
 class TypeCoverageTest < Minitest::Test
   GATE = File.expand_path("../../script/check_type_coverage.rb", __dir__)
+
+  def test_plain_rake_checks_checkout_types_without_bundle_exec
+    root = File.expand_path("../..", __dir__)
+    output, status = Bundler.with_unbundled_env do
+      Open3.capture2e(Gem.ruby, Gem.bin_path("rake", "rake"), "types", chdir: root)
+    end
+
+    assert_predicate status, :success?, output
+    assert_includes output, "100% typed calls across"
+  end
 
   def with_project
     Dir.mktmpdir("xitdb-type-coverage-") do |directory|
@@ -34,7 +45,8 @@ class TypeCoverageTest < Minitest::Test
   def test_accepts_fully_typed_files_in_nested_directories
     with_project do |directory|
       output, status = check(directory)
-      assert status.success?, output
+
+      assert_predicate status, :success?, output
       assert_includes output, "100% typed calls across 2 library files"
     end
   end
@@ -43,7 +55,8 @@ class TypeCoverageTest < Minitest::Test
     with_project do |directory|
       File.write(File.join(directory, "sig/fixture.rbs"), "class Fixture\n  def call: (untyped) -> untyped\nend\n")
       output, status = check(directory)
-      refute status.success?, output
+
+      refute_predicate status, :success?, output
       assert_includes output, "Type coverage must be 100%"
     end
   end
@@ -52,7 +65,8 @@ class TypeCoverageTest < Minitest::Test
     with_project do |directory|
       File.write(File.join(directory, "Steepfile"), "target :lib do\n  check 'other'\n  signature 'sig'\nend\n")
       output, status = check(directory)
-      refute status.success?, output
+
+      refute_predicate status, :success?, output
       assert_includes output, "Steep must check every library file exactly once"
     end
   end
