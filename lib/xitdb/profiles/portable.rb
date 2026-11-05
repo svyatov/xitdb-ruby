@@ -82,6 +82,27 @@ module XitDB
         Adapter.new(self, context.cursor(Core::Slot.new), context: context, path: path, tag: kind)
       end
 
+      def conversion_kind(adapter)
+        adapter.kind
+      end
+
+      def conversion_container(kind, context:, path:)
+        kind = kind.first if Array === kind
+        tag = {map: :hash_map, set: :hash_set, array: :array_list, linked_array: :linked_array_list}.fetch(kind, kind)
+        empty_container(tag, context: context, path: path)
+      end
+
+      def conversion_bytes(slot, context:)
+        return unless %i[bytes short_bytes].include?(slot.tag)
+
+        source = Conversion::ByteSource.new(context, slot)
+        [source, source.format_tag ? nil : :portable]
+      end
+
+      def copy_conversion_bytes(source, encoding, context:, path:)
+        source.write_to(context, format_tag: encoding ? nil : source.format_tag)
+      end
+
       def input_kind(value, path:)
         InputGuard.check!(value, path: path)
         klass = Object.instance_method(:class).bind_call(value)

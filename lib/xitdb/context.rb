@@ -92,6 +92,78 @@ module XitDB
       @changed
     end
 
+    def copy_from(view, at:, transform: nil)
+      writable!
+      raise TypeError, "copy source must be a view" unless Views::Base === view
+      raise TypeError, "copy path must be an Array" unless at.instance_of?(Array)
+      raise TypeError, "transform must respond to call" unless transform.nil? || transform.respond_to?(:call)
+
+      read do
+        view.context.read do
+          view.check!
+          source_slot = view.slot
+          view.context.transaction&.freeze
+          source_adapter = view.adapter
+          if at.empty? && !%i[map sorted_map].include?(source_adapter.kind)
+            raise ProfileMismatchError, "context root must be a map"
+          end
+          source = Context.new(database: view.context.database, root: source_slot, bound: view.context.read_bound,
+                               transaction: view.context.transaction, readonly: true,
+                               reference_proof: view.context.reference_proof)
+          location = []
+          at.each_with_index do |selector, index|
+            adapter = profile.container(resolve(location), context: self, path: location)
+            raise TypeError, "copy parent must be a collection" unless adapter
+            raise TypeError, "cannot assign a collection to a set member" if %i[set sorted_set].include?(adapter.kind)
+
+            if %i[array linked_array].include?(adapter.kind)
+              selector = Integer.try_convert(selector) || raise(TypeError, "array position must be an Integer")
+              long_max = (1 << ([0].pack("l!").bytesize * 8 - 1)) - 1
+              raise RangeError, "array position is too large" unless (-long_max - 1..long_max).cover?(selector)
+
+              selector += adapter.size if selector.negative?
+              raise IndexError, "array index outside list" if selector.negative?
+              raise IndexError, "array size too big" if selector + 1 > long_max / 0.size
+            end
+            adapter.lookup(selector)
+            selector = selector.dup.freeze if Time === selector
+            location << (String === selector ? String.new(selector).freeze : selector)
+            resolve(location) if index < at.size - 1
+          end
+          parent = location[0...-1]
+          present = !location.empty? && !profile.container(resolve(parent), context: self, path: parent).lookup(location.last).nil?
+          operation = lambda do
+            mutate(location.empty? ? [] : parent, targets: [location]) do |cursor|
+              copied = Conversion.new(source, self, transform: transform).copy(source.root, adapter: source_adapter)
+              if location.empty?
+                cursor.replace(copied)
+              else
+                adapter = profile.container(cursor.slot, context: self, path: parent)
+                if %i[array linked_array].include?(adapter.kind)
+                  adapter.assign(adapter.size, Core::Slot.null) while adapter.size < location.last
+                end
+                adapter.assign(location.last, copied)
+                cursor.replace(adapter.slot)
+              end
+            end
+          end
+          if source.transaction && !source.transaction.equal?(transaction)
+            source.transaction.with_logical_mutation(&operation)
+          else
+            operation.call
+          end
+          if location.empty?
+            invalidate_children([])
+            change_membership([])
+          else
+            replace_location(location)
+            change_membership(parent) unless present
+          end
+          profile.decode(resolve(location), context: self, path: location)
+        end
+      end
+    end
+
     # Publish the logical root only after the complete operation succeeds.
     def mutate(path, targets: nil, positions: nil)
       writable!

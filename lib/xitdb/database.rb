@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "conversion"
+
 module XitDB
   class Database
     attr_reader :core, :profile
@@ -172,6 +174,79 @@ module XitDB
 
     def closed?
       core.closed?
+    end
+
+    def convert(to:, profile:, history: :all, transform: nil)
+      unless %i[all latest].include?(history)
+        raise ArgumentError, "history must be :all or :latest"
+      end
+      unless transform.nil? || transform.respond_to?(:call)
+        raise TypeError, "transform must respond to call"
+      end
+      require_relative "ruby"
+      target_profile = case profile
+      when :portable
+        Profiles::Portable.new(hasher: self.profile.instance_of?(Profiles::Portable) ? self.profile.hasher : Core::Hasher.sha1)
+      when :ruby then Profiles::Ruby.new(codecs: self.profile.respond_to?(:codecs) ? self.profile.codecs : [])
+      else
+        if profile.instance_of?(Profiles::Portable)
+          Profiles::Portable.new(hasher: profile.hasher)
+        elsif profile.instance_of?(Profiles::Ruby)
+          Profiles::Ruby.new(codecs: profile.codecs)
+        else
+          raise ArgumentError, "profile must be :portable, :ruby, or a supported profile instance"
+        end
+      end
+      core.with_operation do
+        captured = core.root_cursor
+        histories = history_array(captured)
+        store = Core::FileStore.open(to)
+        completed = published = false
+        begin
+          raise ArgumentError, "conversion target is the source file" if store.storage_identity == core.storage_identity
+
+          target_core = Core::Database.new(store: store, hash_id: target_profile.hasher.id,
+                                           hash_size: target_profile.hasher.size, require_empty: true)
+          target = Database.new(core: target_core, profile: target_profile)
+          target_core.transaction do |cursor|
+            current_header = Core::Header.parse(store.read_at(0, Core::Header::SIZE))
+            unless current_header.file_id == target_core.header.file_id && cursor.bound == Core::Database::MINIMUM_SIZE && cursor.slot.empty?
+              raise ArgumentError, "conversion target changed before copying"
+            end
+            if histories.size.zero?
+              cursor.transaction.cancel_publication
+              next
+            end
+            output = Core::ArrayList.new(cursor)
+            first = history == :latest ? histories.size - 1 : 0
+            (first...histories.size).each do |index|
+              source = snapshot_from_history(captured, index).context
+              destination = Context.new(database: target, root: Core::Slot.new,
+                                        bound: cursor.bound, transaction: cursor.transaction)
+              cursor.transaction.with_logical_mutation do
+                output.append(Conversion.new(source, destination, transform: transform).copy(source.root))
+                cursor.transaction.freeze
+              end
+            end
+          end
+          published = true
+          completed = true
+          target
+        ensure
+          unless completed
+            target_core&.send(:restore_empty_target) unless published
+            begin
+              store.close
+            rescue Exception
+              begin
+                store.close(discard: true)
+              rescue Exception
+                nil
+              end
+            end
+          end
+        end
+      end
     end
 
     # Conventional history is shared by profiles; logical roots use the profile seam.

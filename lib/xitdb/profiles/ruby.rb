@@ -47,6 +47,54 @@ module XitDB
                                    kind: kind, key_kind: key_kind)
       end
 
+      def conversion_kind(adapter)
+        return adapter.kind unless %i[sorted_map sorted_set].include?(adapter.kind)
+
+        key = Core::ArrayList.new(adapter.cursor).get(1).value
+        [adapter.kind, XitDB::Ruby::Containers::KEY_KINDS.key(key)]
+      end
+
+      def conversion_container(kind, context:, path:)
+        kind = [kind, :string] if %i[sorted_map sorted_set].include?(kind)
+        empty_container(kind, context: context, path: path)
+      end
+
+      def conversion_bytes(slot, context:)
+        return unless %i[bytes short_bytes].include?(slot.tag)
+
+        source = Conversion::ByteSource.new(context, slot)
+        return [source, :binary] unless source.format_tag
+        return [source, nil] unless source.format_tag == "rb"
+        return unless source.read(0, [source.size, 2].min) == "\x01\x01".b
+
+        length, position = source.unsigned(2)
+        raise UnsupportedEncodingError, "encoding name is too long" if length > Core::Bytes::CHUNK_SIZE
+
+        name = source.read(position, length).force_encoding(Encoding::UTF_8)
+        raise InvalidValueError, "invalid encoding name" unless name.valid_encoding?
+
+        begin
+          encoding = Encoding.find(name)
+        rescue ArgumentError => error
+          raise UnsupportedEncodingError, error.message
+        end
+        size, position = source.unsigned(position + length)
+        raise InvalidValueError, "trailing or truncated String bytes" unless position + size == source.size
+
+        [source.slice(position, size), encoding]
+      end
+
+      def copy_conversion_bytes(source, encoding, context:, path:)
+        if source.format_tag == "rb"
+          raise UnsupportedValueError.new("portable rb bytes require an explicit transform", path: path)
+        end
+        return source.write_to(context) if !encoding || encoding == :binary
+
+        encoding = source.portable_encoding if encoding == :portable
+        prefix = "\x01\x01".b + XitDB::Ruby::Wire.t(encoding.name) + XitDB::Ruby::Wire.u(source.size)
+        source.write_to(context, prefix: prefix, format_tag: "rb")
+      end
+
       def input_kind(value, path:)
         InputGuard.check!(value, path: path)
         return nil if @registry.for_value(value)
