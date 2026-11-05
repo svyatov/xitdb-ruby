@@ -11,8 +11,10 @@ Gem::Specification.new do |spec|
   spec.homepage = "https://github.com/svyatov/xitdb-ruby"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.3"
-  spec.files = Dir["lib/**/*.rb", "examples/*.rb", "README.md", "CHANGELOG.md", "LICENSE", "docs/*.md"]
+  spec.files = Dir["lib/**/*.rb", "sig/**/*.rbs", "sig/manifest.yaml", "examples/*.rb", "README.md", "CHANGELOG.md",
+                   "LICENSE", "docs/*.md"]
   spec.require_paths = ["lib"]
-  spec.add_dependency "date", ">= 3.3"
   spec.add_dependency "bigdecimal", ">= 3.1"
+  spec.add_dependency "date", ">= 3.3"
+  spec.metadata["rubygems_mfa_required"] = "true"
 end

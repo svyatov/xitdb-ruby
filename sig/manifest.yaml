@@ -1,0 +1,10 @@
+dependencies:
+  - name: bigdecimal
+  - name: date
+  - name: digest
+  - name: monitor
+  - name: objspace
+  - name: pathname
+  - name: securerandom
+  - name: stringio
+  - name: tempfile

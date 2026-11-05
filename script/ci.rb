@@ -8,6 +8,6 @@ Dir.chdir(root) do
   $stdout.flush
   # PackageTest builds and installs the gem locally, checks its file list and
   # runtime dependencies, and runs every example through an isolated bundle.
-  abort "Fast tests or package inspection failed" unless system(RbConfig.ruby, Gem.bin_path("rake", "rake"), "test")
-  puts "Fast tests, packaged examples, and gem inspection passed"
+  abort "Quality checks or package inspection failed" unless system(RbConfig.ruby, Gem.bin_path("rake", "rake"))
+  puts "Style, types, tests, CRAP scores, packaged examples, and gem inspection passed"
 end

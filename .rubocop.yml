@@ -1,0 +1,38 @@
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 3.3
+  Exclude:
+    - "pkg/**/*"
+
+Style/StringLiterals:
+  EnforcedStyle: double_quotes
+
+Style/StringLiteralsInInterpolation:
+  EnforcedStyle: double_quotes
+
+# CRAP measures method complexity with fresh test coverage. Keep the existing
+# collection and test structure without generic line and call-count limits.
+Metrics/AbcSize:
+  Enabled: false
+Metrics/BlockLength:
+  Enabled: false
+Metrics/ClassLength:
+  Enabled: false
+Metrics/MethodLength:
+  Enabled: false
+Metrics/ModuleLength:
+  Enabled: false
+Metrics/ParameterLists:
+  Enabled: false
+Metrics/CyclomaticComplexity:
+  Max: 10
+  Exclude:
+    - "test/**/*"
+    - "script/**/*"
+    - "examples/**/*"
+Metrics/PerceivedComplexity:
+  Max: 10
+  Exclude:
+    - "test/**/*"
+    - "script/**/*"
+    - "examples/**/*"

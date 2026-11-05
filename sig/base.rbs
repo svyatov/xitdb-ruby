@@ -1,0 +1,76 @@
+module XitDB
+  VERSION: String
+
+  type diagnostic_value = nil | bool | Integer | Float | Symbol | String | Array[diagnostic_value] | Hash[diagnostic_value, diagnostic_value]
+
+  class Error < StandardError
+  end
+
+  class FormatVersionError < Error
+  end
+
+  class CorruptionError < Error
+  end
+
+  class ProfileMismatchError < Error
+  end
+
+  class TransactionStateError < Error
+  end
+
+  class ClosedError < Error
+  end
+
+  class ExpiredViewError < Error
+  end
+
+  class ForeignRevisionError < Error
+  end
+
+  class ReadOnlyError < Error
+  end
+
+  class ConcurrentModificationError < Error
+  end
+
+  class BusyError < Error
+  end
+
+  class CodecError < Error
+  end
+
+  class CodecConfigurationError < CodecError
+  end
+
+  class ValueError < Error
+    @path: diagnostic_value
+    attr_reader path: diagnostic_value
+    def initialize: (?String? message, ?path: top) -> void
+    private
+    def copy_path: (top value) -> diagnostic_value
+  end
+
+  class InvalidValueError < ValueError
+  end
+
+  class UnsupportedValueError < ValueError
+  end
+
+  class UnsupportedEncodingError < ValueError
+  end
+
+  class CyclicValueError < ValueError
+  end
+
+  class ForeignValueError < ValueError
+  end
+
+  class KeyCollisionError < ValueError
+  end
+
+  class CommitError < Error
+    @outcome: :not_committed | :committed | :unknown
+    attr_reader outcome: :not_committed | :committed | :unknown
+    def initialize: (?String? message, outcome: :not_committed | :committed | :unknown) -> void
+  end
+end

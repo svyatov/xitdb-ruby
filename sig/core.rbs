@@ -1,0 +1,697 @@
+class Array[unchecked out E]
+  def []=: (Integer, Integer, Array[E]) -> Array[E]
+         | ...
+end
+
+module XitDB
+  module Core
+    type tag = Symbol | Integer
+
+    type store = MemoryStore | FileStore
+
+    type selector = Integer | String
+
+    type identity = Object | Array[Integer]
+
+    type cursor_state = [ Slot, bool ]
+
+    interface _Reader
+      def read: (Integer) -> String?
+    end
+
+    interface _Writer
+      def write: (String) -> Integer
+    end
+
+    module Format
+      UINT64_MAX: Integer
+
+      def self.integer: (Object, Range[Integer]) -> Integer
+
+      def self.width: (Object, Integer) -> void
+
+      def self.slice: (String, Integer | Range[Integer?], ?Integer?) -> String
+
+      def self.unsigned: (String) -> Integer
+
+      def self.integers: (String, String) -> Array[Integer]
+
+      def self.pair: (String, String) -> [ Integer, Integer ]
+    end
+
+    class Header
+      SIZE: Integer
+      VERSION: Integer
+      @padding: Integer
+      attr_reader file_id: Integer
+      attr_reader hash_id: String
+      attr_reader hash_size: Integer
+      def initialize: (file_id: Integer, hash_id: String, hash_size: Integer, ?padding: Integer) -> void
+      def self.parse: (String) -> Header
+      def to_bytes: () -> String
+    end
+
+    class Slot
+      SIZE: Integer
+      TAGS: Array[Symbol]
+      attr_reader tag: tag
+      attr_reader value: Integer
+      attr_reader full: bool
+      def initialize: (?tag: tag, ?value: Integer, ?full: bool) -> void
+      def self.parse: (String) -> Slot
+      def self.int: (Integer) -> Slot
+      def self.uint: (Integer) -> Slot
+      def self.float: (Object) -> Slot
+      def self.null: () -> Slot
+      def empty?: () -> bool
+      def ==: (Object?) -> bool
+      def to_bytes: () -> String
+    end
+
+    class Hasher
+      @digest: ^(String) -> String
+      attr_reader id: String
+      attr_reader size: Integer
+      def initialize: (id: String, size: Integer) { (String) -> String } -> void
+      def digest: (String) -> String
+      def self.sha1: () -> Hasher
+      def self.sha256: () -> Hasher
+      def self.sha384: () -> Hasher
+      def self.sha512: () -> Hasher
+    end
+
+    module CRC64
+      MASK: Integer
+
+      POLYNOMIAL: Integer
+
+      def self.call: (Object) -> Integer
+    end
+
+    module Store
+      @state: Monitor
+
+      @idle: MonitorMixin::ConditionVariable
+
+      @writer_mutex: Mutex
+
+      @lock_users: Integer
+
+      @operation_users: Hash[Thread, Integer]
+
+      @lock_owner: Thread?
+
+      @closed: bool
+
+      @closing: bool
+
+      @release_failed: bool
+
+      def close_unreturned: () -> void
+
+      def read_at: (Integer, Integer) -> String
+
+      def write_at: (Integer, String) -> Integer
+
+      def append: (String) -> Integer
+
+      def length: () -> Integer
+
+      def empty?: () -> bool
+
+      def truncate: (Integer) -> nil
+
+      def flush: () -> void
+
+      def sync: () -> void
+
+      def with_operation: [A] () { () -> A } -> A
+
+      def with_exclusive_lock: [A] (?timeout: Numeric, ?on_release_error: (^(Exception) -> void)?) { () -> A } -> A
+
+      def release_writer: (bool, bool, (^(Exception) -> void)?) -> void
+
+      def close: (?discard: bool) -> void
+
+      def closed?: () -> bool
+
+      def initialize_state: (?Mutex) -> void
+
+      def synchronize: [A] () { () -> A } -> A
+
+      def writable!: () -> void
+
+      def position: (Integer) -> void
+
+      def string: (String) -> void
+
+      def monotonic_time: () -> Float
+
+      def wait_for_writer: (Float) -> void
+
+      def lock_writer: (Float) -> void
+
+      def unlock_writer: () -> void
+
+      def readonly?: () -> bool
+
+      def store_length: () -> Integer
+
+      def read_bytes: (Integer, Integer) -> String
+
+      def write_bytes: (Integer, String) -> void
+
+      def truncate_bytes: (Integer) -> void
+
+      def flush_bytes: () -> void
+
+      def sync_bytes: () -> void
+
+      def close_bytes: () -> void
+    end
+
+    class MemoryStore
+      include Store
+      @bytes: String
+      attr_reader storage_identity: Object
+      def initialize: (?String) -> void
+      def readonly?: () -> false
+      def store_length: () -> Integer
+      def read_bytes: (Integer, Integer) -> String
+      def write_bytes: (Integer, String) -> void
+      def truncate_bytes: (Integer) -> void
+      def flush_bytes: () -> nil
+      def sync_bytes: () -> nil
+      def close_bytes: () -> String
+    end
+
+    class FileStore
+      include Store
+      WRITERS: Hash[Array[Integer], [ Mutex, Integer ]]
+      WRITERS_MUTEX: Mutex
+      @file: File
+      @sync_directory: String?
+      @readonly: bool
+      @buffer_limit: Integer
+      @pending: String
+      @pending_offset: Integer
+      @identity: Array[Integer]
+      attr_reader storage_identity: Array[Integer]
+      def self.open: (String, ?readonly: bool, ?buffer_limit: Integer, ?create: bool, ?exclusive: bool) -> FileStore
+      def self.open_file: (String, bool, bool, bool) -> File
+      def initialize: (File, bool, Integer, ?sync_directory: String?) -> void
+      def readonly?: () -> bool
+      def store_length: () -> Integer
+      def read_bytes: (Integer, Integer) -> String
+      def read_file: (Integer, Integer) -> String
+      def write_bytes: (Integer, String) -> void
+      def write_file: (Integer, String) -> void
+      def truncate_bytes: (Integer) -> void
+      def flush_bytes: () -> nil
+      def sync_bytes: () -> nil
+      def close_bytes: () -> void
+      def lock_writer: (Float) -> void
+      def unlock_writer: () -> void
+      def retry_interrupted: [A] () { () -> A } -> A
+    end
+
+    class ByteValue
+      attr_reader bytes: String
+      attr_reader format_tag: String?
+      def initialize: (String, ?format_tag: String?) -> void
+    end
+
+    module Bytes
+      CHUNK_SIZE: Integer
+
+      class Source
+        @database: Database
+        @location: String | Integer
+        @bound: Integer
+        attr_reader size: Integer
+        attr_reader format_tag: String?
+        def initialize: (Database, String | Integer, Integer, String?, Integer) -> void
+        def read: (Integer, Integer) -> String
+      end
+
+      def self.open: (Database, Slot, bound: Integer) -> Source
+
+      def self.append: (Transaction, size: Integer, ?format_tag: String?, ?prefix: String, ?representation: Symbol) ?{ (Integer, Integer) -> String? } -> Slot
+
+      def self.read_chunk: (Integer, Integer) ?{ (Integer, Integer) -> String? } -> String
+
+      def self.validate_source: (Integer, String, Symbol, String?) -> void
+
+      def self.capture_inline: (Integer, String, Symbol, Integer) ?{ (Integer, Integer) -> String? } -> String?
+
+      def self.append_source: (Transaction, String, Integer) ?{ (Integer, Integer) -> String? } -> void
+
+      def self.parse: (Database, Slot, Integer) -> [ String | Integer, Integer, String? ]
+
+      def self.locate: (Database, Slot, bound: Integer) -> [ String | Integer, Integer ]
+
+      def self.copy: (_Reader, size: Integer, database: Database, transaction: Transaction) -> Slot
+    end
+
+    class Database
+      include Replication
+      ROOT_OFFSET: Integer
+      DATA_OFFSET: Integer
+      TRAILER_SIZE: Integer
+      MINIMUM_SIZE: Integer
+      @store: store
+      @lock_timeout: Float
+      @needs_reopen: bool
+      @transaction: Transaction?
+      attr_reader header: Header
+      def self.open: (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) -> Database
+                   | [A] (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) { (Database) -> A } -> A
+      def self.memory: (?hash_size: Integer, ?hash_id: String, ?file_id: Integer?) -> Database
+      def self.copy_replica: (to: String, source_io: _Reader, length: Integer) -> Database
+      def initialize: (store: store, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) -> void
+      def close: () -> void
+      def closed?: () -> bool
+      def with_operation: [A] () { () -> A } -> A
+      def storage_identity: () -> identity
+      def needs_reopen?: () -> bool
+      def check_open!: () -> void
+      def committed_size: () -> Integer
+      def compact: (to: String) -> Database
+      def copy_compacted_root: (Database, FileStore, Integer, Cursor, Slot, bool, OffsetMap) -> void
+      def cleanup_compaction: (FileStore, Database?, OffsetMap?, bool?) -> void
+      def root_cursor: () -> Cursor
+      def transaction: () { (Cursor) -> top } -> Cursor
+      def handle_transaction_error: (Exception, Exception?, bool?, :not_committed | :committed | :unknown) -> bot
+      def finish_transaction: (Transaction, Integer, :not_committed | :committed | :unknown, bool, Exception?) -> void
+      def bytes: (String, ?format_tag: String?) -> Slot
+      def read_bytes: (Slot, ?bound: Integer?) -> ByteValue
+      def read_at: (Integer, Integer, bound: Integer) -> String
+      def close_unreturned: () -> void
+      def restore_empty_target: () -> void
+      def active_transaction: () -> Transaction
+      def prepare_file: (Integer?, String?, Integer?, bool, bool) -> void
+      def initialize_empty_file: (Integer?, String?, Integer?, bool) -> void
+      def reset_failed_initialization: (bool) -> void
+      def check_header: (Symbol, Integer | String | nil, Integer | String) -> void
+      def check_range!: (Integer, Integer, Integer) -> void
+      def committed_state: () -> [ Integer, Slot ]
+      def publish: (Slot, Integer) -> void
+      def random_id: () -> Integer
+    end
+
+    class Cursor
+      @slot: Slot
+      @bound: Integer
+      @valid: bool
+      @parent: Cursor?
+      @selector: selector
+      @children: ObjectSpace::WeakMap[Cursor, selector]
+      attr_reader database: Database
+      attr_reader transaction: Transaction?
+      attr_reader parent: Cursor?
+      attr_reader selector: selector
+      attr_reader valid: bool
+      def initialize: (database: Database, slot: Slot, bound: Integer, ?transaction: Transaction?) -> void
+      def slot: () -> Slot
+      def bound: () -> Integer
+      def replace: (Slot) -> Cursor
+      def child: (kind: Symbol, selector: selector) -> Cursor?
+      def update_collection: (Slot, ?propagate: bool) -> Cursor
+      def array_child: (Integer, Slot) -> Cursor
+      def hash_child: (String, Slot) -> Cursor
+      def cached_child: (selector, Slot) -> Cursor
+      def invalidate_children: (?index: selector?, ?from: Integer?, ?except: Cursor?) -> void
+      def checkpoint_state: () -> cursor_state
+      def restore_checkpoint_state: (cursor_state) -> void
+      def read_bytes: () -> ByteValue
+      def collection: () -> (ArrayList | LinkedArrayList | SortedMap | HashMap)
+      def collection_get: (selector) -> Slot?
+      def integer_selector: (selector) -> Integer
+      def string_selector: (selector) -> String
+      def collection_replace: (selector, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> top
+      def local_slot: () -> Slot
+    end
+
+    class Transaction
+      class Checkpoint < Struct[Transaction | Hash[Cursor, cursor_state] | Integer | bool]
+        attr_accessor owner: Transaction
+        attr_accessor slots: Hash[Cursor, cursor_state]
+        attr_accessor length: Integer
+        attr_accessor cancelled: bool
+        def self.new: (owner: Transaction, slots: Hash[Cursor, cursor_state], length: Integer, cancelled: bool) -> Checkpoint
+      end
+      @database: Database
+      @store: store
+      @owner: Thread
+      @active: bool
+      @cancelled: bool
+      @logical_mutation: bool?
+      @cursors: ObjectSpace::WeakMap[Cursor, bool]
+      @checkpoints: Array[Checkpoint]
+      attr_reader root: Cursor
+      attr_reader mutable_start: Integer
+      def initialize: (Database, store, Slot) -> void
+      def check_active!: () -> void
+      def check_logical_mutation!: () -> void
+      def with_logical_mutation: [A] () { () -> A } -> A
+      def cursor: (slot: Slot) -> Cursor
+      def check_cursor!: (Cursor) -> void
+      def check_replacement!: (Cursor, Slot) -> void
+      def length: () -> Integer
+      def append: (String) -> Integer
+      def read_at: (Integer, Integer) -> String
+      def write_at: (Integer, String) -> Integer
+      def freeze: () -> Integer
+      def checkpoint: () -> Checkpoint
+      def restore: (Checkpoint) -> nil
+      def release_checkpoint: (Checkpoint) -> nil
+      def cancel_publication: () -> bool
+      def cancelled?: () -> bool
+      def expire!: () -> void
+      def validate_slot: (Slot) -> void
+    end
+
+    class OffsetMap
+      CACHE_LIMIT: Integer
+      @cache: Hash[Integer, Integer]
+      @map: HashMap?
+      @closed: bool?
+      @cleanup_complete: bool?
+      @transaction: Transaction?
+      @store: FileStore?
+      @database: Database
+      @temporary: Tempfile?
+      attr_reader peak_cache_size: Integer
+      def initialize: () -> void
+      def fetch: (Integer) -> Integer?
+      def store: (Integer, Integer) -> Integer
+      def close: () -> nil
+      def key: (Integer) -> String
+      def spill: () -> void
+    end
+
+    class ArrayList
+      include Enumerable[Slot]
+      HEADER_SIZE: Integer
+      BLOCK_SIZE: Integer
+      EMPTY_BLOCK: String
+      attr_reader cursor: Cursor
+      def initialize: (Cursor) -> void
+      def size: () -> Integer
+      def get: (Integer) -> Slot?
+      def cursor_at: (Integer, ?create: bool) -> Cursor?
+      def append: (Slot) -> self
+      def put: (Integer, Slot) -> self
+      def replace_child: (Integer, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+      def truncate: (Integer) -> self
+      def each: () -> Enumerator[Slot, self]
+              | () { (Slot) -> top } -> self
+      def header: () -> [ Integer, Integer? ]
+      def branches: (String, Integer, Integer, Integer) -> Array[[ Integer?, Integer, Integer ]]
+      def depth: (Integer) -> Integer
+      def resolve_index: (Integer, Integer) -> Integer?
+      def read: (Integer, Integer) -> String
+      def parse_slot: (String) -> Slot
+      def read_slot: (Integer) -> Slot
+      def read_element: (Integer, Integer, Integer) -> Slot
+      def validate_slot: (Slot) -> void
+      def mutate: () { (Transaction) -> top } -> void
+      def writable_header: (Transaction) -> [ Integer, Integer, Integer ]
+      def copy_block: (Transaction, Integer) -> Integer
+      def writable_element: (Transaction, Integer, Integer, Integer) -> Integer
+    end
+
+    class LinkedArrayList
+      include Enumerable[Slot]
+      @tree: BTree
+      attr_reader cursor: Cursor
+      def initialize: (Cursor) -> void
+      def size: () -> Integer
+      def get: (Integer) -> Slot?
+      def append: (Slot) -> self
+      def put: (Integer, Slot) -> self
+      def delete_at: (Integer) -> Slot?
+      def slice: (Integer, Integer) -> LinkedArrayList
+      def split: (Integer) -> Array[LinkedArrayList]
+      def concat: (LinkedArrayList) -> LinkedArrayList
+      def replace_child: (Integer, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+      def cursor_at: (Integer, ?create: bool) -> Cursor?
+      def each: () -> Enumerator[Slot, self]
+              | () { (Slot) -> top } -> self
+      def each_from_index: (Integer) -> Enumerator[Slot, self]
+                         | (Integer) { (Slot) -> top } -> self
+    end
+
+    class HashMap
+      BLOCK_SIZE: Integer
+      EMPTY_BLOCK: String
+      TAGS: Array[Symbol]
+      @tag: tag
+      attr_reader cursor: Cursor
+      def initialize: (Cursor, ?counted: bool, ?set: bool) -> void
+      def self.from_cursor: (Cursor) -> HashMap
+      def get: (String) -> Slot?
+      def key: (String) -> Slot?
+      def include?: (String) -> bool
+      def size: () -> Integer
+      def put: (String, key: Slot, value: Slot) -> self
+      def add: (String, key: Slot) -> self
+      def cursor_at: (String, ?create: bool) -> Cursor?
+      def replace_child: (String, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+      def remove: (String) -> bool
+      def each_entry: () -> Enumerator[[ String, Slot, Slot ], self]
+                    | () { (String, Slot, Slot) -> top } -> self
+      def counted_tag?: (tag) -> bool
+      def counted?: () -> bool
+      def count_bytes: () -> Integer
+      def hash_size: () -> Integer
+      def validate_hash: (String) -> String
+      def validate_slot: (Slot) -> void
+      def nibble: (String, Integer) -> Integer
+      def root_pointer: () -> Integer?
+      def read: (Integer, Integer) -> String
+      def parse_slot: (String) -> Slot
+      def read_record: (Slot) -> [ String, Slot, Slot ]
+      def entry: (String) -> [ Slot, Slot ]?
+      def writable!: () -> void
+      def mutate: () { (Transaction) -> top } -> void
+      def writable_root: (Transaction) -> Integer
+      def publish: (Integer, ?propagate: bool) -> Cursor
+      def adjust_count: (Transaction, Integer, Integer) -> void
+      def write_entry: (String, key: Slot?, value: Slot?, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> void
+      def collapse_path: (Transaction, Integer, Array[[ Integer, String, Integer ]]) -> void
+      def collection_tag: (bool, bool) -> Symbol
+      def collapsible?: (Integer, Integer, Array[Slot]) -> bool
+      def write_leaf: (Transaction, Integer, Slot, String, Integer, Integer, Slot?, Slot?) -> Integer?
+    end
+
+    class HashSet < HashMap
+      def initialize: (Cursor, ?counted: bool) -> void
+    end
+
+    class CountedHashMap < HashMap
+      def initialize: (Cursor) -> void
+    end
+
+    class CountedHashSet < HashSet
+      def initialize: (Cursor) -> void
+    end
+
+    class BTree
+      HEADER_SIZE: Integer
+      CAPACITY: Integer
+      SPLIT_COUNT: Integer
+      LEAF_SIZE: Integer
+      BRANCH_SIZE: Integer
+      type node = Node | SortedMap::Tree::Node
+      type path = Array[[ Integer, node, Integer ]]
+      type ref = [ Integer?, Integer, Integer? ]
+      class Node
+        attr_accessor kind: Integer
+        attr_accessor slots: Array[Slot]
+        attr_accessor counts: Array[Integer]
+        def self.new: (Integer, Array[Slot], Array[Integer]) -> Node
+        def initialize: (Integer, Array[Slot], Array[Integer]) -> void
+        def size: () -> Integer
+      end
+      @tag: tag
+      attr_reader cursor: Cursor
+      def initialize: (Cursor, ?tag: tag) -> void
+      def size: () -> Integer
+      def at: (Integer) -> Slot?
+      def insert: (Integer, Slot) -> self
+      def replace: (Integer, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+      def delete_at: (Integer) -> Slot?
+      def split: (Integer) -> Array[BTree]
+      def slice: (Integer, Integer) -> BTree
+      def concat: (BTree) -> BTree
+      def each_from_index: (Integer) -> Enumerator[Slot, self]
+                         | (Integer) { (Slot) -> top } -> self
+      def integer_index: (Integer) -> void
+      def next_frame: (path) -> [ Integer, node, Integer ]?
+      def rebalance_child: (Transaction, node, node, Integer, Integer?) -> void
+      def merge_neighbor: (node, node, Integer) -> [ node, Integer ]
+      def collapse_root: (Transaction, node, Integer?, Integer) -> Integer
+      def resolve_index: (Integer, Integer) -> Integer?
+      def read: (Integer, Integer, ?bound: Integer) -> String
+      def header: () -> [ Integer, Integer? ]
+      def read_node: (Integer, Integer, ?bound: Integer) -> node
+      def read_node_header: (Integer, Integer) -> [ Integer, Integer ]
+      def node_slots: (String, Integer, Integer) -> Array[Slot]
+      def validate_node: (Node, Integer) -> void
+      def validate_branch: (Node) -> void
+      def validate_leaf: (Node) -> void
+      def descend: (Integer?, Integer, Integer, ?insertion: bool, ?ancestors: Array[Integer]) -> [ path, node, Integer ]
+      def pointer_for: (path, Integer?) -> Integer?
+      def validate_slot: (Slot) -> void
+      def mutate: [A] () { (Transaction) -> A } -> A
+      def node_for: (ref) -> node
+      def child_ref: (ref, node, Integer) -> ref
+      def merge_nodes: (node, node) -> node
+      def assemble: (Transaction, node) -> Array[ref]
+      def branch: (Array[ref]) -> node
+      def height: (ref) -> Integer
+      def join_roots: (Transaction, ref, ref) -> ref
+      def sibling_root: (Transaction, ref, node, Range[Integer]) -> ref
+      def split_root: (Transaction, ref, Integer) -> [ ref, ref ]
+      def detached: (Transaction, ref) -> BTree
+      def write_node: (Transaction, node, ?Integer?) -> Integer
+      def write_split: (Transaction, node, Integer?) -> Array[[ Integer, Integer ]]
+      def publish: (Transaction, Integer, Integer, ?propagate: bool) -> Cursor
+    end
+
+    class SortedMap
+      include Enumerable[[ String, Slot ]]
+      @tree: Tree
+      attr_reader cursor: Cursor
+      def initialize: (Cursor, ?set: bool) -> void
+      def size: () -> Integer
+      def get: (String) -> Slot?
+      def include?: (String) -> bool
+      def put: (String, value: Slot) -> self
+      def add: (String) -> self
+      def remove: (String) -> bool
+      def rank: (String) -> Integer
+      def at: (Integer) -> [ String, Slot ]?
+      def each: () -> Enumerator[[ String, Slot ], self]
+              | () { ([ String, Slot ]) -> top } -> self
+      def each_from: (String) -> Enumerator[[ String, Slot ], self]
+                   | (String) { ([ String, Slot ]) -> top } -> self
+      def each_from_index: (Integer) -> Enumerator[[ String, Slot ], self]
+                         | (Integer) { ([ String, Slot ]) -> top } -> self
+      def cursor_at: (String, ?create: bool) -> Cursor?
+      def replace_child: (String, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+      def decode: (Slot) -> [ String, Slot ]
+      class Tree < BTree
+        BRANCH_SIZE: Integer
+        type sorted_path = Array[[ Integer, Node, Integer ]]
+        class Node
+          attr_accessor kind: Integer
+          attr_accessor slots: Array[Slot]
+          attr_accessor counts: Array[Integer]
+          attr_accessor separators: Array[Slot]
+          def self.new: (Integer, Array[Slot], Array[Integer], Array[Slot]) -> Node
+          def initialize: (Integer, Array[Slot], Array[Integer], Array[Slot]) -> void
+          def size: () -> Integer
+        end
+        def record: (Slot) -> [ Slot, Slot ]
+        def find: (String) -> Slot?
+        def locate: (String) -> [ sorted_path, Node, Integer, bool, Integer ]
+        def store: (String, ?value: Slot?, ?key_only: bool, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> self
+        def store_leaf: (Transaction, String, Node, Integer, bool, bool, Slot?) -> void
+        def write_path: (Transaction, sorted_path, Node, Integer?) -> Integer
+        def collapse_sorted_root: (Transaction, Node, Integer?, Integer) -> Integer
+        def remove: (String) -> bool
+        def lower_bound: (Integer) { (Integer) -> bool } -> Integer
+        def split_separator: (Array[[ Integer, Integer, Slot? ]]) -> Slot
+        def key_bytes: (Slot) -> String
+        def read_node: (Integer, Integer, ?bound: Integer) -> Node
+        def validate_header: (Integer, Integer) -> void
+        def valid_node?: (Node) -> bool
+        def write_node: (Transaction, BTree::node, ?Integer?) -> Integer
+        def padded_slots: (Array[Slot]) -> String
+        def split_node: (Transaction, Node, Integer?) -> Array[[ Integer, Integer, Slot? ]]
+      end
+    end
+
+    class SortedSet < SortedMap
+      def initialize: (Cursor) -> void
+    end
+
+    class Compaction
+      INLINE_TAGS: Array[Symbol]
+      BLOCK_SIZE: Integer
+      @source: Database
+      @bound: Integer
+      @transaction: Transaction
+      @offsets: OffsetMap
+      @stack: Array[^() -> void]
+      def initialize: (Database, Cursor, Transaction, OffsetMap) -> void
+      def copy: (Slot) -> Slot
+      def read: (Integer, Integer) -> String
+      def parse: (String) -> Slot
+      def remap: (Slot) -> Slot
+      def remap_pointer: (Slot) -> Integer
+      def reserve: (Integer, Integer, ?cache: bool) { (Integer, Integer) -> void } -> Integer
+      def reserve_slots: (Integer, Integer, Integer, Integer) -> Integer
+      def copy_bytes: (Slot) -> Integer
+      def slots: (Integer, Integer, Integer, Integer) -> void
+      def array_header: (Integer, Integer) -> void
+      def array_index: (Integer, Integer, Integer) -> Integer
+      def partial_array: (Integer, Integer, Integer, Integer) -> void
+      def tree_header: (Integer, Integer, bool) -> void
+      def tree_node: (Integer, bool) -> Integer
+      def tree_branch: (Integer, Integer, bool) -> void
+    end
+
+    class ReplicaState < Data
+      attr_reader committed_size: Integer
+      attr_reader checksum: Integer
+      def self.new: (committed_size: Integer, checksum: Integer) -> ReplicaState
+    end
+
+    module Replication
+      @store: store
+
+      @lock_timeout: Float
+
+      @needs_reopen: bool
+
+      def with_operation: [A] () { () -> A } -> A
+
+      def committed_state: () -> [ Integer, Slot ]
+
+      def header: () -> Header
+
+      CHUNK_SIZE: Integer
+
+      def replica_state: () -> ReplicaState
+
+      def replication_start: (ReplicaState) -> Integer
+
+      def read_committed: (Integer, Integer, _Writer) -> nil
+
+      def apply_replicated: (Integer, _Reader, Integer) -> nil
+
+      def append_replica_chunks: (_Reader, Integer, Integer) -> void
+
+      def recover_replica_application: (Integer, bool, :not_committed | :committed | :unknown) -> void
+
+      def self.validate_replica: (store, Integer) -> void
+
+      def self.cleanup_staged_replica: (FileStore, bool, :not_committed | :committed | :unknown) -> void
+
+      def self.copy_replica: (to: String, source_io: _Reader, length: Integer) -> Database
+
+      def self.position: (Integer) -> void
+
+      def self.trailer: (store, Header, Integer, Integer) -> [ Slot, Integer ]
+
+      def self.read_chunks: (_Reader, Integer) { (String) -> top } -> void
+
+      def self.write_all: (_Writer, String) -> void
+
+      def self.storage_write: [A] (?outcome: :not_committed | :committed | :unknown) { () -> A } -> A
+    end
+  end
+end

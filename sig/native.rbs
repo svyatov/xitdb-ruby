@@ -1,0 +1,118 @@
+# Exact contracts for native methods used to bypass user-defined reflection.
+module XitDB
+  interface _NativeClass
+    def bind_call: (top) -> Class
+  end
+
+  interface _NativePredicate
+    def bind_call: (top, Module) -> bool
+  end
+
+  interface _NativeFrozen
+    def bind_call: (top) -> bool
+  end
+
+  interface _NativeFreeze
+    def bind_call: [A] (A) -> A
+  end
+
+  interface _NativeMethodNames
+    def bind_call: (top, ?bool) -> Array[Symbol]
+  end
+
+  interface _NativeMethod
+    def bind_call: [A, B] (Ruby::_Callback[A, B], :call) -> Ruby::_Callback[A, B]
+                 | (Object, :dig) -> _DigMethod
+                 | (top, Symbol | String) -> Method
+  end
+
+  interface _NativeModuleName
+    def bind_call: (Module) -> String?
+  end
+
+  interface _NativeModuleComparison
+    def bind_call: (Module, Module) -> bool?
+  end
+
+  interface _NativeInstanceMethod
+    def bind_call: (Module, Symbol | String) -> UnboundMethod
+  end
+
+  interface _NativeIdentity
+    def bind_call: (top, top) -> bool
+  end
+
+  interface _NativeObjectId
+    def bind_call: (top) -> Integer
+  end
+
+  interface _DigMethod
+    def call: (*selector) -> top
+  end
+
+  interface _NativeArrayMap
+    def bind_call: [A, B] (Array[A]) { (A) -> B } -> Array[B]
+  end
+
+  interface _NativeHashMap
+    def bind_call: [K, V, A, B] (Hash[K, V]) { (K, V) -> [ A, B ] } -> Hash[A, B]
+  end
+
+  interface _NativeHashKeys
+    def bind_call: [K, V] (Hash[K, V]) -> Array[K]
+  end
+end
+
+class Object
+  def self.instance_method: (:class) -> XitDB::_NativeClass
+                          | (:is_a? | :instance_of?) -> XitDB::_NativePredicate
+                          | (:frozen?) -> XitDB::_NativeFrozen
+                          | (:freeze) -> XitDB::_NativeFreeze
+                          | (:singleton_methods | :public_methods | :protected_methods | :private_methods) -> XitDB::_NativeMethodNames
+                          | (:method | :public_method) -> XitDB::_NativeMethod
+                          | ...
+end
+
+class Module
+  def self.instance_method: (:name) -> XitDB::_NativeModuleName
+                          | (:<=) -> XitDB::_NativeModuleComparison
+                          | (:instance_method) -> XitDB::_NativeInstanceMethod
+                          | (:public_instance_methods | :protected_instance_methods | :private_instance_methods) -> XitDB::_NativeMethodNames
+                          | ...
+end
+
+class BasicObject
+  def self.instance_method: (:equal?) -> XitDB::_NativeIdentity
+                          | (:__id__) -> XitDB::_NativeObjectId
+                          | ...
+end
+
+class Array[unchecked out E]
+  def self.instance_method: (:map) -> XitDB::_NativeArrayMap
+                          | ...
+end
+
+class Hash[unchecked out K, unchecked out V]
+  def self.instance_method: (:to_h) -> XitDB::_NativeHashMap
+                          | (:keys) -> XitDB::_NativeHashKeys
+                          | ...
+end
+
+module XitDB
+  class Database
+    def self.send: (:open_store, String, readonly: bool) -> [ Core::FileStore, bool ]
+                 | ...
+  end
+
+  module Core
+    class Database
+      def send: (:close_unreturned | :restore_empty_target) -> void
+              | ...
+    end
+
+    module Store
+      def send: (:close_unreturned) -> void
+              | ...
+    end
+  end
+end

@@ -1,0 +1,337 @@
+module XitDB
+  module Ruby
+    def self.open: (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) -> Database
+                 | [A] (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) { (Database) -> A } -> A
+
+    def self.memory: (?codecs: Array[Codec]) -> Database
+                   | [A] (?codecs: Array[Codec]) { (Database) -> A } -> A
+
+    class EncodedValue
+      attr_reader codec_id: String
+      attr_reader format_tag: String?
+      attr_reader bytes: String
+      def initialize: (codec_id: String, bytes: String, ?format_tag: String) -> void
+    end
+
+    module Wire
+      def self.u: (Integer) -> String
+
+      def self.b: (String) -> String
+
+      def self.t: (String) -> String
+
+      def self.z: (Integer) -> String
+
+      def self.q: (Rational) -> String
+
+      def self.f64: (Float) -> String
+
+      class Reader
+        @bytes: String
+        @position: Integer
+        def initialize: (String) -> void
+        def byte: () -> Integer
+        def u: () -> Integer
+        def b: () -> String
+        def t: () -> String
+        def z: () -> Integer
+        def q: () -> Rational
+        def f64: () -> Float
+        def finish!: () -> self
+        private
+        def take: (Integer) -> String
+      end
+    end
+
+    module KeyEncoding
+      TYPES: Array[Class]
+
+      def self.dump: (XitDB::value) -> String
+
+      def self.scalar_bytes: (XitDB::value) -> String
+
+      def self.float_bytes: (Float) -> String
+
+      def self.checked_key: (top) -> XitDB::selector
+
+      def self.string_body: (String) -> String
+    end
+
+    module OrderedKeys
+      TYPES: Hash[Symbol, Class]
+
+      def self.dump: (XitDB::value, kind: Symbol) -> String
+
+      def self.unsigned: (Integer) -> String
+
+      def self.string_bytes: (String) -> String
+
+      def self.float_bytes: (Float) -> String
+
+      def self.complement: (String) -> String
+
+      def self.signed: (Integer | Rational, String) -> String
+
+      def self.rational: (Rational) -> String
+    end
+
+    module Scalars
+      TYPES: Array[Class]
+
+      def self.encode: (top, core: Core::Database, ?registry: CodecRegistry?) -> Core::Slot
+
+      def self.builtin_slot: (XitDB::value, Core::Database) -> Core::Slot
+
+      def self.checked_builtin: (top) -> XitDB::value
+
+      def self.checked_object_builtin: (Object) -> XitDB::value
+
+      def self.builtin_payload: (XitDB::value) -> String
+
+      def self.decimal_payload: (XitDB::value) -> String
+
+      def self.time_bytes: (Time) -> String
+
+      def self.builtin_type?: (Class) -> bool
+
+      def self.decode: (Core::Slot, core: Core::Database, ?bound: Integer?, ?registry: nil, ?immutable: bool) -> XitDB::value
+                     | (Core::Slot, core: Core::Database, registry: CodecRegistry, ?bound: Integer?, ?immutable: bool) -> top
+
+      def self.decode_payload: (String, ?registry: nil) -> XitDB::value
+                             | (String, registry: CodecRegistry?) -> top
+
+      def self.decode_type: (Wire::Reader, String, nil) -> XitDB::value
+                          | (Wire::Reader, String, CodecRegistry?) -> top
+
+      def self.read_symbol: (Wire::Reader) -> Symbol
+
+      def self.read_boolean?: (Wire::Reader) -> bool
+
+      def self.decode_extended_type: (Integer, Wire::Reader, String, nil) -> XitDB::value
+                                   | (Integer, Wire::Reader, String, CodecRegistry?) -> top
+
+      def self.read_codec: (Wire::Reader, String, nil) -> EncodedValue
+                         | (Wire::Reader, String, CodecRegistry?) -> top
+
+      def self.decimal_bytes: (BigDecimal) -> String
+
+      def self.read_time: (Wire::Reader) -> Time
+
+      def self.read_start: (Wire::Reader) -> Float
+
+      def self.read_datetime: (Wire::Reader) -> DateTime
+
+      def self.read_decimal: (Wire::Reader) -> BigDecimal
+
+      def self.read_finite_decimal: (Wire::Reader) -> BigDecimal
+
+      def self.build_decimal: (String) -> BigDecimal
+
+      def self.read_string: (Wire::Reader) -> String
+    end
+
+    interface _Callback[A, B]
+      def call: (A) -> B
+
+      def is_a?: (Module) -> bool
+    end
+
+    class Codec
+      @dump: _Callback[top, top]
+      @load: _Callback[String, top]
+      attr_reader id: String
+      attr_reader type: Class
+      def initialize: (id: String, type: Class, dump: _Callback[top, top], load: _Callback[String, top]) -> void
+      def dump: (top) -> String
+      def load: (String) -> top
+      private
+      def capture_callback: [A, B] (_Callback[A, B]) -> _Callback[A, B]
+      def invoke: [A, B] (_Callback[A, B], A, Symbol) -> B
+    end
+
+    class CodecRegistry
+      @by_type: Hash[Class, Codec]
+      @by_id: Hash[String, Codec]
+      attr_reader codecs: Array[Codec]
+      def initialize: (Array[Codec]) -> void
+      def for_value: (top) -> Codec?
+      def validate_registration: (Codec) -> void
+      def for_id: (String) -> Codec?
+    end
+  end
+
+  module Profiles
+    class Portable
+      KINDS: Hash[Symbol, XitDB::kind]
+      attr_reader hasher: Core::Hasher
+      def initialize: (?hasher: Core::Hasher) -> void
+      def encode_scalar: (top, core: Core::Database) -> Core::Slot
+      def decode_scalar: (Core::Slot, core: Core::Database, ?bound: Integer?, ?immutable: bool) -> XitDB::value
+      def key_bytes: (XitDB::value) -> String
+      def encode: (top, context: Context, path: XitDB::path) -> Core::Slot
+      def decode: (Core::Slot, context: Context, path: XitDB::path, ?immutable: bool) -> XitDB::value
+      def container: (Core::Slot, context: Context, path: XitDB::path) -> Adapter?
+      def empty_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> Adapter
+      def conversion_kind: (XitDB::adapter) -> XitDB::kind
+      def conversion_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> Adapter
+      def conversion_bytes: (Core::Slot, context: Context) -> [ Conversion::ByteSource, Symbol? ]?
+      def copy_conversion_bytes: (Conversion::ByteSource, Symbol | Encoding | nil, context: Context, path: XitDB::path) -> Core::Slot
+      def input_kind: (top, path: XitDB::path) -> Symbol?
+      def validate_container: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
+      def hash_defaults?: (Hash[top, top]) -> bool
+      def input_entries: (top, path: XitDB::path) -> Enumerator[[ XitDB::selector, top ], void]
+    end
+
+    class Ruby
+      @registry: XitDB::Ruby::CodecRegistry
+      attr_reader hasher: Core::Hasher
+      attr_reader codecs: Array[XitDB::Ruby::Codec]
+      def initialize: (?codecs: Array[XitDB::Ruby::Codec]) -> void
+      def encode: (top, context: Context, path: XitDB::path) -> Core::Slot
+      def encode_scalar: (top, core: Core::Database) -> Core::Slot
+      def decode: (Core::Slot, context: Context, path: XitDB::path, ?immutable: bool) -> top
+      def key_bytes: (XitDB::value) -> String
+      def container: (Core::Slot, context: Context, path: XitDB::path) -> XitDB::Ruby::Containers?
+      def empty_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> XitDB::Ruby::Containers
+      def conversion_kind: (XitDB::adapter) -> (Symbol | [ Symbol, Symbol? ])
+      def conversion_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> XitDB::Ruby::Containers
+      def conversion_bytes: (Core::Slot, context: Context) -> [ Conversion::ByteSource, Symbol | Encoding | nil ]?
+      def copy_conversion_bytes: (Conversion::ByteSource, Symbol | Encoding | nil, context: Context, path: XitDB::path) -> Core::Slot
+      def input_kind: (top, path: XitDB::path) -> (Symbol | [ Symbol, Symbol? ] | nil)
+      def validate_container: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
+      def hash_defaults?: (Hash[top, top]) -> bool
+      def declaration_kind: (CollectionDeclaration, Class, XitDB::path) -> (Symbol | [ Symbol, Symbol? ])
+      def input_entries: (top, path: XitDB::path) -> Enumerator[[ XitDB::selector, top ], void]
+    end
+  end
+end
+module XitDB
+  module Profiles
+    class Portable
+      class Adapter
+        @profile: Portable
+        @context: Context
+        @path: XitDB::path
+        @collection: Core::HashMap | Core::SortedMap | Core::ArrayList | Core::LinkedArrayList
+        def initialize: (Portable, Core::Cursor, context: Context, path: XitDB::path, ?tag: Symbol?) -> void
+        attr_reader kind: XitDB::kind
+        attr_reader cursor: Core::Cursor
+        def slot: () -> Core::Slot
+        def size: () -> Integer
+        def empty?: () -> bool
+        def lookup: (XitDB::selector) -> Core::Slot?
+        def assign: (XitDB::selector, Core::Slot) -> self
+        def delete: (XitDB::selector) -> (Core::ArrayList | Core::Slot | bool | nil)
+        def insert: (Integer, Core::Slot) -> self
+        def truncate: (Integer) -> self
+        def slice: (Integer, Integer) -> Core::Slot
+        def concat: (XitDB::adapter) -> self
+        def rank: (XitDB::selector) -> Integer
+        def each_from: (XitDB::selector) -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                     | (XitDB::selector) { (XitDB::selector, Core::Slot) -> void } -> self
+        def each_from_index: (Integer) -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                           | (Integer) { (XitDB::selector, Core::Slot) -> void } -> self
+        def each_entry: () -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                      | () { (XitDB::selector, Core::Slot) -> void } -> self
+
+        private
+        def index_selector: (XitDB::selector) -> Integer
+        def required_slot: (Core::Slot?) -> Core::Slot
+        def array_collection: () -> Core::ArrayList
+        def linked_collection: () -> Core::LinkedArrayList
+        def sorted_collection: () -> Core::SortedMap
+        def hash_collection: () -> Core::HashMap
+        def sequence_collection: () -> (Core::ArrayList | Core::LinkedArrayList)
+        def decode_key: (String) -> String
+        def key_bytes: (XitDB::selector) -> String
+      end
+    end
+  end
+
+  module Ruby
+    class Containers
+      MARKERS: Hash[Symbol, Integer]
+      KEY_KINDS: Hash[Symbol, Integer]
+      @profile: Profiles::Ruby
+      @context: Context
+      @path: XitDB::path
+      @key_kind: Symbol?
+      @envelope: Core::ArrayList?
+      @lookup: Core::HashMap
+      @order: Core::SortedMap
+      @next_id: Integer
+      @collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, ?kind: Symbol?, ?key_kind: Symbol?) -> void
+      attr_reader kind: XitDB::kind
+      attr_reader cursor: Core::Cursor
+      def slot: () -> Core::Slot
+      def size: () -> Integer
+      def empty?: () -> bool
+      def lookup: (XitDB::selector) -> Core::Slot?
+      def assign: (XitDB::selector, Core::Slot) -> self
+      def delete: (XitDB::selector) -> self
+      def insert: (Integer, Core::Slot) -> self
+      def truncate: (Integer) -> self
+      def slice: (Integer, Integer) -> Core::Slot
+      def concat: (XitDB::adapter) -> self
+      def rank: (XitDB::selector) -> Integer
+      def each_from: (XitDB::selector) -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                   | (XitDB::selector) { (XitDB::selector, Core::Slot) -> void } -> self
+      def each_from_index: (Integer) -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                         | (Integer) { (XitDB::selector, Core::Slot) -> void } -> self
+      def each_entry: () -> Enumerator[[ XitDB::selector, Core::Slot ], self]
+                    | () { (XitDB::selector, Core::Slot) -> void } -> self
+
+      def clear_needed?: () -> bool
+      def clear: () -> self
+      def selector_identity: (XitDB::selector) -> XitDB::selector
+      attr_reader collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList
+      def linked_collection: () -> Core::LinkedArrayList
+      private
+      def index_selector: (XitDB::selector) -> Integer
+      def each_normalized_index: (Integer) { (XitDB::selector, Core::Slot) -> void } -> self
+      def required_slot: (Core::Slot?) -> Core::Slot
+      def fetch_slot: (Core::ArrayList, Integer) -> Core::Slot
+      def envelope: () -> Core::ArrayList
+      def declared_key_kind: () -> Symbol
+      def array_collection: () -> Core::ArrayList
+      def sorted_collection: () -> Core::SortedMap
+      def sequence_collection: () -> (Core::ArrayList | Core::LinkedArrayList)
+      def ordered?: () -> bool
+      def sorted?: () -> bool
+      def array: (Array[Core::Slot]) -> Core::ArrayList
+      def initialize_empty: () -> void
+      def read_envelope: () -> void
+      def publish: () -> self
+      def key_bytes: (XitDB::selector) -> String
+      def raw_bytes: (Core::Slot?) -> String
+      def decode_key: (Core::Slot) -> XitDB::selector
+      def record_for: (String, ?expected_bytes: String?) -> Core::ArrayList?
+      def sorted_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
+      def invalid!: () -> bot
+      def assign_sorted: (XitDB::selector, Core::Slot) -> void
+      def assign_ordered: (XitDB::selector, Core::Slot) -> void
+      def delete_array: (XitDB::selector) -> void
+      def read_sorted_envelope: () -> void
+      def read_ordered_envelope: () -> void
+      def read_sequence_envelope: () -> void
+      def envelope_size: () -> Integer
+      def ordered_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
+      def validate_record: (Core::ArrayList, String, Core::Slot, String?) -> void
+    end
+  end
+end
+
+class Date
+  def self.jd: (?Integer, ?Numeric) -> Date
+             | ...
+end
+class DateTime
+  def self.jd: (?Integer, ?Integer, ?Integer, ?Integer, ?Rational, ?Numeric) -> DateTime
+             | ...
+  def +: (Numeric) -> DateTime
+end
+class BigDecimal
+  def self.save_exception_mode: [A] () { () -> A } -> A
+                             | ...
+end

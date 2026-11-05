@@ -11,12 +11,14 @@ class PackageTest < Minitest::Test
       assert_equal "Ada", packaged_example("portable").fetch("name")
       assert_equal true, packaged_example("ruby").fetch("enabled")
       assert_equal %w[Ada Grace], packaged_example("indexed_users").fetch("names")
-      %w[README.md CHANGELOG.md LICENSE docs/core.md docs/portable.md docs/ruby.md docs/ruby-profile-v1.md].each do |path|
+      %w[README.md CHANGELOG.md LICENSE docs/core.md docs/portable.md docs/ruby.md
+         docs/ruby-profile-v1.md sig/base.rbs sig/core.rbs sig/native.rbs sig/public.rbs
+         sig/ruby.rbs sig/manifest.yaml].each do |path|
         assert_includes spec.files, path
       end
       assert_empty spec.extensions
       assert_equal %w[bigdecimal date], spec.runtime_dependencies.map(&:name).sort
-      refute spec.files.any? { |path| path.start_with?("test/", ".superpowers/", "pkg/", "docs/superpowers/") }
+      refute(spec.files.any? { |path| path.start_with?("test/", ".superpowers/", "pkg/", "docs/superpowers/") })
     end
   end
 end

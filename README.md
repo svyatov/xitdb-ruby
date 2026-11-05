@@ -59,8 +59,21 @@ Examples require the installed package and write temporary files only. Each emit
 ## Verify a checkout
 
 Run `ruby script/ci.rb` with the development gems from `Gemfile.lock` available.
-It runs the fast suite, installs a locally built gem into temporary storage, executes its examples, and inspects package contents.
+It checks Ruby style, library types, and Change Risk Anti-Patterns (CRAP), then inspects the locally built package.
+The tests execute packaged examples from temporary storage and inspect package contents.
 The package check uses an isolated application bundle and local gem resolution. It does not install dependencies from the network.
+
+`bundle exec rake` runs the same checks. Individual checks are available:
+
+| Command | Check |
+| --- | --- |
+| `bundle exec rake rubocop` | Project style rules, with size metrics exempted |
+| `bundle exec rake types` | Steep diagnostics and 100% typed calls in every library file |
+| `bundle exec rake crap` | Fast tests with fresh SimpleCov coverage, then a CRAP limit of 10 |
+| `bundle exec rake test` | Fast tests without the analysis tools |
+
+RBS signatures ship in `sig/`. Custom codec results have an unknown type until callers validate their class.
+Type coverage measures checked method calls. It does not prove that arbitrary codec output meets an application's domain constraints.
 
 The workflow defines separate `reference` and `linux-memory` jobs alongside Linux MRI 3.3, 3.4, and 4.0 and macOS jobs.
 Configure every job as a required branch check. Workflow definitions alone do not enable repository branch protection.

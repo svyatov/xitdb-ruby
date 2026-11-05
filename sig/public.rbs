@@ -1,0 +1,427 @@
+module ObjectSpace
+  class WeakMap[K, V]
+    def initialize: () -> void
+    def []: (K) -> V?
+    def []=: (K, V) -> V
+    def key?: (K) -> bool
+    def each_key: () { (K) -> void } -> self
+    def each_pair: () { (K, V) -> void } -> self
+  end
+end
+
+module XitDB
+  type selector = String | Integer | Float | Time | Symbol | bool | nil | UInt
+
+  type path = ::Array[selector]
+
+  type kind = :map | :sorted_map | :array | :linked_array | :set | :sorted_set
+
+  type collection_kind = :hash_map | :counted_hash_map | :hash_set | :counted_hash_set | :array_list | :linked_array_list | :sorted_map | :sorted_set
+
+  type value = selector | Date | DateTime | BigDecimal | Rational | Ruby::EncodedValue | Core::ByteValue | CollectionDeclaration | Views::Base | ::Array[value] | ::Hash[selector, value] | ::Set[selector]
+
+  type materialized = ::Hash[selector, top] | ::Array[top] | ::Set[selector]
+
+  type profile = Profiles::Portable | Profiles::Ruby
+
+  type adapter = Profiles::Portable::Adapter | Ruby::Containers
+
+  type entry = [ selector, Core::Slot ]
+
+  type native_visibility_pair = [ :public_instance_methods | :protected_instance_methods | :private_instance_methods, :public_methods | :protected_methods | :private_methods ]
+
+  type conversion_frame = [ [ Symbol, Integer ], path, Enumerator[entry, adapter], adapter, selector ]
+
+  type encoding_frame = [ top, path, adapter, Enumerator[[ selector, top ], void], selector ]
+
+  type materialization_frame = [ [ Symbol, Integer ], path, Enumerator[entry, top], materialized, selector ]
+
+  type registration = [ path, bool ]
+
+  type transform = ^(value: top, path: path, role: :key | :value) -> top
+
+  class UInt
+    attr_reader value: Integer
+    def initialize: (Integer value) -> void
+  end
+
+  class CollectionDeclaration
+    KINDS: ::Array[Symbol]
+    attr_reader kind: collection_kind
+    attr_reader key_kind: (:string | :integer | :float | :time)?
+    def initialize: (collection_kind kind, ?key: (:string | :integer | :float | :time)?) -> void
+    def counted?: () -> bool
+  end
+
+  def self.uint: (Integer) -> UInt
+
+  def self.bytes: (String, ?format_tag: String?) -> Core::ByteValue
+
+  def self.map: (?counted: bool) -> CollectionDeclaration
+
+  def self.set: (?counted: bool) -> CollectionDeclaration
+
+  def self.array: () -> CollectionDeclaration
+
+  def self.linked_array: () -> CollectionDeclaration
+
+  def self.sorted_map: (?key: (:string | :integer | :float | :time)?) -> CollectionDeclaration
+
+  def self.sorted_set: (?key: (:string | :integer | :float | :time)?) -> CollectionDeclaration
+
+  class Database
+    attr_reader core: Core::Database
+    attr_reader profile: profile
+    @readonly: bool
+    def initialize: (core: Core::Database, profile: profile, ?readonly: bool) -> void
+    def self.hasher: (Symbol | Core::Hasher) -> Core::Hasher
+    def self.header_hasher: (Core::Header) -> Core::Hasher
+    def self.open_store: (String, readonly: bool) -> [ Core::FileStore, bool ]
+    def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) -> Database
+                 | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) { (Database) -> A } -> A
+    def self.memory: (?hash: Symbol | Core::Hasher) -> Database
+                   | [A] (?hash: Symbol | Core::Hasher) { (Database) -> A } -> A
+    def transaction: () { (Views::Map) -> void } -> Snapshot
+    def perform_transaction: () { (Views::Map) -> void } -> Snapshot
+    def snapshot: (?revision: Revision?) -> Snapshot
+    def history: () -> History
+    def revert: (Snapshot | Revision) -> Snapshot
+    def perform_revert: (Snapshot | Revision) -> Snapshot
+    def close: () -> void
+    def compact: (to: String) -> Database
+    def closed?: () -> bool
+    def convert: (to: String, profile: :portable | :ruby | profile, ?history: :all | :latest, ?transform: transform?) -> Database
+    def conversion_profile: (:portable | :ruby | profile) -> profile
+    def copy_history: (Database, Core::FileStore, Core::Cursor, Core::ArrayList, :all | :latest, transform?) -> Core::Cursor
+    def history_array: (Core::Cursor) -> Core::ArrayList
+    def snapshot_from_history: (Core::Cursor, Integer, ?revision: Revision?) -> Snapshot
+    def validate_root: (Core::Slot, Context) -> void
+    def snapshot_from_cursor: (Core::Cursor) -> Snapshot
+    def revision_for: (Core::Cursor, Integer) -> Revision
+  end
+
+  def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) -> Database
+               | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) { (Database) -> A } -> A
+
+  def self.memory: (?hash: Symbol | Core::Hasher) -> Database
+                 | [A] (?hash: Symbol | Core::Hasher) { (Database) -> A } -> A
+
+  class Revision
+    @file_id: Integer
+    @trailer_position: Integer
+    @checksum: Integer
+    @index: Integer
+    def initialize: (file_id: Integer, trailer_position: Integer, checksum: Integer, index: Integer) -> void
+    def resolve: (Database) -> Snapshot
+    def inspect: () -> String
+  end
+
+  class Snapshot < Views::Map
+    attr_reader revision: Revision?
+    def initialize: (context: Context, revision: Revision?) -> void
+  end
+
+  class History
+    include Enumerable[Snapshot]
+    @database: Database
+    def initialize: (Database) -> void
+    def []: (Integer) -> Snapshot?
+    def fetch: (Integer) -> Snapshot
+    def size: () -> Integer
+    def each: () -> Enumerator[Snapshot, self]
+            | () { (Snapshot) -> void } -> self
+  end
+
+  module Streams
+    class Handle
+      @context: Context
+      @active: bool
+      def initialize: (Context) -> void
+      def expire!: () -> void
+      private
+      def check!: () -> void
+      def integer: (Integer | _ToInt) -> Integer
+    end
+
+    class Reader < Handle
+      @source: Core::Bytes::Source
+      @size: Integer
+      @pos: Integer
+      def initialize: (Context, Core::Slot) -> void
+      def read: (?Integer? length, ?String? output) -> String?
+      def readpartial: (Integer, ?String?) -> String
+      def seek: (Integer, ?Integer | :SET | :CUR | :END) -> Integer
+      def rewind: () -> Integer
+      def pos: () -> Integer
+      def size: () -> Integer
+      def eof?: () -> bool
+    end
+
+    class Writer < Handle
+      @spool: ::File
+      def initialize: (Context, ::File) -> void
+      def write: (_ToS) -> Integer
+      def pos: () -> Integer
+    end
+  end
+
+  module InputGuard
+    def self.check!: (top, ?path: path) -> void
+  end
+
+  class Context
+    class Location
+      attr_accessor path: path
+      attr_accessor membership: Integer
+      attr_accessor expired: bool
+      def initialize: (path, Integer, bool) -> void
+      def self.new: (path, Integer, bool) -> Location
+    end
+    attr_reader database: Database
+    attr_reader profile: profile
+    attr_reader transaction: Core::Transaction?
+    attr_reader root: Core::Slot
+    attr_reader reference_proof: String?
+    @bound: Integer
+    @readonly: bool
+    @changed: bool
+    @locations: ObjectSpace::WeakMap[Location, bool]?
+    @streams: ::Array[registration]?
+    def initialize: (database: Database, root: Core::Slot, bound: Integer, ?transaction: Core::Transaction?, ?readonly: bool, ?reference_proof: String?) -> void
+    def check!: () -> void
+    def read: [A] () { () -> A } -> A
+    def writable!: () -> void
+    def writable_transaction: () -> Core::Transaction
+    def collection: (Core::Slot, path: path) -> adapter
+    def read_bound: () -> Integer
+    def reference_compatible?: (Context) -> bool
+    def cursor: (Core::Slot) -> Core::Cursor
+    def resolve: (path) -> Core::Slot
+    def view: (Core::Slot, path: path, kind: :map) -> Views::Map
+            | (Core::Slot, path: path, kind: kind) -> Views::Base
+    def changed?: () -> bool
+    def copy_from: (Views::Base, at: path, ?transform: transform?) -> top
+    def mutate: [A] (path, ?targets: ::Array[path]?, ?positions: Range[Integer?]?) { (Core::Cursor) -> A } -> A
+    def register_stream: (path, write: bool) -> registration
+    def release_stream: (registration) -> void
+    def observe: (path) -> Location?
+    def replace_location: (path) -> void
+    def invalidate_positions: (path, Integer) -> void
+    def change_membership: (path) -> void
+    def invalidate_children: (path) -> void
+    def check_stream_mutation!: (path, ?targets: ::Array[path]?, ?positions: Range[Integer?]?) -> void
+    private
+    def mutation_keys: (path, ::Array[path]?, Range[Integer?]?) -> ::Array[path]
+    def capture_copy_source: (Views::Base, path) -> [ Context, adapter ]
+    def copy_location: (path) -> path
+    def copy_array_position: (selector, Integer) -> Integer
+    def perform_copy: (Context, adapter, path, path, transform?) -> void
+    def assign_copy: (Core::Cursor, Context, adapter, path, path, transform?) -> void
+    def refresh_copy_location: (path, path, bool) -> void
+    def position_conflict?: (path?, path, Range[Integer?]?) -> bool
+    def overlapping_paths?: (path, path) -> bool
+    def each_location: (path) { (Location) -> void } -> void
+    def path_key: (path) -> path
+  end
+
+  module Views
+    class MissingArgument
+      def initialize: () -> void
+    end
+
+    class Base
+      include Enumerable[top]
+      LONG_MAX: Integer
+      attr_reader context: Context
+      attr_reader path: path
+      attr_reader kind: kind
+      @location: Context::Location?
+      def initialize: (context: Context, path: path, kind: kind) -> void
+      def check!: () -> void
+      def slot: () -> Core::Slot
+      def adapter: () -> adapter
+      def size: () -> Integer
+      def empty?: () -> bool
+      def each: () { (top) -> void } -> self
+              | () { (?top, ?top) -> void } -> self
+              | () -> Enumerator[top, self]
+      def slot_for_assignment: (context: Context, path: path) -> Core::Slot
+      def to_ruby: () -> materialized
+      def ==: (top) -> bool
+      def inspect: () -> String
+      def open_bytes: [A] (selector) { (Streams::Reader) -> A } -> A
+      def write_bytes: [A] (selector) { (Streams::Writer) -> A } -> A
+      def clear_entries?: () -> bool
+      def edit: [A] (?targets: ::Array[path]?, ?positions: Range[Integer?]?) { (adapter) -> A } -> void
+      def stream_selector: (selector) -> selector
+      def stream_mutation: (selector) -> { ?targets: ::Array[path], ?positions: Range[Integer?] }
+      def integer_argument: (top) -> Integer
+      def normalize_index: (selector) -> Integer
+      def validate_growth: (Integer) -> void
+      def captured_context: (?readonly: bool) -> Context
+      def entry_path: (selector) -> path
+      def each_entries: (^() -> Enumerator[entry, adapter], selectors_only: true) { (selector) -> void } -> self
+                      | (^() -> Enumerator[entry, adapter], ?selectors_only: bool) { (*top) -> void } -> self
+      def decode_entry: (selector, Core::Slot, selectors_only: bool) -> ::Array[top]
+    end
+
+    class Map < Base
+      UNSET: MissingArgument
+      def []: (selector) -> top
+      def fetch: (selector, ?top) ?{ (selector) -> top } -> top
+      def dig: (*selector) -> top
+      def dig_value: (::Array[selector]) -> top
+      def key?: (selector) -> bool
+      def each_key: () -> Enumerator[selector, self]
+                  | () { (selector) -> void } -> self
+      def each_value: () -> Enumerator[top, self]
+                    | () { (top) -> void } -> self
+      def keys: () -> ::Array[selector]
+      def values: () -> ::Array[top]
+      def []=: [A] (selector, A) -> A
+      def delete: (selector) ?{ (selector) -> top } -> top
+      def clear: () -> self
+      def merge!: (::Hash[selector, top]) -> self
+    end
+
+    class Array < Base
+      UNSET: MissingArgument
+      alias length size
+      def []: (Integer) -> top
+            | (Integer, Integer) -> Slice?
+            | (Range[Integer?]) -> Slice?
+            | (Integer | Range[Integer?], ?Integer | MissingArgument) -> top
+      def read_index: (Integer | Range[Integer?], Integer | MissingArgument | nil) -> top
+      def read_range: (Range[Integer?]) -> Slice?
+      def fetch: (Integer, ?top) ?{ (Integer) -> top } -> top
+      def first: (?Integer | MissingArgument) -> top
+      def last: (?Integer | MissingArgument) -> top
+      def []=: [A] (Integer, A) -> A
+      def <<: (top) -> self
+      def push: (*top) -> self
+      def insert: (Integer, *top) -> self
+      def delete_at: (Integer) -> top
+      def pop: (?Integer | MissingArgument) -> top
+      def concat: (*::Array[top] | Array) -> self
+      def clear: () -> self
+      def validate_growth: (Integer) -> void
+      def normalize_index: (selector) -> Integer
+      def nonnegative_count: (Integer | MissingArgument) -> Integer
+      def read_slice: (Integer, Integer) -> Slice?
+      def slice_offset: () -> Integer
+      def invalidate_positions: (Integer) -> void
+    end
+
+    class Slice < Array
+      @offset: Integer
+      @count: Integer
+      def initialize: (offset: Integer, count: Integer, context: Context, path: path, kind: kind) -> void
+      def adapter: () -> Selection
+      def slot_for_assignment: (context: Context, path: path) -> Core::Slot
+      def slice_offset: () -> Integer
+      def entry_path: (Integer) -> path
+      class Selection
+        @source: adapter
+        @offset: Integer
+        attr_reader size: Integer
+        def initialize: (adapter, Integer, Integer) -> void
+        def kind: () -> kind
+        def lookup: (Integer) -> Core::Slot?
+        def each_entry: () -> Enumerator[entry, self]
+                      | () { (selector, Core::Slot) -> void } -> self
+      end
+    end
+
+    class LinkedArray < Array
+      def split: (Integer) -> [ Slice?, Slice? ]
+    end
+
+    class Set < Base
+      def include?: (selector) -> bool
+      def add: (selector) -> self
+      def delete: (selector) -> self
+      def clear: () -> self
+    end
+
+    module Sorted : Base
+      def rank: (selector) -> Integer
+
+      def from: (selector) -> Enumerator[top, self]
+              | (selector) { (*top) -> void } -> self
+
+      def from_index: (Integer) -> Enumerator[top, self]
+                    | (Integer) { (*top) -> void } -> self
+
+      def page: (offset: Integer, limit: Integer) -> Enumerator[top, self]
+              | (offset: Integer, limit: Integer) { (*top) -> void } -> self
+    end
+
+    class SortedMap < Map
+      include Sorted
+      def merge!: (::Hash[selector, top]) -> self
+    end
+
+    class SortedSet < Set
+      include Sorted
+    end
+  end
+
+  module ValueWalker
+    def self.encode: (top, context: Context, path: path) -> Core::Slot
+
+    def self.materialize: (Views::Base) -> materialized
+
+    def self.insert: (materialization_frame, top) -> void
+
+    def self.begin_encoding: (top, path, Context, ::Hash[Integer, bool], ::Array[encoding_frame]) -> Core::Slot?
+
+    def self.encode_view: (Views::Base, Context, path) -> Core::Slot
+
+    def self.encode_scalar: (top, Context, path) -> Core::Slot
+
+    def self.assign_encoding_parent: (::Array[encoding_frame], Core::Slot) -> void
+
+    def self.finish_encoding: (encoding_frame, ::Hash[Integer, bool], ::Array[encoding_frame]) -> Core::Slot
+
+    def self.next_input: (encoding_frame) -> [ selector, top ]?
+
+    def self.begin_materialization: (Core::Slot, path, (adapter | Views::Slice::Selection)?, Context, ::Hash[[ Symbol, Integer ], bool], ::Array[materialization_frame]) -> void
+
+    def self.next_stored_entry: (materialization_frame) -> entry?
+
+    def self.materialized_child: (materialization_frame, entry) -> [ Core::Slot, path ]?
+
+    def self.finish_materialization: (materialization_frame, ::Hash[[ Symbol, Integer ], bool], ::Array[materialization_frame]) -> materialized
+  end
+
+  class Conversion
+    @source: Context
+    @destination: Context
+    @transform: transform?
+    def initialize: (Context, Context, ?transform: transform?) -> void
+    def copy: (Core::Slot, ?path: path, ?adapter: adapter?) -> Core::Slot
+    private
+    def begin_value: (Core::Slot, path, adapter?, ::Array[conversion_frame], ::Hash[[ Symbol, Integer ], bool]) -> Core::Slot?
+    def copy_scalar: (Core::Slot, path) -> Core::Slot
+    def assign_parent: (::Array[conversion_frame], Core::Slot) -> void
+    def finish_frame: (conversion_frame, ::Array[conversion_frame], ::Hash[[ Symbol, Integer ], bool]) -> Core::Slot
+    def next_entry: (conversion_frame) -> entry?
+    def select_child: (conversion_frame, entry) -> [ Core::Slot, path ]?
+    def transform: (top, path, :key | :value) -> top
+    def transform_key: (selector, path) -> selector
+    class ByteSource
+      @source: Core::Bytes::Source
+      @start: Integer
+      attr_reader size: Integer
+      attr_reader format_tag: String?
+      def initialize: (Context, Core::Slot) -> void
+      def read: (Integer, Integer) -> String
+      def unsigned: (Integer) -> [ Integer, Integer ]
+      def slice: (Integer, Integer) -> ByteSource
+      def portable_encoding: () -> Encoding
+      def write_to: (Context, ?prefix: String, ?format_tag: String?) -> Core::Slot
+      private
+      def each_chunk: () { (String) -> void } -> void
+    end
+  end
+end
