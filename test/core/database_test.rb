@@ -416,19 +416,24 @@ class DatabaseTest < Minitest::Test
   end
 
   def test_restore_releases_snapshot_ownership_and_preserves_live_cursors
-    Core::Database.memory.transaction do |root|
-      tx = root.transaction
-      live = tx.cursor(slot: Core::Slot.uint(7))
-      checkpoint, reference = checkpoint_with_temporary_cursor(tx)
-      live.replace(Core::Slot.uint(8))
-      GC.start
-      assert reference.weakref_alive?
-      tx.restore(checkpoint)
-      GC.start
-      assert_equal 7, live.slot.value
-      refute reference.weakref_alive?
-      assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
-    end
+    checkpoint, reference = Thread.new do
+      retained = nil
+      Core::Database.memory.transaction do |root|
+        tx = root.transaction
+        live = tx.cursor(slot: Core::Slot.uint(7))
+        checkpoint, reference = checkpoint_with_temporary_cursor(tx)
+        live.replace(Core::Slot.uint(8))
+        GC.start
+        assert reference.weakref_alive?
+        tx.restore(checkpoint)
+        assert_equal 7, live.slot.value
+        assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
+        retained = [checkpoint, reference]
+      end
+      retained
+    end.value
+    GC.start
+    refute reference.weakref_alive?, "consumed checkpoint #{checkpoint.object_id} retained a cursor"
   end
 
   def test_expiration_releases_snapshots_even_when_an_expired_cursor_is_retained
