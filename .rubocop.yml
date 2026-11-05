@@ -3,6 +3,10 @@ plugins:
   - rubocop-performance
   - rubocop-rake
 
+inherit_mode:
+  merge:
+    - Exclude
+
 AllCops:
   NewCops: enable
   TargetRubyVersion: 3.3
