@@ -25,6 +25,9 @@ module ReferenceHelpers
     assert_equal pin.fetch("source_sha256"), provenance.fetch("source_sha256")
     assert_equal Digest::SHA256.file(path).hexdigest, provenance.fetch("fixture_sha256")
     assert_equal Digest::SHA256.file(File.join(Interop::ROOT, "script/interop.rb")).hexdigest, provenance["generator_sha256"]
+    adapter = {"go" => "main.go", "typescript" => "main.ts", "java" => "Main.java", "zig" => "main.zig"}.fetch(reference)
+    assert_equal Digest::SHA256.file(File.join(Interop::ROOT, "test/interop", reference, adapter)).hexdigest, provenance.fetch("adapter_sha256")
+    assert_equal Digest::SHA256.file(File.join(Interop::ROOT, "test/interop/manifest.json")).hexdigest, provenance.fetch("manifest_sha256")
     copy = File.join(@directory, "fixture.xit")
     File.binwrite(copy, File.binread(path))
     Interop.assert_reference_result(reference, @invoke.call("read", name, copy))
