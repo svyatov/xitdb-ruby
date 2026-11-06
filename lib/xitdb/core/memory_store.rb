@@ -21,7 +21,7 @@ module XitDB
       # @param bytes [String] binary input bytes
       # @return [MemoryStore]
       def initialize(bytes = "".b)
-        string(bytes)
+        ensure_string!(bytes)
         @bytes = bytes.b
         @storage_identity = Object.new.freeze
         initialize_state

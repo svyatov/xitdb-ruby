@@ -29,8 +29,8 @@ module XitDB
       # @raise [ClosedError] if the store is closed
       def read_at(offset, length)
         synchronize do
-          position(offset)
-          position(length)
+          ensure_position!(offset)
+          ensure_position!(length)
           next "".b if length.zero?
           raise EOFError, "read exceeds store length" if offset + length > store_length
 
@@ -47,8 +47,8 @@ module XitDB
       def write_at(offset, bytes)
         synchronize do
           writable!
-          position(offset)
-          string(bytes)
+          ensure_position!(offset)
+          ensure_string!(bytes)
           write_bytes(offset, bytes.b) unless bytes.empty?
           bytes.bytesize
         end
@@ -84,7 +84,7 @@ module XitDB
       def truncate(length)
         synchronize do
           writable!
-          position(length)
+          ensure_position!(length)
           truncate_bytes(length)
           nil
         end
@@ -248,13 +248,13 @@ module XitDB
       end
 
       # Rejects offsets and lengths that are not nonnegative integers.
-      def position(value)
+      def ensure_position!(value)
         raise TypeError, "offset and length must be Integers" unless value.is_a?(Integer)
         raise ArgumentError, "offset and length must be nonnegative" if value.negative?
       end
 
       # Checks that a write payload is a String.
-      def string(bytes)
+      def ensure_string!(bytes)
         raise TypeError, "bytes must be a String" unless bytes.is_a?(String)
       end
 

@@ -185,9 +185,9 @@ class ConversionTest < Minitest::Test
         assert_equal :bytes, snapshot.adapter.lookup(key).tag
       end
       string_keys.each do |key|
-        assert_equal database.profile.instance_of?(XitDB::Profiles::Ruby), snapshot.adapter.lookup(key).full
+        assert_equal database.profile.instance_of?(XitDB::Profiles::Ruby), snapshot.adapter.lookup(key).full?
       end
-      assert snapshot.adapter.lookup("opaque").full
+      assert_predicate snapshot.adapter.lookup("opaque"), :full?
     end
   end
 

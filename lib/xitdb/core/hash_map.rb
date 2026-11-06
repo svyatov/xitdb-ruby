@@ -85,9 +85,9 @@ module XitDB
       # @return [self]
       # @raise [ReadOnlyError] if the collection has no writable transaction
       def put(hash_bytes, key:, value:)
-        hash_bytes = validate_hash(hash_bytes)
-        validate_slot(key)
-        validate_slot(value)
+        hash_bytes = validate_hash!(hash_bytes)
+        validate_slot!(key)
+        validate_slot!(value)
         write_entry(hash_bytes, key: key, value: value)
         self
       end
@@ -98,8 +98,8 @@ module XitDB
       # @return [self]
       # @raise [ReadOnlyError] if the collection has no writable transaction
       def add(hash_bytes, key:)
-        hash_bytes = validate_hash(hash_bytes)
-        validate_slot(key)
+        hash_bytes = validate_hash!(hash_bytes)
+        validate_slot!(key)
         write_entry(hash_bytes, key: key, value: nil)
         self
       end
@@ -109,7 +109,7 @@ module XitDB
       # @param create [Boolean] whether to create an empty element when the requested position is absent
       # @return [Cursor, nil]
       def cursor_at(hash_bytes, create: false)
-        hash_bytes = validate_hash(hash_bytes)
+        hash_bytes = validate_hash!(hash_bytes)
         value = get(hash_bytes)
         if value.nil? && create
           put(hash_bytes, key: Slot.new, value: Slot.new)
@@ -130,8 +130,8 @@ module XitDB
       # @raise [ReadOnlyError] if the collection has no writable transaction
       # @api private
       def replace_child(hash_bytes, slot, owner: nil, collection: false, propagate: true)
-        hash_bytes = validate_hash(hash_bytes)
-        validate_slot(slot)
+        hash_bytes = validate_hash!(hash_bytes)
+        validate_slot!(slot)
         raise ExpiredViewError, "hash entry was removed" unless include?(hash_bytes)
 
         write_entry(hash_bytes, key: nil, value: slot, owner: owner, collection: collection, propagate: propagate)
@@ -143,7 +143,7 @@ module XitDB
       # @return [Boolean]
       # @raise [ReadOnlyError] if the collection has no writable transaction
       def remove(hash_bytes) # rubocop:disable Naming/PredicateMethod -- This public method removes an entry.
-        hash_bytes = validate_hash(hash_bytes)
+        hash_bytes = validate_hash!(hash_bytes)
         writable!
         return false unless include?(hash_bytes)
 
@@ -263,7 +263,7 @@ module XitDB
       end
 
       # Checks that a binary digest has the database's declared nonzero width.
-      def validate_hash(hash)
+      def validate_hash!(hash)
         raise TypeError, "hash must be a String" unless hash.is_a?(String)
         raise ArgumentError, "hash has incorrect width" unless hash.bytesize == hash_size && hash_size.positive?
 
@@ -271,7 +271,7 @@ module XitDB
       end
 
       # Rejects unknown slots and internal branch pointers as keys or values.
-      def validate_slot(slot)
+      def validate_slot!(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown hash record slot tag" unless Slot::TAGS.include?(slot.tag)
         raise InvalidValueError, "index slot is internal to hash branches" if slot.tag == :index
@@ -322,7 +322,7 @@ module XitDB
 
       # Walks digest branches and checks the full stored digest at a leaf.
       def entry(hash)
-        hash = validate_hash(hash)
+        hash = validate_hash!(hash)
         start = root_pointer
         return nil unless start
 
@@ -386,7 +386,7 @@ module XitDB
         return unless counted?
 
         count = Format.unsigned(read(start, 8)) + delta
-        Format.integer(count, 0..Format::UINT64_MAX)
+        Format.integer!(count, 0..Format::UINT64_MAX)
         transaction.write_at(start, [count].pack("Q>"))
       end
 

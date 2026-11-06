@@ -87,8 +87,8 @@ module XitDB
       # @param format_tag [String, nil]
       # @return [Core::Slot]
       def write_to(context, prefix: "".b, format_tag: @format_tag)
-        Core::Bytes.append(context.writable_transaction, size: size, prefix: prefix, format_tag: format_tag,
-                                                         representation: :external) do |position, length|
+        Core::Bytes.append(context.writable_transaction!, size: size, prefix: prefix, format_tag: format_tag,
+                                                          representation: :external) do |position, length|
           read(position, length)
         end
       end

@@ -99,9 +99,9 @@ module XitDB
       # @raise [ReadOnlyError] if the collection has no writable transaction
       # @raise [IndexError] if the index or range is outside the allowed list positions
       def insert(index, slot)
-        validate_slot(slot)
+        validate_slot!(slot)
         count, pointer = header
-        integer_index(index)
+        ensure_integer_index!(index)
         raise IndexError, "array index outside list" unless index.between?(0, count)
         raise RangeError, "array size exceeds unsigned 64-bit range" if count == Format::UINT64_MAX
 
@@ -137,7 +137,7 @@ module XitDB
       # @raise [ReadOnlyError] if the collection has no writable transaction
       # @raise [IndexError] if the index or range is outside the allowed list positions
       def replace(index, slot, owner: nil, collection: false, propagate: true)
-        validate_slot(slot)
+        validate_slot!(slot)
         count, pointer = header
         rank = resolve_index(index, count)
         raise IndexError, "array index outside list" unless rank
@@ -187,7 +187,7 @@ module XitDB
       # @raise [IndexError] if the index or range is outside the allowed list positions
       def split(index)
         count, pointer = header
-        integer_index(index)
+        ensure_integer_index!(index)
         index += count if index.negative?
         raise IndexError, "array split outside list" unless index.between?(0, count)
 
@@ -204,8 +204,8 @@ module XitDB
       # @raise [IndexError] if the index or range is outside the allowed list positions
       def slice(start, length)
         count, pointer = header
-        integer_index(start)
-        integer_index(length)
+        ensure_integer_index!(start)
+        ensure_integer_index!(length)
         start += count if start.negative?
         unless start.between?(0, count) && length >= 0 && length <= count - start
           raise IndexError, "array slice outside list"
@@ -251,7 +251,7 @@ module XitDB
         return enum_for(:each_from_index, index) unless block_given?
 
         count, pointer = header
-        integer_index(index)
+        ensure_integer_index!(index)
         index += count if index.negative?
         return self unless index >= 0 && index < count
 
@@ -331,13 +331,13 @@ module XitDB
       end
 
       # Checks that an index is an Integer.
-      def integer_index(index)
+      def ensure_integer_index!(index)
         raise TypeError, "array index must be an Integer" unless index.is_a?(Integer)
       end
 
       # Normalizes a negative index and rejects positions outside the tree.
       def resolve_index(index, count)
-        integer_index(index)
+        ensure_integer_index!(index)
         index += count if index.negative?
         index if index >= 0 && index < count
       end
@@ -364,7 +364,7 @@ module XitDB
         # @type var counts: Array[Integer]
         counts = kind.zero? ? [] : Format.integers(Format.slice(bytes, LEAF_SIZE, 128), "Q>*").first(num)
         node = Node.new(kind, slots, counts)
-        validate_node(node, expected)
+        validate_node!(node, expected)
         node
       end
 
@@ -389,24 +389,24 @@ module XitDB
       end
 
       # Checks slot roles and the expected element count below a node.
-      def validate_node(node, expected)
+      def validate_node!(node, expected)
         case node.kind
-        when 1 then validate_branch(node)
-        when 0 then validate_leaf(node)
+        when 1 then validate_branch!(node)
+        when 0 then validate_leaf!(node)
         end
 
         raise CorruptionError, "invalid B-tree subtree count" unless node.size == expected
       end
 
       # Requires branch pointers and positive child counts.
-      def validate_branch(node)
+      def validate_branch!(node)
         return unless node.slots.any? { |slot| slot.tag != :index } || node.counts.any?(&:zero?)
 
         raise CorruptionError, "invalid B-tree branch"
       end
 
       # Rejects branch pointers inside leaf data.
-      def validate_leaf(node)
+      def validate_leaf!(node)
         raise CorruptionError, "index slot in B-tree leaf" if node.slots.any? { |slot| slot.tag == :index }
       end
 
@@ -441,7 +441,7 @@ module XitDB
       end
 
       # Rejects unknown tags and internal branch slots as user elements.
-      def validate_slot(slot)
+      def validate_slot!(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown slot tag" unless Slot::TAGS.include?(slot.tag)
         raise InvalidValueError, "index slot is internal to B-tree branches" if slot.tag == :index

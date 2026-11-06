@@ -119,7 +119,7 @@ module XitDB
         raise ForeignValueError.new("view belongs to another store or file generation", path: location)
       end
 
-      context.writable_transaction.freeze
+      context.writable_transaction!.freeze
       assigned = input.slot_for_assignment(context: context, path: location)
       assigned.empty? ? encode({}, context: context, path: location) : assigned
     end

@@ -12,7 +12,7 @@ module XitDB
       # @raise [IndexError] unless the normalized boundary is between zero and size
       def split(index)
         context.read do
-          index = integer_argument(index)
+          index = integer_argument!(index)
           index += size if index.negative?
           raise IndexError, "array split outside list" unless index.between?(0, size)
 

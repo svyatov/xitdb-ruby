@@ -116,7 +116,7 @@ module XitDB
           unless key_only
             raise TypeError, "expected Slot" unless value
 
-            validate_slot(value)
+            validate_slot!(value)
           end
           mutate do |transaction|
             count, pointer = header
@@ -241,7 +241,7 @@ module XitDB
         # Decodes slots, separators, and counts, then checks expected subtree size.
         def read_node(pointer, expected, bound: cursor.bound)
           kind, num = Format.pair(read(pointer, 2, bound: bound), "CC")
-          validate_header(kind, num)
+          validate_header!(kind, num)
 
           bytes = read(pointer, kind.zero? ? LEAF_SIZE : BRANCH_SIZE, bound: bound)
           slots = Array.new(num) { |i| Slot.parse(Format.slice(bytes, 2 + (i * 9), 9)) }
@@ -256,7 +256,7 @@ module XitDB
         end
 
         # Checks the kind and occupied slot count of a sorted node.
-        def validate_header(kind, count)
+        def validate_header!(kind, count)
           return if [0, 1].include?(kind) && count <= CAPACITY && (kind.zero? || count.positive?)
 
           raise CorruptionError, "invalid sorted node header"

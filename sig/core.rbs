@@ -26,9 +26,9 @@ module XitDB
     module Format
       UINT64_MAX: Integer
 
-      def self.integer: (Object, Range[Integer]) -> Integer
+      def self.integer!: (Object, Range[Integer]) -> Integer
 
-      def self.width: (Object, Integer) -> void
+      def self.ensure_width!: (Object, Integer) -> void
 
       def self.slice: (String, Integer | Range[Integer?], ?Integer?) -> String
 
@@ -52,11 +52,12 @@ module XitDB
     end
 
     class Slot
+      @full: bool
       SIZE: Integer
       TAGS: Array[Symbol]
       attr_reader tag: tag
       attr_reader value: Integer
-      attr_reader full: bool
+      def full?: () -> bool
       def initialize: (?tag: tag, ?value: Integer, ?full: bool) -> void
       def self.parse: (String) -> Slot
       def self.int: (Integer) -> Slot
@@ -141,9 +142,9 @@ module XitDB
 
       def writable!: () -> void
 
-      def position: (Integer) -> void
+      def ensure_position!: (Integer) -> void
 
-      def string: (String) -> void
+      def ensure_string!: (String) -> void
 
       def monotonic_time: () -> Float
 
@@ -240,7 +241,7 @@ module XitDB
 
       def self.read_chunk: (Integer, Integer) ?{ (Integer, Integer) -> String? } -> String
 
-      def self.validate_source: (Integer, String, Symbol, String?) -> void
+      def self.validate_source!: (Integer, String, Symbol, String?) -> void
 
       def self.capture_inline: (Integer, String, Symbol, Integer) ?{ (Integer, Integer) -> String? } -> String?
 
@@ -288,11 +289,11 @@ module XitDB
       def read_at: (Integer, Integer, bound: Integer) -> String
       def close_unreturned: () -> void
       def restore_empty_target: () -> void
-      def active_transaction: () -> Transaction
+      def active_transaction!: () -> Transaction
       def prepare_file: (Integer?, String?, Integer?, bool, bool) -> void
       def initialize_empty_file: (Integer?, String?, Integer?, bool) -> void
       def reset_failed_initialization: (bool) -> void
-      def check_header: (Symbol, Integer | String | nil, Integer | String) -> void
+      def check_header!: (Symbol, Integer | String | nil, Integer | String) -> void
       def check_range!: (Integer, Integer, Integer) -> void
       def committed_state: () -> [ Integer, Slot ]
       def publish: (Slot, Integer) -> void
@@ -310,7 +311,7 @@ module XitDB
       attr_reader transaction: Transaction?
       attr_reader parent: Cursor?
       attr_reader selector: selector
-      attr_reader valid: bool
+      def valid?: () -> bool
       def initialize: (database: Database, slot: Slot, bound: Integer, ?transaction: Transaction?) -> void
       def slot: () -> Slot
       def bound: () -> Integer
@@ -326,8 +327,8 @@ module XitDB
       def read_bytes: () -> ByteValue
       def collection: () -> (ArrayList | LinkedArrayList | SortedMap | HashMap)
       def collection_get: (selector) -> Slot?
-      def integer_selector: (selector) -> Integer
-      def string_selector: (selector) -> String
+      def integer_selector!: (selector) -> Integer
+      def string_selector!: (selector) -> String
       def collection_replace: (selector, Slot, ?owner: Cursor?, ?collection: bool, ?propagate: bool) -> top
       def local_slot: () -> Slot
     end
@@ -368,7 +369,7 @@ module XitDB
       def cancel_publication: () -> bool
       def cancelled?: () -> bool
       def expire!: () -> void
-      def validate_slot: (Slot) -> void
+      def validate_slot!: (Slot) -> void
     end
 
     class OffsetMap
@@ -414,7 +415,7 @@ module XitDB
       def parse_slot: (String) -> Slot
       def read_slot: (Integer) -> Slot
       def read_element: (Integer, Integer, Integer) -> Slot
-      def validate_slot: (Slot) -> void
+      def validate_slot!: (Slot) -> void
       def mutate: () { (Transaction) -> top } -> void
       def writable_header: (Transaction) -> [ Integer, Integer, Integer ]
       def copy_block: (Transaction, Integer) -> Integer
@@ -465,8 +466,8 @@ module XitDB
       def counted?: () -> bool
       def count_bytes: () -> Integer
       def hash_size: () -> Integer
-      def validate_hash: (String) -> String
-      def validate_slot: (Slot) -> void
+      def validate_hash!: (String) -> String
+      def validate_slot!: (Slot) -> void
       def nibble: (String, Integer) -> Integer
       def root_pointer: () -> Integer?
       def read: (Integer, Integer) -> String
@@ -527,7 +528,7 @@ module XitDB
       def concat: (BTree) -> BTree
       def each_from_index: (Integer) -> Enumerator[Slot, self]
                          | (Integer) { (Slot) -> top } -> self
-      def integer_index: (Integer) -> void
+      def ensure_integer_index!: (Integer) -> void
       def next_frame: (path) -> [ Integer, node, Integer ]?
       def rebalance_child: (Transaction, node, node, Integer, Integer?) -> void
       def merge_neighbor: (node, node, Integer) -> [ node, Integer ]
@@ -538,12 +539,12 @@ module XitDB
       def read_node: (Integer, Integer, ?bound: Integer) -> node
       def read_node_header: (Integer, Integer) -> [ Integer, Integer ]
       def node_slots: (String, Integer, Integer) -> Array[Slot]
-      def validate_node: (Node, Integer) -> void
-      def validate_branch: (Node) -> void
-      def validate_leaf: (Node) -> void
+      def validate_node!: (Node, Integer) -> void
+      def validate_branch!: (Node) -> void
+      def validate_leaf!: (Node) -> void
       def descend: (Integer?, Integer, Integer, ?insertion: bool, ?ancestors: Array[Integer]) -> [ path, node, Integer ]
       def pointer_for: (path, Integer?) -> Integer?
-      def validate_slot: (Slot) -> void
+      def validate_slot!: (Slot) -> void
       def mutate: [A] () { (Transaction) -> A } -> A
       def node_for: (ref) -> node
       def child_ref: (ref, node, Integer) -> ref
@@ -606,7 +607,7 @@ module XitDB
         def split_separator: (Array[[ Integer, Integer, Slot? ]]) -> Slot
         def key_bytes: (Slot) -> String
         def read_node: (Integer, Integer, ?bound: Integer) -> Node
-        def validate_header: (Integer, Integer) -> void
+        def validate_header!: (Integer, Integer) -> void
         def valid_node?: (Node) -> bool
         def write_node: (Transaction, BTree::node, ?Integer?) -> Integer
         def padded_slots: (Array[Slot]) -> String
@@ -677,13 +678,13 @@ module XitDB
 
       def recover_replica_application: (Integer, bool, :not_committed | :committed | :unknown) -> void
 
-      def self.validate_replica: (store, Integer) -> void
+      def self.validate_replica!: (store, Integer) -> void
 
       def self.cleanup_staged_replica: (FileStore, bool, :not_committed | :committed | :unknown) -> void
 
       def self.copy_replica: (to: String, source_io: _Reader, length: Integer) -> Database
 
-      def self.position: (Integer) -> void
+      def self.ensure_position!: (Integer) -> void
 
       def self.trailer: (store, Header, Integer, Integer) -> [ Slot, Integer ]
 

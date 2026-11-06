@@ -28,10 +28,7 @@ module XitDB
       # @!attribute [r] value
       #   Unsigned 64-bit scalar bits or record offset.
       #   @return [Integer]
-      # @!attribute [r] full
-      #   Tag-specific flag stored in the high tag bit.
-      #   @return [Boolean]
-      attr_reader :tag, :value, :full
+      attr_reader :tag, :value
 
       # Builds a frozen nine-byte value descriptor.
       # @param tag [Symbol, Integer] storage type tag
@@ -47,7 +44,7 @@ module XitDB
         raise TypeError, "full must be true or false" unless full.equal?(true) || full.equal?(false)
 
         @tag = TAGS[code] || code
-        @value = Format.integer(value, 0..Format::UINT64_MAX)
+        @value = Format.integer!(value, 0..Format::UINT64_MAX)
         @full = full
         freeze
       end
@@ -57,7 +54,7 @@ module XitDB
       # @return [Slot]
       # @raise [CorruptionError] if bytes does not contain exactly nine bytes
       def self.parse(bytes)
-        Format.width(bytes, SIZE)
+        Format.ensure_width!(bytes, SIZE)
         flags = bytes.getbyte(0) || raise(CorruptionError, "missing slot flags")
         value = Format.unsigned(Format.slice(bytes, 1, 8))
         new(tag: flags & 0x7f, value: value, full: flags.anybits?(0x80))
@@ -68,7 +65,7 @@ module XitDB
       # @return [Slot]
       # @raise [RangeError] if value exceeds the signed 64-bit range
       def self.int(value)
-        Format.integer(value, -(1 << 63)..((1 << 63) - 1))
+        Format.integer!(value, -(1 << 63)..((1 << 63) - 1))
         new(tag: :int, value: value & Format::UINT64_MAX)
       end
 
@@ -96,24 +93,30 @@ module XitDB
         new(full: true)
       end
 
+      # Returns the tag-specific flag stored in the high tag bit.
+      # @return [Boolean]
+      def full?
+        @full
+      end
+
       # Tests whether this slot represents an unused position.
       # @return [Boolean]
       def empty?
-        tag == :none && !full
+        tag == :none && !full?
       end
 
       # Compares the tag, value, and full flag with another slot.
       # @param other [Object] value to compare
       # @return [Boolean]
       def ==(other)
-        other.is_a?(Slot) && tag == other.tag && full == other.full && value == other.value
+        other.is_a?(Slot) && tag == other.tag && full? == other.full? && value == other.value
       end
 
       # Encodes the tag, full flag, and value as nine bytes.
       # @return [String]
       def to_bytes
         code = tag.is_a?(Symbol) ? TAGS.index(tag) : tag
-        [code | (full ? 0x80 : 0), value].pack("CQ>")
+        [code | (full? ? 0x80 : 0), value].pack("CQ>")
       end
     end
   end

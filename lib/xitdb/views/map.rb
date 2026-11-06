@@ -67,7 +67,7 @@ module XitDB
           case value
           when nil then return nil
           when Map then value = value[key]
-          when Array then value = value[integer_argument(key)]
+          when Array then value = value[integer_argument!(key)]
           when Object
             raise TypeError, "#{value.class} does not have #dig method" unless value.respond_to?(:dig)
 
@@ -164,7 +164,7 @@ module XitDB
         context.mutate(path, targets: [path + [key]]) do |cursor|
           # Capture before deletion, with loaders inside the mutation checkpoint.
           stored = adapter.lookup(key) || raise(KeyError, "key no longer exists")
-          context.writable_transaction.freeze
+          context.writable_transaction!.freeze
           captured = Context.new(database: context.database, root: stored, bound: context.read_bound,
                                  transaction: context.transaction)
           value = context.profile.decode(stored, context: captured, path: [])
@@ -183,7 +183,7 @@ module XitDB
       def clear
         check!
         context.writable!
-        return self unless clear_entries?
+        return self unless clear_entries
 
         context.invalidate_children(path)
         context.change_membership(path)

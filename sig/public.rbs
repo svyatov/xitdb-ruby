@@ -95,7 +95,7 @@ module XitDB
     def copy_history: (Database, Core::FileStore, Core::Cursor, Core::ArrayList, :all | :latest, transform?) -> Core::Cursor
     def history_array: (Core::Cursor) -> Core::ArrayList
     def snapshot_from_history: (Core::Cursor, Integer, ?revision: Revision?) -> Snapshot
-    def validate_root: (Core::Slot, Context) -> void
+    def validate_root!: (Core::Slot, Context) -> void
     def snapshot_from_cursor: (Core::Cursor) -> Snapshot
     def revision_for: (Core::Cursor, Integer) -> Revision
   end
@@ -140,7 +140,7 @@ module XitDB
       def expire!: () -> void
       private
       def check!: () -> void
-      def integer: (Integer | _ToInt) -> Integer
+      def integer!: (Integer | _ToInt) -> Integer
     end
 
     class Reader < Handle
@@ -191,7 +191,7 @@ module XitDB
     def check!: () -> void
     def read: [A] () { () -> A } -> A
     def writable!: () -> void
-    def writable_transaction: () -> Core::Transaction
+    def writable_transaction!: () -> Core::Transaction
     def collection: (Core::Slot, path: path) -> adapter
     def read_bound: () -> Integer
     def reference_compatible?: (Context) -> bool
@@ -214,7 +214,7 @@ module XitDB
     def mutation_keys: (path, ::Array[path]?, Range[Integer?]?) -> ::Array[path]
     def capture_copy_source: (Views::Base, path) -> [ Context, adapter ]
     def copy_location: (path) -> path
-    def copy_array_position: (selector, Integer) -> Integer
+    def copy_array_position!: (selector, Integer) -> Integer
     def perform_copy: (Context, adapter, path, path, transform?) -> void
     def assign_copy: (Core::Cursor, Context, adapter, path, path, transform?) -> void
     def refresh_copy_location: (path, path, bool) -> void
@@ -251,13 +251,13 @@ module XitDB
       def inspect: () -> String
       def open_bytes: [A] (selector) { (Streams::Reader) -> A } -> A
       def write_bytes: [A] (selector) { (Streams::Writer) -> A } -> A
-      def clear_entries?: () -> bool
+      def clear_entries: () -> bool
       def edit: [A] (?targets: ::Array[path]?, ?positions: Range[Integer?]?) { (adapter) -> A } -> void
       def stream_selector: (selector) -> selector
       def stream_mutation: (selector) -> { ?targets: ::Array[path], ?positions: Range[Integer?] }
-      def integer_argument: (top) -> Integer
+      def integer_argument!: (top) -> Integer
       def normalize_index: (selector) -> Integer
-      def validate_growth: (Integer) -> void
+      def validate_growth!: (Integer) -> void
       def captured_context: (?readonly: bool) -> Context
       def entry_path: (selector) -> path
       def each_entries: (^() -> Enumerator[entry, adapter], selectors_only: true) { (selector) -> void } -> self
@@ -304,9 +304,9 @@ module XitDB
       def pop: (?Integer | MissingArgument) -> top
       def concat: (*::Array[top] | Array) -> self
       def clear: () -> self
-      def validate_growth: (Integer) -> void
+      def validate_growth!: (Integer) -> void
       def normalize_index: (selector) -> Integer
-      def nonnegative_count: (Integer | MissingArgument) -> Integer
+      def nonnegative_count!: (Integer | MissingArgument) -> Integer
       def read_slice: (Integer, Integer) -> Slice?
       def slice_offset: () -> Integer
       def invalidate_positions: (Integer) -> void

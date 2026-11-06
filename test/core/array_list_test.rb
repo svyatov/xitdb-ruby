@@ -81,7 +81,7 @@ class ArrayListTest < Minitest::Test
       list.append(Core::Slot.uint(2))
 
       assert_empty list.get(0)
-      assert list.get(-2).full
+      assert_predicate list.get(-2), :full?
       assert_nil list.get(-4)
       assert_equal %i[none none uint], list.each.map(&:tag)
       list.put(-1, Core::Slot.uint(3))
@@ -111,7 +111,7 @@ class ArrayListTest < Minitest::Test
         assert_nil list.get(length)
         list.append(Core::Slot.null)
 
-        assert list.get(-1).full
+        assert_predicate list.get(-1), :full?
         list.truncate(length)
         assert_raises(IndexError) { list.truncate(length + 1) }
       end
@@ -304,7 +304,7 @@ class ArrayListTest < Minitest::Test
       writable = Core::ArrayList.new(root)
       writable.put(15, Core::Slot.null)
 
-      assert writable.get(15).full
+      assert_predicate writable.get(15), :full?
       writable.truncate(16)
 
       assert_equal 16, writable.size

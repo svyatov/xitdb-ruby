@@ -32,13 +32,13 @@ module XitDB
       # @raise [TypeError] if an argument has the wrong type
       # @raise [RangeError] if a numeric field exceeds its encoded range
       def initialize(file_id:, hash_id:, hash_size:, padding: 0)
-        @file_id = Format.integer(file_id, 0..Format::UINT64_MAX)
-        @hash_size = Format.integer(hash_size, 0..65_535)
+        @file_id = Format.integer!(file_id, 0..Format::UINT64_MAX)
+        @hash_size = Format.integer!(hash_size, 0..65_535)
         raise TypeError, "hash_id must be a String" unless hash_id.is_a?(String)
         raise ArgumentError, "hash_id must contain four bytes" unless hash_id.bytesize == 4
 
         @hash_id = hash_id.b.freeze
-        @padding = Format.integer(padding, 0..255)
+        @padding = Format.integer!(padding, 0..255)
         freeze
       end
 
@@ -48,7 +48,7 @@ module XitDB
       # @raise [CorruptionError] if size or magic bytes are invalid
       # @raise [FormatVersionError] if the format version is unsupported
       def self.parse(bytes)
-        Format.width(bytes, SIZE)
+        Format.ensure_width!(bytes, SIZE)
         magic = Format.slice(bytes, 0, 3)
         padding = bytes.getbyte(3) || raise(CorruptionError, "missing header padding")
         version, hash_size = Format.pair(Format.slice(bytes, 4, 4), "nn")

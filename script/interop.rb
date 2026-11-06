@@ -28,7 +28,7 @@ module Interop
     pin = MANIFEST.fetch("references").fetch(name)
     source = ENV.fetch("XITDB_#{name.upcase}_REFERENCE", "/private/tmp/xitdb-reference-#{name}")
     if name == "go"
-      verify_source(source)
+      verify_source!(source)
     else
       digest = Digest::SHA256.new
       files = Dir.glob(pin.fetch("source_glob"), base: source).sort
@@ -55,7 +55,7 @@ module Interop
                      [File.join(java, "java"), "-cp", dir, "Main"]
                    when "zig"
                      binary = File.join(dir, "adapter")
-                     command(File.join(TOOL_ROOT, "zig/0.17.0/zig"), "build-exe",
+                     command(File.join(TOOL_ROOT, "zig/0.17.1/zig"), "build-exe",
                              "--cache-dir", "/private/tmp/xitdb-zig-cache",
                              "--global-cache-dir", "/private/tmp/xitdb-zig-global-cache",
                              "-femit-bin=#{binary}", "--dep", "xitdb",
@@ -207,7 +207,7 @@ module Interop
 
   # Checks that Ruby rejects an interrupted delta and then applies the complete reference delta.
   # @param path [String] reference path with exported replication parts
-  def self.check_ruby_replication(path)
+  def self.check_ruby_replication!(path)
     core = XitDB::Core
     base = File.binread("#{path}.reference.base")
     delta = File.binread("#{path}.reference.delta")
@@ -219,10 +219,10 @@ module Interop
         copy.apply_replicated(base.bytesize, StringIO.new(delta.byteslice(0, delta.bytesize / 2)), delta.bytesize)
         raise "Ruby accepted an interrupted replica"
       rescue EOFError
-        assert_equal previous, copy.replica_state
+        assert_equal! previous, copy.replica_state
       end
       copy.apply_replicated(base.bytesize, StringIO.new(delta), delta.bytesize)
-      assert_equal File.binread(path), File.binread("#{path}.ruby-replica")
+      assert_equal! File.binread(path), File.binread("#{path}.ruby-replica")
     ensure
       copy.close
     end
@@ -232,26 +232,26 @@ module Interop
   # @param invoke [Proc] reference adapter
   # @param path [String] source path with base and delta exports
   # @param expected [Hash] normalized source tree
-  def self.check_maintenance(invoke, path, expected)
+  def self.check_maintenance!(invoke, path, expected)
     original = File.binread(path)
     invoke.call("compact", "all-kinds", path)
     compacted = read_tree("#{path}.compact")
-    assert_equal({ "tag" => "array_list", "items" => [expected.fetch("items").last] }, compacted)
-    assert_equal original, File.binread(path)
+    assert_equal!({ "tag" => "array_list", "items" => [expected.fetch("items").last] }, compacted)
+    assert_equal! original, File.binread(path)
     result = invoke.call("replicate", "all-kinds", path)
-    assert_equal true, result.fetch("interrupted")
-    assert_equal original, File.binread("#{path}.replica")
-    assert_equal File.binread("#{path}.base"), File.binread("#{path}.reference.base")
-    assert_equal File.binread("#{path}.delta"), File.binread("#{path}.reference.delta")
-    check_ruby_replication(path)
+    assert_equal! true, result.fetch("interrupted")
+    assert_equal! original, File.binread("#{path}.replica")
+    assert_equal! File.binread("#{path}.base"), File.binread("#{path}.reference.base")
+    assert_equal! File.binread("#{path}.delta"), File.binread("#{path}.reference.delta")
+    check_ruby_replication!(path)
     XitDB::Core::Database.open(path, readonly: true) { |db| db.compact(to: "#{path}.ruby-compact").close }
-    assert_equal compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
+    assert_equal! compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
   end
 
   # Checks that reference maintenance preserves Ruby values and unknown codec bytes.
   # @param invoke [Proc] reference adapter
   # @param dir [String] scratch directory
-  def self.check_opaque(invoke, dir)
+  def self.check_opaque!(invoke, dir)
     require_relative "../lib/xitdb/ruby"
     path = File.join(dir, "opaque.xit")
     type = Struct.new(:payload)
@@ -269,14 +269,14 @@ module Interop
       XitDB::Core::Database.open(path, readonly: true) { |core| export_parts(core, path, first) }
     end
     expected = read_tree(path)
-    check_maintenance(invoke, path, expected)
+    check_maintenance!(invoke, path, expected)
     XitDB::Ruby.open("#{path}.compact", readonly: true) do |db|
-      assert_equal [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)], db.snapshot[:opaque].to_ruby
-      assert_equal XitDB::Ruby::EncodedValue, db.snapshot[:unknown].class
-      assert_equal "interop/opaque/v1", db.snapshot[:unknown].codec_id
+      assert_equal! [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)], db.snapshot[:opaque].to_ruby
+      assert_equal! XitDB::Ruby::EncodedValue, db.snapshot[:unknown].class
+      assert_equal! "interop/opaque/v1", db.snapshot[:unknown].codec_id
     end
     XitDB::Ruby.open("#{path}.compact", readonly: true, codecs: [codec]) do |db|
-      assert_equal payload, db.snapshot[:unknown].payload
+      assert_equal! payload, db.snapshot[:unknown].payload
     end
   end
 
@@ -289,7 +289,7 @@ module Interop
     when "go" then command(env, "go", "version").strip
     when "typescript" then "Bun #{command(env, "bun", "--version").strip}"
     when "java" then command(File.join(TOOL_ROOT, "java/temurin-25.0.5+8.0.LTS/bin/java"), "--version").strip
-    when "zig" then "Zig #{command(File.join(TOOL_ROOT, "zig/0.17.0/zig"), "version").strip}"
+    when "zig" then "Zig #{command(File.join(TOOL_ROOT, "zig/0.17.1/zig"), "version").strip}"
     end
   end
 
@@ -300,8 +300,8 @@ module Interop
     MANIFEST.fetch("references").each do |name, pin|
       with_reference(name) do |invoke, dir|
         path = File.join(dir, "all-kinds.xit")
-        assert_reference_result(name, invoke.call("write", "all-kinds", path))
-        assert_equal expected_tree, read_tree(path)
+        assert_reference_result!(name, invoke.call("write", "all-kinds", path))
+        assert_equal! expected_tree, read_tree(path)
         directory = File.join(ROOT, "test/fixtures/interop", name)
         FileUtils.mkdir_p(directory)
         fixture = File.join(directory, "all-kinds.xit")
@@ -328,19 +328,19 @@ module Interop
 
   # Checks all-kinds files and maintenance in both directions between Ruby and a reference.
   # @param name [String] reference name
-  def self.check_reference(name)
+  def self.check_reference!(name)
     with_reference(name) do |invoke, dir|
       path = File.join(dir, "reference.xit")
-      assert_reference_result(name, invoke.call("write", "all-kinds", path))
+      assert_reference_result!(name, invoke.call("write", "all-kinds", path))
       produced = expected_tree
-      assert_equal produced, read_tree(path)
-      check_maintenance(invoke, path, produced)
+      assert_equal! produced, read_tree(path)
+      check_maintenance!(invoke, path, produced)
       ruby_path = File.join(dir, "ruby.xit")
       write_tree(ruby_path)
-      assert_reference_result(name, invoke.call("read", "all-kinds", ruby_path), linked_hole: true)
-      check_maintenance(invoke, ruby_path, expected_tree(linked_hole: true))
-      check_opaque(invoke, dir)
-      check_sha384(name, invoke, dir)
+      assert_reference_result!(name, invoke.call("read", "all-kinds", ruby_path), linked_hole: true)
+      check_maintenance!(invoke, ruby_path, expected_tree(linked_hole: true))
+      check_opaque!(invoke, dir)
+      check_sha384!(name, invoke, dir)
     end
     puts "#{name}: independent all-kinds writes, reads, history, compact, interrupted replication, " \
          "and opaque rb01 maintenance passed in both directions"
@@ -350,44 +350,44 @@ module Interop
   # @param name [String] reference name
   # @param invoke [Proc] reference adapter
   # @param dir [String] scratch directory
-  def self.check_sha384(name, invoke, dir)
+  def self.check_sha384!(name, invoke, dir)
     path = File.join(dir, "sha384-reference.xit")
-    assert_reference_result(name, invoke.call("write", "all-kinds", path, { id: "s384", size: 48 }))
-    assert_equal expected_tree, read_tree(path)
-    check_maintenance(invoke, path, expected_tree)
+    assert_reference_result!(name, invoke.call("write", "all-kinds", path, { id: "s384", size: 48 }))
+    assert_equal! expected_tree, read_tree(path)
+    check_maintenance!(invoke, path, expected_tree)
     ruby_path = File.join(dir, "sha384-ruby.xit")
     write_tree(ruby_path, hash_size: 48, hash_id: "s384")
-    assert_reference_result(name, invoke.call("read", "all-kinds", ruby_path), linked_hole: true)
-    check_maintenance(invoke, ruby_path, expected_tree(linked_hole: true))
+    assert_reference_result!(name, invoke.call("read", "all-kinds", ruby_path), linked_hole: true)
+    check_maintenance!(invoke, ruby_path, expected_tree(linked_hole: true))
   end
 
   # Checks tree contents, iteration counts, and reference-specific integer behavior.
   # @param name [String] reference name
   # @param result [Hash] adapter response
   # @param linked_hole [Boolean] whether the source retains a linked-array hole
-  def self.assert_reference_result(name, result, linked_hole: false)
-    assert_equal expected_tree(linked_hole: linked_hole), result.fetch("tree")
-    assert_equal [2, 34, 0, 16, 0, linked_hole ? 16 : 17], result.fetch("iteration")
+  def self.assert_reference_result!(name, result, linked_hole: false)
+    assert_equal! expected_tree(linked_hole: linked_hole), result.fetch("tree")
+    assert_equal! [2, 34, 0, 16, 0, linked_hole ? 16 : 17], result.fetch("iteration")
     return unless %w[typescript java].include?(name)
 
     observed = result.fetch("numbers")
     %w[18446744073709551615 9223372036854775808 9223372036854775809].each do |bits|
-      assert_equal({ "tag" => "uint", "bits" => bits, "error" => "ExpectedUnsignedLongException" },
-                   observed.find { |value| value["tag"] == "uint" && value["bits"] == bits })
+      assert_equal!({ "tag" => "uint", "bits" => bits, "error" => "ExpectedUnsignedLongException" },
+                    observed.find { |value| value["tag"] == "uint" && value["bits"] == bits })
     end
     numbers = { "9007199254740991" => "9007199254740991", "9007199254740993" => "9007199254740992",
                 "9223372036854775807" => "9223372036854776000", "9223372036854775808" => "-9223372036854776000" }
     numbers.each do |bits, number|
       number = Integer(bits) >= 2**63 ? (Integer(bits) - (2**64)).to_s : bits if name == "java"
-      assert_equal({ "tag" => "int", "bits" => bits, "number" => number },
-                   observed.find { |value| value["tag"] == "int" && value["bits"] == bits })
+      assert_equal!({ "tag" => "int", "bits" => bits, "number" => number },
+                    observed.find { |value| value["tag"] == "int" && value["bits"] == bits })
     end
     number = name == "java" ? "9223372036854775807" : "9223372036854776000"
-    assert_equal({ "tag" => "uint", "bits" => "9223372036854775807", "number" => number },
-                 observed.find { |value| value["tag"] == "uint" && value["bits"] == "9223372036854775807" })
+    assert_equal!({ "tag" => "uint", "bits" => "9223372036854775807", "number" => number },
+                  observed.find { |value| value["tag"] == "uint" && value["bits"] == "9223372036854775807" })
     return unless name == "java" && result.key?("writer_rejections")
 
-    assert_equal %w[18446744073709551615 9223372036854775808 9223372036854775809], result.fetch("writer_rejections")
+    assert_equal! %w[18446744073709551615 9223372036854775808 9223372036854775809], result.fetch("writer_rejections")
   end
 
   # Parses command-line options and runs selected checks or fixture generation.
@@ -406,7 +406,7 @@ module Interop
          replication].each do |name|
         run_go_case(name)
       end
-      MANIFEST.fetch("references").each_key { |reference| check_reference(reference) }
+      MANIFEST.fetch("references").each_key { |reference| check_reference!(reference) }
       puts "Known pinned limits: TypeScript Number rounds integers outside its exact range; Java and " \
            "TypeScript readUint reject values above INT64_MAX. Java Uint writes also reject that " \
            "range; public Slot writes preserve it. Exact raw bits and maintenance pass."
@@ -419,7 +419,7 @@ module Interop
       raise "unsupported case: #{options[:case]}" unless %w[all-kinds scalars signedness tags history compaction
                                                             replication opaque].include?(options[:case])
 
-      check_reference(options[:reference])
+      check_reference!(options[:reference])
       return
     end
     run_go_case(options[:case])
@@ -436,7 +436,7 @@ module Interop
     raise "unsupported case: #{options[:case]}" unless cases.include?(options[:case])
 
     reference = ENV.fetch("XITDB_GO_REFERENCE", "/tmp/xitdb-reference-go")
-    verify_source(reference)
+    verify_source!(reference)
     Dir.mktmpdir("xitdb-interop-") do |dir|
       binary = File.join(dir, "go-adapter")
       env = { "GOCACHE" => File.join(Dir.tmpdir, "xitdb-go-build-cache"), "GOPROXY" => "off", "GOSUMDB" => "off" }
@@ -467,7 +467,7 @@ module Interop
 
   # Checks the Go module and source checksum against the pinned manifest.
   # @param path [String] upstream source directory
-  def self.verify_source(path)
+  def self.verify_source!(path)
     pin = MANIFEST.fetch("references").fetch("go")
     unless File.file?(File.join(path, "go.mod"))
       raise "missing Go reference #{pin.fetch("repository")} at #{pin.fetch("revision")}: #{path}"
@@ -517,12 +517,12 @@ module Interop
     expected = File.read(File.join(ROOT, "test/fixtures/core/empty-v1.hex")).strip
     ruby_path = File.join(dir, "ruby.xit")
     XitDB::Core::Database.open(ruby_path, file_id: 1, &:close)
-    assert_equal expected, adapter(binary, "read", "empty", ruby_path).fetch("file_hex")
+    assert_equal! expected, adapter(binary, "read", "empty", ruby_path).fetch("file_hex")
     go_path = File.join(dir, "go.xit")
-    assert_equal expected, adapter(binary, "write", "empty", go_path).fetch("file_hex")
+    assert_equal! expected, adapter(binary, "write", "empty", go_path).fetch("file_hex")
     XitDB::Core::Database.open(go_path, readonly: true) do |db|
-      assert_equal 62, db.committed_size
-      assert_equal true, db.root_cursor.slot.empty?
+      assert_equal! 62, db.committed_size
+      assert_equal! true, db.root_cursor.slot.empty?
     end
   end
 
@@ -544,9 +544,9 @@ module Interop
                  end
           cursor.replace(slot)
         end
-        assert_equal value, adapter(binary, "read", "scalars", ruby_path)
-        assert_equal value, adapter(binary, "write", "scalars", go_path, value)
-        XitDB::Core::Database.open(go_path, readonly: true) { |reader| assert_equal value, read_value(reader) }
+        assert_equal! value, adapter(binary, "read", "scalars", ruby_path)
+        assert_equal! value, adapter(binary, "write", "scalars", go_path, value)
+        XitDB::Core::Database.open(go_path, readonly: true) { |reader| assert_equal! value, read_value(reader) }
       end
     end
     puts "#{MANIFEST.fetch("scalars").length} scalar vectors checked in both directions"
@@ -564,7 +564,7 @@ module Interop
   # @return [Hash] JSON-compatible scalar
   def self.read_cursor_value(cursor)
     slot = cursor.slot
-    value = { "tag" => slot.tag.to_s, "full" => slot.full }
+    value = { "tag" => slot.tag.to_s, "full" => slot.full? }
     if %i[bytes short_bytes].include?(slot.tag)
       bytes = cursor.read_bytes
       value.merge("hex" => bytes.bytes.unpack1("H*"), "format_tag" => bytes.format_tag&.unpack1("H*"))
@@ -593,13 +593,13 @@ module Interop
           end
         end
       end
-      assert_equal values, adapter(binary, "read", "array-list", ruby_path)
+      assert_equal! values, adapter(binary, "read", "array-list", ruby_path)
       go_path = File.join(dir, "go-array-#{length}.xit")
-      assert_equal values, adapter(binary, "write", "array-list", go_path, values)
+      assert_equal! values, adapter(binary, "write", "array-list", go_path, values)
       XitDB::Core::Database.open(go_path, readonly: true) do |db|
         list = XitDB::Core::ArrayList.new(db.root_cursor)
-        assert_equal length, list.size
-        assert_equal(values, Array.new(length) { |index| read_cursor_value(list.cursor_at(index)) })
+        assert_equal! length, list.size
+        assert_equal!(values, Array.new(length) { |index| read_cursor_value(list.cursor_at(index)) })
       end
     end
     puts "8 array lengths checked with sparse slots and occupied nulls in both directions"
@@ -610,7 +610,7 @@ module Interop
   # @param actual [Object] observed value
   # @raise [RuntimeError] if the values differ
   # @return [nil]
-  def self.assert_equal(expected, actual)
+  def self.assert_equal!(expected, actual)
     raise "expected #{expected.inspect}, got #{actual.inspect}" unless expected == actual
   end
 
@@ -628,31 +628,31 @@ module Interop
       File.open("#{ruby_path}.base", "wb") { |io| source.read_committed(0, first, io) }
       File.open("#{ruby_path}.delta", "wb") { |io| source.read_committed(first, source.committed_size, io) }
       result = adapter(binary, "read", "replication", ruby_path)
-      assert_equal first, result.fetch("first_size")
-      assert_equal source.replica_state.checksum.to_s, result.fetch("checksum")
-      assert_equal source.committed_size, result.fetch("size")
-      assert_equal Digest::SHA256.hexdigest(payload), result.fetch("payload_sha256")
-      assert_equal File.binread(ruby_path), File.binread("#{ruby_path}.replica")
+      assert_equal! first, result.fetch("first_size")
+      assert_equal! source.replica_state.checksum.to_s, result.fetch("checksum")
+      assert_equal! source.committed_size, result.fetch("size")
+      assert_equal! Digest::SHA256.hexdigest(payload), result.fetch("payload_sha256")
+      assert_equal! File.binread(ruby_path), File.binread("#{ruby_path}.replica")
     end
     go_path = File.join(dir, "go-replication")
     result = adapter(binary, "write", "replication", go_path)
     File.open("#{go_path}.base", "rb") do |io|
       copy = core::Database.copy_replica(to: "#{go_path}.replica", source_io: io, length: result.fetch("first_size"))
       begin
-        assert_equal 7, copy.root_cursor.slot.value
+        assert_equal! 7, copy.root_cursor.slot.value
         snapshot = copy.root_cursor
         core::Database.open(go_path, readonly: true) do |source|
-          assert_equal result.fetch("first_size"), source.replication_start(copy.replica_state)
+          assert_equal! result.fetch("first_size"), source.replication_start(copy.replica_state)
         end
         File.open("#{go_path}.delta", "rb") do |delta|
           copy.apply_replicated(result.fetch("first_size"), delta, delta.size)
         end
-        assert_equal 7, snapshot.slot.value
-        assert_equal result.fetch("checksum"), copy.replica_state.checksum.to_s
-        assert_equal result.fetch("size"), copy.committed_size
-        assert_equal payload, copy.root_cursor.read_bytes.bytes
-        assert_equal "\xff\0".b, copy.root_cursor.read_bytes.format_tag
-        assert_equal File.binread(go_path), File.binread("#{go_path}.replica")
+        assert_equal! 7, snapshot.slot.value
+        assert_equal! result.fetch("checksum"), copy.replica_state.checksum.to_s
+        assert_equal! result.fetch("size"), copy.committed_size
+        assert_equal! payload, copy.root_cursor.read_bytes.bytes
+        assert_equal! "\xff\0".b, copy.root_cursor.read_bytes.format_tag
+        assert_equal! File.binread(go_path), File.binread("#{go_path}.replica")
       ensure
         copy.close
       end
@@ -691,19 +691,19 @@ module Interop
         end
         original = File.binread(source_path)
         db.compact(to: ruby_path).close
-        assert_equal original, File.binread(source_path)
+        assert_equal! original, File.binread(source_path)
       end
-      assert_equal expected, adapter(binary, "read", "compaction", ruby_path, { "collection" => kind })
+      assert_equal! expected, adapter(binary, "read", "compaction", ruby_path, { "collection" => kind })
       go_path = File.join(dir, "go-#{kind}")
-      assert_equal expected, adapter(binary, "write", "compaction", go_path, { "collection" => kind })
+      assert_equal! expected, adapter(binary, "write", "compaction", go_path, { "collection" => kind })
       ["#{ruby_path}.go-compact", "#{go_path}.go-compact"].each do |path|
         core::Database.open(path, readonly: true) do |db|
-          assert_compaction_graph(db, kind, payload)
+          assert_compaction_graph!(db, kind, payload)
           original = File.binread(path)
           compacted = db.compact(to: "#{path}.ruby-compact")
           begin
-            assert_compaction_graph(compacted, kind, payload)
-            assert_equal original, File.binread(path)
+            assert_compaction_graph!(compacted, kind, payload)
+            assert_equal! original, File.binread(path)
           ensure
             compacted.close
           end
@@ -718,23 +718,23 @@ module Interop
   # @param db [XitDB::Core::Database] compacted database
   # @param kind [String] history or raw graph fixture
   # @param payload [String] expected external payload
-  def self.assert_compaction_graph(db, kind, payload)
+  def self.assert_compaction_graph!(db, kind, payload)
     core = XitDB::Core
     graph = db.root_cursor.slot
     if kind == "history"
       history = core::ArrayList.new(db.root_cursor)
-      assert_equal 1, history.size
+      assert_equal! 1, history.size
       graph = history.get(0)
     end
-    assert_equal true, graph.full
+    assert_equal! true, graph.full?
     pointer = kind == "history" ? db.read_at(graph.value + 8, 8, bound: db.committed_size).unpack1("Q>") : graph.value
     children = Array.new(4) { |i| core::Slot.parse(db.read_at(pointer + (i * 9), 9, bound: db.committed_size)) }
-    assert_equal graph, children[0]
-    assert_equal children[1], children[2]
-    assert_equal payload, db.read_bytes(children[1]).bytes
-    assert_equal "\xff\0".b, db.read_bytes(children[1]).format_tag
-    assert_equal "short", db.read_bytes(children[3]).bytes
-    assert_equal "\xff\0".b, db.read_bytes(children[3]).format_tag
+    assert_equal! graph, children[0]
+    assert_equal! children[1], children[2]
+    assert_equal! payload, db.read_bytes(children[1]).bytes
+    assert_equal! "\xff\0".b, db.read_bytes(children[1]).format_tag
+    assert_equal! "short", db.read_bytes(children[3]).bytes
+    assert_equal! "\xff\0".b, db.read_bytes(children[3]).format_tag
   end
 
   # Checks each hash collection tag with collisions, removals, and key-only records.
@@ -775,27 +775,27 @@ module Interop
                 map.put([entry.fetch("hash")].pack("H*"), key: key, value: value)
               end
             end
-            removals.each { |hash| assert_equal true, map.remove([hash].pack("H*")) }
+            removals.each { |hash| assert_equal! true, map.remove([hash].pack("H*")) }
           end
         end
-        assert_equal expected, adapter(binary, "read", "hash-collections", ruby_path, request)
+        assert_equal! expected, adapter(binary, "read", "hash-collections", ruby_path, request)
         go_path = File.join(dir, "go-#{tag}-#{index}.xit")
-        assert_equal expected, adapter(binary, "write", "hash-collections", go_path, request)
+        assert_equal! expected, adapter(binary, "write", "hash-collections", go_path, request)
         XitDB::Core::Database.open(go_path, readonly: true) do |db|
           map = XitDB::Core::HashMap.from_cursor(db.root_cursor)
-          assert_equal tag, db.root_cursor.slot.tag
-          assert_equal final.size, map.size
+          assert_equal! tag, db.root_cursor.slot.tag
+          assert_equal! final.size, map.size
           actual = map.each_entry.map do |hash, key, value|
             { "hash" => hash.unpack1("H*"), "key" => hash_value(db, key), "value" => hash_value(db, value) }
           end
-          assert_equal(expected.fetch("entries"), actual.sort_by { |entry| entry.fetch("hash") })
+          assert_equal!(expected.fetch("entries"), actual.sort_by { |entry| entry.fetch("hash") })
           final.each do |entry|
             hash = [entry.fetch("hash")].pack("H*")
-            assert_equal true, map.include?(hash)
-            assert_equal entry.fetch("key"), hash_value(db, map.key(hash))
-            assert_equal entry.fetch("value"), hash_value(db, map.get(hash))
+            assert_equal! true, map.include?(hash)
+            assert_equal! entry.fetch("key"), hash_value(db, map.key(hash))
+            assert_equal! entry.fetch("value"), hash_value(db, map.get(hash))
           end
-          assert_equal false, map.include?("\xff".b * 20)
+          assert_equal! false, map.include?("\xff".b * 20)
         end
       end
     end
@@ -835,20 +835,20 @@ module Interop
           tree = XitDB::Core::BTree.new(root)
           positions.each_with_index do |position, index|
             tree.insert(position, XitDB::Core::Slot.uint(index))
-            assert_equal index + 1, tree.size
+            assert_equal! index + 1, tree.size
           end
         end
       end
-      assert_equal oracle, adapter(binary, "read", "linked-array-insert", ruby_path, request)
+      assert_equal! oracle, adapter(binary, "read", "linked-array-insert", ruby_path, request)
       go_path = File.join(dir, "go-linked-#{length}.xit")
-      assert_equal oracle, adapter(binary, "write", "linked-array-insert", go_path, request)
+      assert_equal! oracle, adapter(binary, "write", "linked-array-insert", go_path, request)
       [ruby_path, go_path].each do |path|
         XitDB::Core::Database.open(path, readonly: true) do |db|
           list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
-          assert_equal :linked_array_list, db.root_cursor.slot.tag
-          assert_equal length, list.size
-          assert_equal(oracle, Array.new(length) { |index| list.get(index).value.to_s })
-          assert_equal(oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s })
+          assert_equal! :linked_array_list, db.root_cursor.slot.tag
+          assert_equal! length, list.size
+          assert_equal!(oracle, Array.new(length) { |index| list.get(index).value.to_s })
+          assert_equal!(oracle.last(2), list.each_from_index([length - 2, 0].max).map { |slot| slot.value.to_s })
         end
       end
     end
@@ -907,25 +907,25 @@ module Interop
             removals.each { |key| map.remove([key].pack("H*")) }
           end
         end
-        assert_equal expected, adapter(binary, "read", "sorted-collections", ruby_path, request)
+        assert_equal! expected, adapter(binary, "read", "sorted-collections", ruby_path, request)
         go_path = File.join(dir, "go-#{tag}-#{length}.xit")
-        assert_equal expected, adapter(binary, "write", "sorted-collections", go_path, request)
+        assert_equal! expected, adapter(binary, "write", "sorted-collections", go_path, request)
         XitDB::Core::Database.open(go_path, readonly: true) do |db|
           map = XitDB::Core::SortedMap.new(db.root_cursor)
-          assert_equal tag, db.root_cursor.slot.tag.to_s
-          assert_equal expected_entries.size, map.size
+          assert_equal! tag, db.root_cursor.slot.tag.to_s
+          assert_equal! expected_entries.size, map.size
           actual = map.map { |key, slot| { "key_hex" => key.unpack1("H*"), "value" => hash_value(db, slot) } }
-          assert_equal expected_entries, actual
+          assert_equal! expected_entries, actual
           expected_entries.each_with_index do |entry, i|
             key = [entry.fetch("key_hex")].pack("H*")
-            assert_equal true, map.include?(key)
-            assert_equal i, map.rank(key)
-            assert_equal entry.fetch("value"), hash_value(db, map.get(key))
-            assert_equal key, map.at(i).first
+            assert_equal! true, map.include?(key)
+            assert_equal! i, map.rank(key)
+            assert_equal! entry.fetch("value"), hash_value(db, map.get(key))
+            assert_equal! key, map.at(i).first
           end
           tail = expected_entries.last(2).map { |entry| [entry.fetch("key_hex")].pack("H*") }
-          assert_equal tail, map.each_from(tail.first || "").map(&:first)
-          assert_equal tail, map.each_from_index([map.size - 2, 0].max).map(&:first)
+          assert_equal! tail, map.each_from(tail.first || "").map(&:first)
+          assert_equal! tail, map.each_from_index([map.size - 2, 0].max).map(&:first)
         end
       end
     end
@@ -965,14 +965,14 @@ module Interop
           root.replace(empty.concat(selected).concat(empty).cursor.slot)
         end
       end
-      assert_equal expected, adapter(binary, "read", "linked-array-edit", ruby_path, request)
+      assert_equal! expected, adapter(binary, "read", "linked-array-edit", ruby_path, request)
       go_path = File.join(dir, "go-edit-#{length}.xit")
-      assert_equal expected, adapter(binary, "write", "linked-array-edit", go_path, request)
+      assert_equal! expected, adapter(binary, "write", "linked-array-edit", go_path, request)
       XitDB::Core::Database.open(go_path, readonly: true) do |db|
         list = XitDB::Core::LinkedArrayList.new(db.root_cursor)
-        assert_equal :linked_array_list, db.root_cursor.slot.tag
-        assert_equal expected.size, list.size
-        assert_equal(expected, list.map { |slot| slot.value.to_s })
+        assert_equal! :linked_array_list, db.root_cursor.slot.tag
+        assert_equal! expected.size, list.size
+        assert_equal!(expected, list.map { |slot| slot.value.to_s })
       end
     end
     puts "5 linked-array edit lengths checked with first/middle/final removals, root collapse, " \

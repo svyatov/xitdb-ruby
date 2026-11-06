@@ -11,7 +11,7 @@ module XitDB
       # @raise [InvalidValueError] if the slot is not untagged bytes
       def initialize(context, slot)
         super(context)
-        unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
+        unless %i[bytes short_bytes].include?(slot.tag) && !slot.full?
           raise InvalidValueError, "stream requires untagged bytes"
         end
 
@@ -32,7 +32,7 @@ module XitDB
         check!
         @context.read do
           check!
-          count = length.nil? ? [@size - @pos, 0].max : integer(length)
+          count = length.nil? ? [@size - @pos, 0].max : integer!(length)
           raise ArgumentError, "negative length" if count.negative?
 
           buffer = if output.nil?
@@ -61,7 +61,7 @@ module XitDB
       # @raise [EOFError] if a positive-length read starts at EOF
       def readpartial(length, output = nil)
         check!
-        read(integer(length), output) || raise(EOFError, "end of byte stream")
+        read(integer!(length), output) || raise(EOFError, "end of byte stream")
       end
 
       # Move the position relative to the start, current position, or end.
@@ -71,14 +71,14 @@ module XitDB
       # @raise [Errno::EINVAL] if the origin is invalid or the resulting position is negative
       def seek(offset, whence = IO::SEEK_SET)
         check!
-        offset = integer(offset)
+        offset = integer!(offset)
         whence = case whence
                  when :SET then IO::SEEK_SET
                  when :CUR then IO::SEEK_CUR
                  when :END then IO::SEEK_END
                  else whence
                  end
-        base = case integer(whence)
+        base = case integer!(whence)
                when IO::SEEK_SET then 0
                when IO::SEEK_CUR then @pos
                when IO::SEEK_END then @size
@@ -87,7 +87,7 @@ module XitDB
         position = base + offset
         raise Errno::EINVAL, "negative seek position" if position.negative?
 
-        @pos = integer(position)
+        @pos = integer!(position)
         0
       end
 

@@ -172,7 +172,7 @@ module BoundedWorkload
   # Checks first, middle, and last row lookups plus an absent key.
   # @param database [XitDB::Database] fixture database
   # @param rows [Integer] expected row count
-  def self.check_index(database, rows)
+  def self.check_index!(database, rows)
     index = database.snapshot["rows"]
     [0, rows / 2, rows - 1].each do |position|
       raise "lookup mismatch" unless index[key(position)] == position
@@ -183,7 +183,7 @@ module BoundedWorkload
   # Checks all rows through pages of 37 entries without losing rank or progress.
   # @param database [XitDB::Database] fixture database
   # @param rows [Integer] expected row count
-  def self.check_pages(database, rows)
+  def self.check_pages!(database, rows)
     index = database.snapshot["rows"]
     position = 0
     while position < rows
@@ -204,7 +204,7 @@ module BoundedWorkload
   # @param bytes [Integer] expected blob size
   # @param digest [String] expected SHA-256 digest
   # @param converted [Boolean] whether to use the conversion byte interface
-  def self.check_stream(database, bytes, digest, converted: false)
+  def self.check_stream!(database, bytes, digest, converted: false)
     actual = Digest::SHA256.new
     count = 0
     if converted
@@ -244,9 +244,9 @@ module BoundedWorkload
       trace("#{profile}:#{operation}")
       _, elapsed, allocated = measure do
         case operation
-        when "lookup" then check_index(database, rows)
-        when "pagination" then check_pages(database, rows)
-        when "stream" then check_stream(database, bytes, digest)
+        when "lookup" then check_index!(database, rows)
+        when "pagination" then check_pages!(database, rows)
+        when "stream" then check_stream!(database, bytes, digest)
         end
       end
       measurements[operation] = { "seconds" => elapsed, "allocations" => allocated }
@@ -271,9 +271,9 @@ module BoundedWorkload
           raise "latest revision mismatch" unless target.snapshot["revision"] == 1
           raise "first revision mismatch" if operation == "conversion" && target.history[0]["revision"] != 0
 
-          check_index(target, rows)
-          check_pages(target, rows)
-          check_stream(target, bytes, digest, converted: operation == "conversion")
+          check_index!(target, rows)
+          check_pages!(target, rows)
+          check_stream!(target, bytes, digest, converted: operation == "conversion")
         end
         measurements[operation] = { "seconds" => elapsed, "allocations" => allocated,
                                     "verification_seconds" => verification, "destination_bytes" => File.size(path),

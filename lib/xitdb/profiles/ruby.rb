@@ -194,7 +194,7 @@ module XitDB
         klass = Object.instance_method(:class).bind_call(value)
         case value
         when Hash, ::Array, ::Set
-          validate_container(value, klass, path)
+          validate_container!(value, klass, path)
           { Hash => :map, ::Array => :array, ::Set => :set }.fetch(klass)
         when CollectionDeclaration
           declaration_kind(value, klass, path)
@@ -217,7 +217,7 @@ module XitDB
       # @param path [Array<Object>] logical input location used in errors
       # @return [void]
       # @raise [UnsupportedValueError] if the collection is a subclass or has unsupported behavior
-      def validate_container(value, klass, path)
+      def validate_container!(value, klass, path)
         unless [Hash, ::Array, ::Set].include?(klass)
           raise UnsupportedValueError.new("container subclasses are unsupported", path: path)
         end

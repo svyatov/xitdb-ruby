@@ -37,7 +37,7 @@ module XitDB
       # @raise [RangeError] if the total payload exceeds unsigned 64-bit storage
       def self.append(transaction, size:, format_tag: nil, prefix: "".b, representation: :automatic, &reader)
         transaction.check_active!
-        validate_source(size, prefix, representation, format_tag)
+        validate_source!(size, prefix, representation, format_tag)
         format_tag = format_tag&.b
         total_size = prefix.bytesize + size
         raise RangeError, "byte payload exceeds unsigned 64-bit size" if total_size >= (1 << 64)
@@ -60,7 +60,7 @@ module XitDB
       end
 
       # Checks the source size, prefix, storage mode, and optional format tag.
-      def self.validate_source(size, prefix, representation, format_tag)
+      def self.validate_source!(size, prefix, representation, format_tag)
         raise TypeError, "size must be an Integer" unless size.is_a?(Integer)
         raise ArgumentError, "size must be nonnegative" if size.negative?
         raise TypeError, "prefix must be a String" unless prefix.is_a?(String)
@@ -92,7 +92,7 @@ module XitDB
           position += length
         end
       end
-      private_class_method :validate_source, :capture_inline, :append_source
+      private_class_method :validate_source!, :capture_inline, :append_source
 
       # Requests one exact chunk and rejects invalid replies.
       def self.read_chunk(position, length)
@@ -112,15 +112,15 @@ module XitDB
         case slot.tag
         when :short_bytes
           payload = [slot.value].pack("Q>")
-          capacity = slot.full ? 6 : 8
+          capacity = slot.full? ? 6 : 8
           data = (Format.slice(payload, 0, capacity).split("\0", 2).first || "".b).freeze
-          tag = Format.slice(payload, 6, 2).freeze if slot.full
+          tag = Format.slice(payload, 6, 2).freeze if slot.full?
           [data, data.bytesize, tag]
         when :bytes
           size = Format.unsigned(database.read_at(slot.value, 8, bound: bound))
           offset = slot.value + 8
-          tail = database.read_at(offset + size, slot.full ? 2 : 0, bound: bound)
-          tag = tail.freeze if slot.full
+          tail = database.read_at(offset + size, slot.full? ? 2 : 0, bound: bound)
+          tag = tail.freeze if slot.full?
           [offset, size, tag]
         else
           raise InvalidValueError, "slot does not contain bytes"
@@ -135,7 +135,7 @@ module XitDB
       # @return [Array(String, Integer), Array(Integer, Integer)]
       # @raise [InvalidValueError] if slot is not untagged bytes
       def self.locate(database, slot, bound:)
-        unless %i[bytes short_bytes].include?(slot.tag) && !slot.full
+        unless %i[bytes short_bytes].include?(slot.tag) && !slot.full?
           raise InvalidValueError, "stream requires untagged bytes"
         end
 

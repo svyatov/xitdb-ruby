@@ -31,7 +31,7 @@ module XitDB
       def from_index(index)
         return enum_for(:from_index, index) unless block_given?
 
-        each_entries(-> { adapter.each_from_index(integer_argument(index)) }) { |*entry| yield(*entry) }
+        each_entries(-> { adapter.each_from_index(integer_argument!(index)) }) { |*entry| yield(*entry) }
         self
       end
 
@@ -43,8 +43,8 @@ module XitDB
       # @raise [ArgumentError] if limit is negative
       def page(offset:, limit:)
         check!
-        offset = integer_argument(offset)
-        limit = integer_argument(limit)
+        offset = integer_argument!(offset)
+        limit = integer_argument!(limit)
         raise ArgumentError, "negative page limit" if limit.negative?
         return enum_for(:page, offset: offset, limit: limit) unless block_given?
         return self if limit.zero?

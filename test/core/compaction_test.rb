@@ -23,7 +23,7 @@ class CompactionTest < Minitest::Test
       slot = compacted.root_cursor.slot
 
       assert_equal :bytes, slot.tag
-      assert slot.full
+      assert_predicate slot, :full?
       assert_equal "abc", compacted.read_bytes(slot).bytes
       assert_equal "zz", compacted.read_bytes(slot).format_tag
     ensure
@@ -56,7 +56,7 @@ class CompactionTest < Minitest::Test
       graph = history.get(0)
 
       assert_equal :array_list, graph.tag
-      assert graph.full
+      assert_predicate graph, :full?
       children = Core::ArrayList.new(history.cursor_at(0)).to_a
 
       assert_equal graph, children[0]
@@ -420,7 +420,7 @@ class CompactionTest < Minitest::Test
         root = compacted.root_cursor
 
         assert_equal tag, root.slot.tag
-        assert_equal slot.full, root.slot.full
+        assert_equal slot.full?, root.slot.full?
         case tag
         when :bytes, :short_bytes
           expected = tag == :bytes ? "x\0".b * 70_000 : "sixsix"

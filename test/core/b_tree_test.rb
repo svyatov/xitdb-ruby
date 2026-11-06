@@ -144,7 +144,7 @@ class BTreeTest < Minitest::Test
       list.append(Core::Slot.new).append(Core::Slot.null).append(Core::Slot.uint(2))
 
       assert_empty list.get(0)
-      assert list.get(-2).full
+      assert_predicate list.get(-2), :full?
       assert_equal 2, list.get(-1).value
       assert_nil list.get(3)
       assert_nil list.get(-4)

@@ -34,7 +34,7 @@ module XitDB
       # Convert an IO argument to a bounded native integer.
       # @param value [Object]
       # @return [Integer]
-      def integer(value)
+      def integer!(value)
         result = Integer.try_convert(value) || raise(TypeError, "expected an Integer")
         limit = (1 << ((0.size * 8) - 1)) - 1
         raise RangeError, "integer too big to convert into long" unless result.between?(-limit - 1, limit)

@@ -16,7 +16,7 @@ module XitDB
       # @return [Integer]
       # @raise [TypeError] if value is not an Integer
       # @raise [RangeError] if value is outside range
-      def self.integer(value, range)
+      def self.integer!(value, range)
         raise TypeError, "expected Integer, got #{value.class}" unless value.is_a?(Integer)
         raise RangeError, "integer outside #{range}" unless range.cover?(value)
 
@@ -29,7 +29,7 @@ module XitDB
       # @return [void]
       # @raise [TypeError] if bytes is not a String
       # @raise [CorruptionError] if the width differs
-      def self.width(bytes, width)
+      def self.ensure_width!(bytes, width)
         raise TypeError, "expected String, got #{bytes.class}" unless bytes.is_a?(String)
         raise CorruptionError, "expected #{width} bytes, got #{bytes.bytesize}" unless bytes.bytesize == width
       end

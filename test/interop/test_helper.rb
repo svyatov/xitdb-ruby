@@ -51,7 +51,7 @@ module ReferenceHelpers
                  provenance.fetch("manifest_sha256")
     copy = File.join(@directory, "fixture.xit")
     File.binwrite(copy, File.binread(path))
-    Interop.assert_reference_result(reference, @invoke.call("read", name, copy))
+    Interop.assert_reference_result!(reference, @invoke.call("read", name, copy))
     Interop.read_tree(path)
   end
 
@@ -64,20 +64,20 @@ module ReferenceHelpers
     result = @invoke.call("read", name, path)
 
     assert_equal Interop.expected_tree(linked_hole: true), result.fetch("tree")
-    Interop.assert_reference_result(reference, result, linked_hole: true)
+    Interop.assert_reference_result!(reference, result, linked_hole: true)
   end
 
   # Checks bidirectional maintenance, opaque Ruby bytes, and the SHA-384 profile.
   # @param reference [String] reference name
   # @param name [String] adapter case name
   def assert_reference_compacts_and_replicates_ruby_file(reference, name = "all-kinds")
-    Interop.check_maintenance(@invoke, File.join(@directory, "ruby.xit"), Interop.expected_tree(linked_hole: true))
+    Interop.check_maintenance!(@invoke, File.join(@directory, "ruby.xit"), Interop.expected_tree(linked_hole: true))
     path = File.join(@directory, "reference.xit")
-    Interop.assert_reference_result(reference, @invoke.call("write", name, path))
+    Interop.assert_reference_result!(reference, @invoke.call("write", name, path))
 
     assert_equal expected_values(reference), Interop.read_tree(path)
-    Interop.check_maintenance(@invoke, path, expected_values(reference))
-    Interop.check_opaque(@invoke, @directory)
-    Interop.check_sha384(reference, @invoke, @directory)
+    Interop.check_maintenance!(@invoke, path, expected_values(reference))
+    Interop.check_opaque!(@invoke, @directory)
+    Interop.check_sha384!(reference, @invoke, @directory)
   end
 end

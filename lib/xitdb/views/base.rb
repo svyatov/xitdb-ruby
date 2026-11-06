@@ -166,7 +166,7 @@ module XitDB
         registration = nil
         reader = context.read do
           selector = stream_selector(key)
-          if %i[array linked_array].include?(kind) && !integer_argument(selector).between?(0, size - 1)
+          if %i[array linked_array].include?(kind) && !integer_argument!(selector).between?(0, size - 1)
             raise KeyError, "byte value not found"
           end
 
@@ -199,10 +199,10 @@ module XitDB
         context.writable!
         selector = stream_selector(key)
         if %i[array linked_array].include?(kind)
-          selector = integer_argument(selector)
+          selector = integer_argument!(selector)
           raise IndexError, "array index outside list" if selector.negative?
 
-          validate_growth(selector + 1)
+          validate_growth!(selector + 1)
         end
         context.check_stream_mutation!(path, **stream_mutation(selector))
         Tempfile.create("xitdb-bytes", binmode: true) do |spool|
@@ -218,9 +218,9 @@ module XitDB
           edit(**stream_mutation(selector)) do |collection|
             spool.rewind
             stored = Core::Bytes.copy(spool, size: spool.size, database: context.database.core,
-                                             transaction: context.writable_transaction)
+                                             transaction: context.writable_transaction!)
             if %i[array linked_array].include?(kind)
-              position = integer_argument(selector)
+              position = integer_argument!(selector)
               collection.assign(collection.size, Core::Slot.null) while collection.size < position
             end
             collection.assign(selector, stored)
@@ -235,7 +235,7 @@ module XitDB
 
       # Clear storage only when the profile reports that a change is needed.
       # @return [Boolean] whether entries or profile metadata changed
-      def clear_entries?
+      def clear_entries
         collection = adapter
         needed = if defined?(Ruby::Containers) && collection.is_a?(Ruby::Containers)
                    collection.clear_needed?
@@ -294,7 +294,7 @@ module XitDB
       # @return [::Hash] conflict check options
       def stream_mutation(selector)
         if %i[array linked_array].include?(kind)
-          position = integer_argument(selector)
+          position = integer_argument!(selector)
           { positions: [size, position].min..position }
         else
           { targets: [entry_path(selector)] }
@@ -305,7 +305,7 @@ module XitDB
       # @param value [Object]
       # @return [Integer]
       # @raise [TypeError, RangeError] if conversion or bounds validation fails
-      def integer_argument(value)
+      def integer_argument!(value)
         result = ::Integer.try_convert(value) || raise(TypeError, "no implicit conversion into Integer")
         raise RangeError, "integer too big to convert into long" unless result.between?(-LONG_MAX - 1, LONG_MAX)
 

@@ -10,7 +10,7 @@ module XitDB
     # @param value [Integer] integer from zero through 2**64 - 1
     # @raise [RangeError] if the integer is outside that range
     def initialize(value)
-      @value = Core::Format.integer(value, 0..Core::Format::UINT64_MAX)
+      @value = Core::Format.integer!(value, 0..Core::Format::UINT64_MAX)
       freeze
     end
   end

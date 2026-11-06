@@ -85,12 +85,12 @@ module XitDB
       def lookup(selector)
         if sorted?
           bytes = key_bytes(selector)
-          stored = sorted_collection.get(bytes)
+          stored = sorted_collection!.get(bytes)
           return sorted_entry(bytes, stored).last if stored
 
           return nil
         end
-        return sequence_collection.get(index_selector(selector)) unless ordered?
+        return sequence_collection!.get(index_selector!(selector)) unless ordered?
 
         bytes = key_bytes(selector)
         return nil unless @envelope
@@ -111,10 +111,10 @@ module XitDB
         elsif ordered?
           assign_ordered(selector, stored)
         elsif selector == size
-          sequence_collection.append(stored)
+          sequence_collection!.append(stored)
         else
-          sequence_collection.put(index_selector(selector),
-                                  stored)
+          sequence_collection!.put(index_selector!(selector),
+                                   stored)
         end
         publish
       end
@@ -128,11 +128,11 @@ module XitDB
       def delete(selector)
         if sorted?
           bytes = key_bytes(selector)
-          stored = sorted_collection.get(bytes)
+          stored = sorted_collection!.get(bytes)
           return self unless stored
 
           sorted_entry(bytes, stored)
-          sorted_collection.remove(bytes)
+          sorted_collection!.remove(bytes)
         elsif ordered?
           bytes = key_bytes(selector)
           digest = @profile.hasher.digest(bytes)
@@ -142,7 +142,7 @@ module XitDB
           @order.remove([fetch_slot(record, 2).value].pack("Q>"))
           @lookup.remove(digest)
         elsif kind == :linked_array
-          linked_collection.delete_at(index_selector(selector))
+          linked_collection!.delete_at(index_selector!(selector))
         else
           delete_array(selector)
         end
@@ -172,14 +172,14 @@ module XitDB
       # @return [self] this adapter
       def insert(index, stored)
         if kind == :linked_array
-          Core::BTree.new(linked_collection.cursor).insert(index, stored)
+          Core::BTree.new(linked_collection!.cursor).insert(index, stored)
         else
           count = size
-          array_collection.append(stored)
+          array_collection!.append(stored)
           (count - 1).downto(index) do |position|
-            array_collection.put(position + 1, required_slot(array_collection.get(position)))
+            array_collection!.put(position + 1, required_slot!(array_collection!.get(position)))
           end
-          array_collection.put(index, stored)
+          array_collection!.put(index, stored)
         end
         publish
       end
@@ -190,9 +190,9 @@ module XitDB
       # @return [self] this adapter
       def truncate(count)
         if kind == :linked_array
-          @collection = linked_collection.slice(0, count)
+          @collection = linked_collection!.slice(0, count)
         else
-          array_collection.truncate(count)
+          array_collection!.truncate(count)
         end
         publish
       end
@@ -205,11 +205,11 @@ module XitDB
       def slice(start, count)
         if kind == :linked_array
           return array([Core::Slot.uint(MARKERS.fetch(kind)),
-                        linked_collection.slice(start, count).cursor.slot]).cursor.slot
+                        linked_collection!.slice(start, count).cursor.slot]).cursor.slot
         end
 
         output = @profile.empty_container(kind, context: @context, path: @path)
-        count.times { |index| output.assign(index, required_slot(lookup(start + index))) }
+        count.times { |index| output.assign(index, required_slot!(lookup(start + index))) }
         output.slot
       end
 
@@ -220,7 +220,7 @@ module XitDB
       # @return [self] this adapter
       def concat(other)
         if kind == :linked_array && other.is_a?(Containers) && other.kind == :linked_array
-          @collection = linked_collection.concat(other.linked_collection)
+          @collection = linked_collection!.concat(other.linked_collection!)
           publish
         else
           other.each_entry { |_index, stored| assign(size, stored) }
@@ -257,14 +257,14 @@ module XitDB
       # @yieldreturn [void] ignored
       def each_normalized_index(index)
         if sorted?
-          sorted_collection.each_from_index(index) do |bytes, stored|
+          sorted_collection!.each_from_index(index) do |bytes, stored|
             key, value = sorted_entry(bytes, stored)
             yield key, value
           end
         elsif kind == :linked_array
-          linked_collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
+          linked_collection!.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
         else
-          (index...size).each { |position| yield position, required_slot(lookup(position)) }
+          (index...size).each { |position| yield position, required_slot!(lookup(position)) }
         end
         self
       end
@@ -282,7 +282,7 @@ module XitDB
         return self unless @envelope
 
         if sorted?
-          sorted_collection.each do |bytes, stored|
+          sorted_collection!.each do |bytes, stored|
             key, value = sorted_entry(bytes, stored)
             yield key, value
           end
@@ -292,7 +292,7 @@ module XitDB
             yield key, stored
           end
         else
-          sequence_collection.each.with_index { |stored, index| yield index, stored }
+          sequence_collection!.each.with_index { |stored, index| yield index, stored }
         end
         self
       end
@@ -302,7 +302,7 @@ module XitDB
       # @param selector [Object] key in the sorted collection's accepted key type
       # @return [Integer] zero-based position, including the insertion position for an absent key
       def rank(selector)
-        sorted_collection.rank(key_bytes(selector))
+        sorted_collection!.rank(key_bytes(selector))
       end
 
       # Visits sorted entries starting at the first key greater than or equal to the requested key.
@@ -316,7 +316,7 @@ module XitDB
       def each_from(selector)
         return enum_for(:each_from, selector) unless block_given?
 
-        sorted_collection.each_from(key_bytes(selector)) do |bytes, stored|
+        sorted_collection!.each_from(key_bytes(selector)) do |bytes, stored|
           key, value = sorted_entry(bytes, stored)
           yield key, value
         end
@@ -343,7 +343,7 @@ module XitDB
       #
       # @return [Core::LinkedArrayList] typed underlying collection
       # @raise [InvalidValueError] if the active layout has the wrong collection type
-      def linked_collection
+      def linked_collection!
         collection = @collection
         invalid! unless collection.is_a?(Core::LinkedArrayList)
 
@@ -357,7 +357,7 @@ module XitDB
       # @param selector [Object] candidate sequence position
       # @return [Integer] supplied index
       # @raise [TypeError] if the selector is not an Integer
-      def index_selector(selector)
+      def index_selector!(selector)
         raise TypeError, "index must be an Integer" unless selector.is_a?(Integer)
 
         selector
@@ -368,7 +368,7 @@ module XitDB
       # @param slot [Core::Slot, nil] result of an internal child lookup
       # @return [Core::Slot] present child
       # @raise [InvalidValueError] if the promised child is absent
-      def required_slot(slot)
+      def required_slot!(slot)
         invalid! unless slot
 
         slot
@@ -381,14 +381,14 @@ module XitDB
       # @return [Core::Slot] required field
       # @raise [InvalidValueError] if the field is absent
       def fetch_slot(collection, index)
-        required_slot(collection.get(index))
+        required_slot!(collection.get(index))
       end
 
       # Requires the marked envelope before reading or publishing its fields.
       #
       # @return [Core::ArrayList] active envelope
       # @raise [InvalidValueError] if no envelope has been initialized
-      def envelope
+      def envelope!
         value = @envelope
         invalid! unless value
 
@@ -399,7 +399,7 @@ module XitDB
       #
       # @return [Symbol] declared sorted-key kind
       # @raise [InvalidValueError] if the key-kind field is absent
-      def declared_key_kind
+      def declared_key_kind!
         value = @key_kind
         invalid! unless value
 
@@ -410,7 +410,7 @@ module XitDB
       #
       # @return [Core::ArrayList] typed underlying collection
       # @raise [InvalidValueError] if the active layout has the wrong collection type
-      def array_collection
+      def array_collection!
         collection = @collection
         invalid! unless collection.is_a?(Core::ArrayList)
 
@@ -421,7 +421,7 @@ module XitDB
       #
       # @return [Core::SortedMap] typed underlying collection
       # @raise [InvalidValueError] if the active layout has the wrong collection type
-      def sorted_collection
+      def sorted_collection!
         collection = @collection
         invalid! unless collection.is_a?(Core::SortedMap)
 
@@ -432,7 +432,7 @@ module XitDB
       #
       # @return [Core::ArrayList, Core::LinkedArrayList] typed underlying collection
       # @raise [InvalidValueError] if the active layout has the wrong collection type
-      def sequence_collection
+      def sequence_collection!
         collection = @collection
         invalid! unless collection.is_a?(Core::ArrayList) || collection.is_a?(Core::LinkedArrayList)
 
@@ -482,7 +482,7 @@ module XitDB
           @collection = klass.new(@context.cursor(Core::Slot.new))
           @envelope = array([marker, @collection.cursor.slot])
         end
-        cursor.replace(envelope.cursor.slot)
+        cursor.replace(envelope!.cursor.slot)
       end
 
       # Validates the marker and field count, then opens the corresponding child storage.
@@ -491,9 +491,9 @@ module XitDB
       # @raise [InvalidValueError] if the marker, field count, or child layout is inconsistent
       def read_envelope
         @envelope = Core::ArrayList.new(cursor)
-        marker = fetch_slot(envelope, 0)
+        marker = fetch_slot(envelope!, 0)
         invalid! unless marker.tag == :uint && (@kind = MARKERS.key(marker.value))
-        invalid! unless envelope.size == envelope_size
+        invalid! unless envelope!.size == envelope_size
         if sorted?
           read_sorted_envelope
         elsif ordered?
@@ -508,15 +508,15 @@ module XitDB
       # @return [self] this adapter
       def publish
         if sorted?
-          envelope.put(2, @collection.cursor.slot)
+          envelope!.put(2, @collection.cursor.slot)
         elsif ordered?
-          envelope.put(1, Core::Slot.uint(@next_id))
-          envelope.put(2, @lookup.cursor.slot)
-          envelope.put(3, @order.cursor.slot)
+          envelope!.put(1, Core::Slot.uint(@next_id))
+          envelope!.put(2, @lookup.cursor.slot)
+          envelope!.put(3, @order.cursor.slot)
         else
-          envelope.put(1, @collection.cursor.slot)
+          envelope!.put(1, @collection.cursor.slot)
         end
-        cursor.replace(envelope.cursor.slot)
+        cursor.replace(envelope!.cursor.slot)
         self
       end
 
@@ -526,7 +526,7 @@ module XitDB
       # @return [String] canonical binary key bytes
       # @raise [ValueError] if the key is unsupported for this collection
       def key_bytes(selector)
-        sorted? ? OrderedKeys.dump(selector, kind: declared_key_kind) : @profile.key_bytes(selector)
+        sorted? ? OrderedKeys.dump(selector, kind: declared_key_kind!) : @profile.key_bytes(selector)
       rescue ValueError => e
         raise e.class.new(e.message, path: @path + [selector]), cause: e
       end
@@ -571,7 +571,7 @@ module XitDB
         invalid! unless record.size == 3
         id = fetch_slot(record, 2)
         invalid! unless id.tag == :uint && id.value < @next_id
-        validate_record(record, digest, id, expected_bytes)
+        validate_record!(record, digest, id, expected_bytes)
         record
       end
 
@@ -594,7 +594,7 @@ module XitDB
         end
         key = decode_key(original)
         begin
-          invalid! unless OrderedKeys.dump(key, kind: declared_key_kind) == bytes
+          invalid! unless OrderedKeys.dump(key, kind: declared_key_kind!) == bytes
         rescue UnsupportedValueError, UnsupportedEncodingError
           invalid!
         end
@@ -608,7 +608,7 @@ module XitDB
       # @return [void]
       def assign_sorted(selector, stored)
         bytes = key_bytes(selector)
-        previous = sorted_collection.get(bytes)
+        previous = sorted_collection!.get(bytes)
         if previous
           sorted_entry(bytes, previous)
           original = kind == :sorted_set ? previous : fetch_slot(Core::ArrayList.new(@context.cursor(previous)), 0)
@@ -616,7 +616,7 @@ module XitDB
           original = @profile.encode_scalar(selector, core: @context.database.core)
         end
         value = kind == :sorted_set ? original : array([original, stored]).cursor.slot
-        sorted_collection.put(bytes, value: value)
+        sorted_collection!.put(bytes, value: value)
       end
 
       # Updates an ordered entry or allocates its insertion identifier and both index entries.
@@ -658,9 +658,9 @@ module XitDB
         end
 
         (selector...(count - 1)).each do |index|
-          array_collection.put(index, required_slot(array_collection.get(index + 1)))
+          array_collection!.put(index, required_slot!(array_collection!.get(index + 1)))
         end
-        array_collection.truncate(count - 1)
+        array_collection!.truncate(count - 1)
       end
 
       # Reports the required envelope field count for the active logical kind.
@@ -677,7 +677,7 @@ module XitDB
       # @return [void]
       # @raise [InvalidValueError] if the sequence field has the wrong native layout
       def read_sequence_envelope
-        child = fetch_slot(envelope, 1)
+        child = fetch_slot(envelope!, 1)
         expected = kind == :array ? :array_list : :linked_array_list
         invalid! unless child.tag == expected
         klass = kind == :array ? Core::ArrayList : Core::LinkedArrayList
@@ -689,8 +689,8 @@ module XitDB
       # @return [void]
       # @raise [InvalidValueError] if the key-kind identifier or child tag is invalid
       def read_sorted_envelope
-        key = fetch_slot(envelope, 1)
-        child = fetch_slot(envelope, 2)
+        key = fetch_slot(envelope!, 1)
+        child = fetch_slot(envelope!, 2)
         invalid! unless key.tag == :uint && (@key_kind = KEY_KINDS.key(key.value)) && child.tag == :sorted_map
         @collection = Core::SortedMap.new(@context.cursor(child))
       end
@@ -700,9 +700,9 @@ module XitDB
       # @return [void]
       # @raise [InvalidValueError] if tags, counts, or the next insertion identifier disagree
       def read_ordered_envelope
-        id = fetch_slot(envelope, 1)
-        lookup = fetch_slot(envelope, 2)
-        order = fetch_slot(envelope, 3)
+        id = fetch_slot(envelope!, 1)
+        lookup = fetch_slot(envelope!, 2)
+        order = fetch_slot(envelope!, 3)
         invalid! unless id.tag == :uint && lookup.tag == :counted_hash_map && order.tag == :sorted_map
         @next_id = id.value
         @lookup = Core::HashMap.new(@context.cursor(lookup), counted: true)
@@ -733,7 +733,7 @@ module XitDB
       # @param expected_bytes [String, nil] requested canonical identity, when supplied
       # @return [void]
       # @raise [InvalidValueError] if key bytes, hashes, order references, or set values disagree
-      def validate_record(record, digest, id, expected_bytes)
+      def validate_record!(record, digest, id, expected_bytes)
         bytes = raw_bytes(@lookup.key(digest))
         invalid! unless @profile.hasher.digest(bytes) == digest && (!expected_bytes || bytes == expected_bytes)
         begin

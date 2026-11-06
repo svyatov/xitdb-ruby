@@ -32,7 +32,7 @@ module XitDB
         raise ArgumentError, "digest block is required" unless digest
 
         @id = id.b.freeze
-        @size = Format.integer(size, 1..65_535)
+        @size = Format.integer!(size, 1..65_535)
         @digest = digest
         freeze
       end

@@ -83,7 +83,7 @@ module XitDB
     # Retrieve the active writer after checking context lifetime and permissions.
     # @return [Core::Transaction]
     # @raise [ReadOnlyError] if no writable transaction exists
-    def writable_transaction
+    def writable_transaction!
       check!
       raise ReadOnlyError, "view is read-only" if @readonly
 
@@ -215,7 +215,7 @@ module XitDB
     # @raise [ConcurrentModificationError] if the change overlaps an active stream
     def mutate(path, targets: nil, positions: nil)
       writable!
-      transaction = writable_transaction
+      transaction = writable_transaction!
       transaction.with_logical_mutation do
         check_stream_mutation!(path, targets: targets, positions: positions)
         checkpoint = transaction.checkpoint
@@ -378,7 +378,7 @@ module XitDB
         raise TypeError, "copy parent must be a collection" unless adapter
         raise TypeError, "cannot assign a collection to a set member" if set_kinds.include?(adapter.kind)
 
-        selector = copy_array_position(selector, adapter.size) if array_kinds.include?(adapter.kind)
+        selector = copy_array_position!(selector, adapter.size) if array_kinds.include?(adapter.kind)
         adapter.lookup(selector)
         location << case selector
                     when Time then selector.dup.freeze
@@ -392,7 +392,7 @@ module XitDB
 
     # Normalize a copy position and validate native array growth bounds.
     # @return [Integer]
-    def copy_array_position(selector, size)
+    def copy_array_position!(selector, size)
       selector = Integer.try_convert(selector) || raise(TypeError, "array position must be an Integer")
       long_max = (1 << (([0].pack("l!").bytesize * 8) - 1)) - 1
       raise RangeError, "array position is too large" unless ((-long_max - 1)..long_max).cover?(selector)

@@ -26,7 +26,7 @@ module XitDB
         # @type ivar @by_id: Hash[String, Codec]
         @by_id = {}
         @codecs.each do |codec|
-          validate_registration(codec)
+          validate_registration!(codec)
           @by_type[codec.type] = codec
           @by_id[codec.id] = codec
         end
@@ -42,7 +42,7 @@ module XitDB
       # @param codec [Codec] frozen registration to validate
       # @return [void]
       # @raise [CodecConfigurationError] if the codec is invalid, duplicated, or overrides a reserved type
-      def validate_registration(codec)
+      def validate_registration!(codec)
         unless Object.instance_method(:instance_of?).bind_call(codec, Codec) &&
                Object.instance_method(:frozen?).bind_call(codec)
           raise CodecConfigurationError, "registrations must be immutable Codec values"

@@ -62,7 +62,7 @@ class PortableProfileTest < Minitest::Test
 
   # Checks that nil occupies a slot and unsupported scalars raise.
   def test_nil_occupies_a_slot_and_unsupported_scalars_raise
-    assert encode(nil).full
+    assert_predicate encode(nil), :full?
     assert_nil profile.decode_scalar(encode(nil), core: @core)
     [true, false, :name, Object.new, {}, []].each do |value|
       assert_raises(XitDB::UnsupportedValueError) { encode(value) }

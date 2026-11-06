@@ -176,13 +176,13 @@ module XitDB
         slot = empty ? Core::Slot.new : (array.get(-1) || raise(CorruptionError, "missing history root"))
         context = Context.new(database: self, root: slot, bound: history_cursor.bound,
                               transaction: history_cursor.transaction)
-        validate_root(slot, context) unless empty
+        validate_root!(slot, context) unless empty
         root = context.view(slot, path: [], kind: :map)
         yield root
         if context.changed?
           array.append(context.root)
         else
-          context.writable_transaction.cancel_publication
+          context.writable_transaction!.cancel_publication
         end
       end
       snapshot_from_cursor(committed)
@@ -362,7 +362,7 @@ module XitDB
         raise ProfileMismatchError, "history entry must contain a root map" if slot.empty?
 
         context = Context.new(database: self, root: slot, bound: cursor.bound)
-        validate_root(slot, context)
+        validate_root!(slot, context)
         revision ||= revision_for(cursor, index)
         Snapshot.new(context: context, revision: revision)
       end
@@ -417,7 +417,7 @@ module XitDB
           source = snapshot_from_history(captured, index).context
           destination = Context.new(database: target, root: Core::Slot.new,
                                     bound: cursor.bound, transaction: cursor.transaction)
-          transaction = destination.writable_transaction
+          transaction = destination.writable_transaction!
           transaction.with_logical_mutation do
             output.append(Conversion.new(source, destination, transform: transform).copy(source.root))
             transaction.freeze
@@ -430,7 +430,7 @@ module XitDB
     # @param slot [Core::Slot]
     # @param context [Context]
     # @return [void]
-    def validate_root(slot, context)
+    def validate_root!(slot, context)
       adapter = profile.container(slot, context: context, path: []) unless slot.empty?
       return if adapter && %i[map sorted_map].include?(adapter.kind)
 

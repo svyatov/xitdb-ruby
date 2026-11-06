@@ -42,8 +42,8 @@ class MemoryStressTest < Minitest::Test
           BoundedWorkload.bound_reads(target)
           digest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 
-          assert_nil BoundedWorkload.check_stream(target, 3, digest, converted: true)
-          assert_raises(RuntimeError) { BoundedWorkload.check_stream(target, 4, "invalid", converted: true) }
+          assert_nil BoundedWorkload.check_stream!(target, 3, digest, converted: true)
+          assert_raises(RuntimeError) { BoundedWorkload.check_stream!(target, 4, "invalid", converted: true) }
         ensure
           target&.close
           source.close

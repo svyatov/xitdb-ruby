@@ -76,7 +76,7 @@ module XitDB
       # @return [Cursor]
       def cursor(slot:)
         check_active!
-        validate_slot(slot)
+        validate_slot!(slot)
         cursor = Cursor.new(database: @database, slot: slot, bound: length, transaction: self)
         @cursors[cursor] = true
         cursor
@@ -99,7 +99,7 @@ module XitDB
       # @api private
       def check_replacement!(cursor, value)
         check_cursor!(cursor)
-        validate_slot(value)
+        validate_slot!(value)
       end
 
       # Returns the storage length visible to this transaction.
@@ -228,7 +228,7 @@ module XitDB
       private
 
       # Rejects values that are not slots with a recognized tag.
-      def validate_slot(slot)
+      def validate_slot!(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown slot tag" unless Slot::TAGS.include?(slot.tag)
       end

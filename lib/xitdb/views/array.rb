@@ -27,7 +27,7 @@ module XitDB
       # @param count [Integer, MissingArgument]
       # @return [Object, Slice, nil]
       def read_index(index, count)
-        return read_slice(integer_argument(index), integer_argument(count)) unless count.equal?(UNSET)
+        return read_slice(integer_argument!(index), integer_argument!(count)) unless count.equal?(UNSET)
         return read_range(index) if index.is_a?(Range)
 
         index = normalize_index(index)
@@ -42,8 +42,8 @@ module XitDB
       # @param index [Range]
       # @return [Slice, nil]
       def read_range(index)
-        start = index.begin.nil? ? 0 : integer_argument(index.begin)
-        finish = index.end.nil? ? size : integer_argument(index.end)
+        start = index.begin.nil? ? 0 : integer_argument!(index.begin)
+        finish = index.end.nil? ? size : integer_argument!(index.end)
         start += size if start.negative?
         return nil if start.negative? || start > size
 
@@ -85,7 +85,7 @@ module XitDB
           check!
           return self[0] if count.equal?(UNSET)
 
-          requested = nonnegative_count(count)
+          requested = nonnegative_count!(count)
           each.take(requested)
         end
       end
@@ -97,7 +97,7 @@ module XitDB
         context.read do
           return self[-1] if count.equal?(UNSET)
 
-          requested = [nonnegative_count(count), size].min
+          requested = [nonnegative_count!(count), size].min
           ((size - requested)...size).map { |index| self[index] }
         end
       end
@@ -114,7 +114,7 @@ module XitDB
         index = normalize_index(index)
         raise IndexError, "array index outside list" if index.negative?
 
-        validate_growth(index + 1)
+        validate_growth!(index + 1)
 
         previous_size = size
         edit(positions: [previous_size, index].min..index) do |collection|
@@ -153,14 +153,14 @@ module XitDB
       def insert(index, *values)
         check!
         context.writable!
-        index = integer_argument(index)
+        index = integer_argument!(index)
         return self if values.empty?
 
         previous_size = size
         index += previous_size + 1 if index.negative?
         raise IndexError, "array index outside list" if index.negative?
 
-        validate_growth([previous_size, index].max + values.size)
+        validate_growth!([previous_size, index].max + values.size)
         edit(positions: [previous_size, index].min..) do |collection|
           encoded = values.each_with_index.map do |value, offset|
             context.profile.encode(value, context: context, path: path + [index + offset])
@@ -203,7 +203,7 @@ module XitDB
         context.writable!
         return delete_at(-1) if count.equal?(UNSET)
 
-        count = [nonnegative_count(count), size].min
+        count = [nonnegative_count!(count), size].min
         return [] if count.zero?
 
         previous_size = size
@@ -241,7 +241,7 @@ module XitDB
           inputs.each do |input|
             next if input.empty?
 
-            validate_growth(collection.size + input.size)
+            validate_growth!(collection.size + input.size)
             added = true
             collection.concat(input)
           end
@@ -268,7 +268,7 @@ module XitDB
       # Reject a size that cannot fit the supported native array index range.
       # @param count [Integer]
       # @return [void]
-      def validate_growth(count)
+      def validate_growth!(count)
         raise IndexError, "array size too big" if count > LONG_MAX / 0.size
       end
 
@@ -276,15 +276,15 @@ module XitDB
       # @param index [Object]
       # @return [Integer]
       def normalize_index(index)
-        index = integer_argument(index)
+        index = integer_argument!(index)
         index.negative? ? index + size : index
       end
 
       # Convert a requested length and reject negative counts.
       # @param count [Object]
       # @return [Integer]
-      def nonnegative_count(count)
-        count = integer_argument(count)
+      def nonnegative_count!(count)
+        count = integer_argument!(count)
         raise ArgumentError, "negative array size" if count.negative?
 
         count

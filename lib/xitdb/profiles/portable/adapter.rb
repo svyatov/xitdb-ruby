@@ -72,7 +72,7 @@ module XitDB
         def lookup(selector)
           collection = @collection
           if collection.is_a?(Core::ArrayList) || collection.is_a?(Core::LinkedArrayList)
-            collection.get(index_selector(selector))
+            collection.get(index_selector!(selector))
           elsif collection.is_a?(Core::SortedMap)
             collection.get(key_bytes(selector))
           else
@@ -91,20 +91,24 @@ module XitDB
           case kind
           when :array, :linked_array
             if selector == size
-              sequence_collection.append(stored)
+              sequence_collection!.append(stored)
             else
-              sequence_collection.put(index_selector(selector),
-                                      stored)
+              sequence_collection!.put(index_selector!(selector),
+                                       stored)
             end
           when :sorted_map
-            sorted_collection.put(key_bytes(selector), value: stored)
+            sorted_collection!.put(key_bytes(selector), value: stored)
           when :sorted_set
-            sorted_collection.add(key_bytes(selector))
+            sorted_collection!.add(key_bytes(selector))
           when :map, :set
             bytes = key_bytes(selector)
             digest = @profile.hasher.digest(bytes)
             key = @context.database.core.bytes(bytes)
-            kind == :map ? hash_collection.put(digest, key: key, value: stored) : hash_collection.add(digest, key: key)
+            if kind == :map
+              hash_collection!.put(digest, key: key, value: stored)
+            else
+              hash_collection!.add(digest, key: key)
+            end
           end
           self
         end
@@ -123,12 +127,12 @@ module XitDB
             raise IndexError, "array index outside list" unless index.is_a?(Integer) && index >= 0 && index < count
 
             (index...(count - 1)).each do |position|
-              array_collection.put(position, required_slot(array_collection.get(position + 1)))
+              array_collection!.put(position, required_slot!(array_collection!.get(position + 1)))
             end
-            array_collection.truncate(count - 1)
-          when :linked_array then linked_collection.delete_at(index_selector(selector))
-          when :map, :set then hash_collection.remove(@profile.hasher.digest(key_bytes(selector)))
-          else sorted_collection.remove(key_bytes(selector))
+            array_collection!.truncate(count - 1)
+          when :linked_array then linked_collection!.delete_at(index_selector!(selector))
+          when :map, :set then hash_collection!.remove(@profile.hasher.digest(key_bytes(selector)))
+          else sorted_collection!.remove(key_bytes(selector))
           end
         end
 
@@ -145,11 +149,11 @@ module XitDB
             Core::BTree.new(cursor).insert(index, stored)
           else
             count = size
-            array_collection.append(stored)
+            array_collection!.append(stored)
             (count - 1).downto(index) do |position|
-              array_collection.put(position + 1, required_slot(array_collection.get(position)))
+              array_collection!.put(position + 1, required_slot!(array_collection!.get(position)))
             end
-            array_collection.put(index, stored)
+            array_collection!.put(index, stored)
           end
           self
         end
@@ -160,9 +164,9 @@ module XitDB
         # @return [self] this adapter
         def truncate(count)
           if kind == :linked_array
-            cursor.replace(linked_collection.slice(0, count).cursor.slot)
+            cursor.replace(linked_collection!.slice(0, count).cursor.slot)
           else
-            array_collection.truncate(count)
+            array_collection!.truncate(count)
           end
           self
         end
@@ -173,10 +177,10 @@ module XitDB
         # @param count [Integer] element count validated by the caller
         # @return [Core::Slot] descriptor of the new sequence
         def slice(start, count)
-          return linked_collection.slice(start, count).cursor.slot if kind == :linked_array
+          return linked_collection!.slice(start, count).cursor.slot if kind == :linked_array
 
           output = @profile.empty_container(:array_list, context: @context, path: @path)
-          count.times { |index| output.assign(index, required_slot(lookup(start + index))) }
+          count.times { |index| output.assign(index, required_slot!(lookup(start + index))) }
           output.slot
         end
 
@@ -187,7 +191,7 @@ module XitDB
         # @return [self] this adapter
         def concat(other)
           if kind == :linked_array && other.kind == :linked_array
-            cursor.replace(linked_collection.concat(Core::LinkedArrayList.new(other.cursor)).cursor.slot)
+            cursor.replace(linked_collection!.concat(Core::LinkedArrayList.new(other.cursor)).cursor.slot)
           else
             other.each_entry { |_index, stored| assign(size, stored) }
           end
@@ -199,7 +203,7 @@ module XitDB
         # @param key [Object] key in the sorted collection's accepted key type
         # @return [Integer] zero-based position, including the insertion position for an absent key
         def rank(key)
-          sorted_collection.rank(@profile.key_bytes(key))
+          sorted_collection!.rank(@profile.key_bytes(key))
         end
 
         # Visits sorted entries starting at the first key greater than or equal to the requested key.
@@ -213,7 +217,7 @@ module XitDB
         def each_from(key)
           return enum_for(:each_from, key) unless block_given?
 
-          sorted_collection.each_from(@profile.key_bytes(key)) { |bytes, stored| yield decode_key(bytes), stored }
+          sorted_collection!.each_from(@profile.key_bytes(key)) { |bytes, stored| yield decode_key(bytes), stored }
           self
         end
 
@@ -234,11 +238,11 @@ module XitDB
 
           case kind
           when :array
-            (index...size).each { |position| yield position, required_slot(lookup(position)) }
+            (index...size).each { |position| yield position, required_slot!(lookup(position)) }
           when :linked_array
-            linked_collection.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
+            linked_collection!.each_from_index(index).with_index(index) { |stored, position| yield position, stored }
           else
-            sorted_collection.each_from_index(index) { |bytes, stored| yield decode_key(bytes), stored }
+            sorted_collection!.each_from_index(index) { |bytes, stored| yield decode_key(bytes), stored }
           end
           self
         end
@@ -255,11 +259,11 @@ module XitDB
 
           case kind
           when :array, :linked_array
-            sequence_collection.each.with_index { |stored, index| yield index, stored }
+            sequence_collection!.each.with_index { |stored, index| yield index, stored }
           when :sorted_map, :sorted_set
-            sorted_collection.each { |bytes, stored| yield decode_key(bytes), stored }
+            sorted_collection!.each { |bytes, stored| yield decode_key(bytes), stored }
           else
-            hash_collection.each_entry do |_digest, key, stored|
+            hash_collection!.each_entry do |_digest, key, stored|
               value = @profile.decode_scalar(key, core: @context.database.core, bound: @context.read_bound)
               raise CorruptionError, "portable map key is not an untagged string" unless value.is_a?(String)
 
@@ -276,7 +280,7 @@ module XitDB
         # @param selector [Object] candidate sequence position
         # @return [Integer] supplied index
         # @raise [TypeError] if the selector is not an Integer
-        def index_selector(selector)
+        def index_selector!(selector)
           raise TypeError, "index must be an Integer" unless selector.is_a?(Integer)
 
           selector
@@ -287,7 +291,7 @@ module XitDB
         # @param slot [Core::Slot, nil] result of an internal child lookup
         # @return [Core::Slot] present child
         # @raise [CorruptionError] if the promised child is absent
-        def required_slot(slot)
+        def required_slot!(slot)
           raise CorruptionError, "missing collection slot" unless slot
 
           slot
@@ -297,7 +301,7 @@ module XitDB
         #
         # @return [Core::ArrayList] typed underlying collection
         # @raise [CorruptionError] if the active layout has the wrong collection type
-        def array_collection
+        def array_collection!
           collection = @collection
           raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::ArrayList)
 
@@ -308,7 +312,7 @@ module XitDB
         #
         # @return [Core::LinkedArrayList] typed underlying collection
         # @raise [CorruptionError] if the active layout has the wrong collection type
-        def linked_collection
+        def linked_collection!
           collection = @collection
           raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::LinkedArrayList)
 
@@ -319,7 +323,7 @@ module XitDB
         #
         # @return [Core::SortedMap] typed underlying collection
         # @raise [CorruptionError] if the active layout has the wrong collection type
-        def sorted_collection
+        def sorted_collection!
           collection = @collection
           raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::SortedMap)
 
@@ -330,7 +334,7 @@ module XitDB
         #
         # @return [Core::HashMap] native hash map or set
         # @raise [CorruptionError] if the active layout is not a hash collection
-        def hash_collection
+        def hash_collection!
           collection = @collection
           raise CorruptionError, "unexpected collection layout" unless collection.is_a?(Core::HashMap)
 
@@ -341,7 +345,7 @@ module XitDB
         #
         # @return [Core::ArrayList, Core::LinkedArrayList] typed underlying collection
         # @raise [CorruptionError] if the active layout has the wrong collection type
-        def sequence_collection
+        def sequence_collection!
           collection = @collection
           unless collection.is_a?(Core::ArrayList) || collection.is_a?(Core::LinkedArrayList)
             raise CorruptionError, "unexpected sequence layout"
