@@ -37,11 +37,12 @@ module XitDB
       # @param kind [Symbol, nil] explicit logical kind for a new collection
       # @param key_kind [Symbol, nil] :string, :integer, :float, or :time for typed sorted collections
       # @raise [InvalidValueError] if the stored envelope is inconsistent
-      def initialize(profile, cursor, context:, path:, kind: nil, key_kind: nil)
+      def initialize(profile, cursor, context:, path:, kind: nil, key_kind: nil, defer: false)
         @profile = profile
         @cursor = cursor
         @context = context
         @path = path
+        @deferred = defer
         if kind
           @kind = kind
           @key_kind = key_kind
@@ -57,6 +58,10 @@ module XitDB
       #
       # @return [Core::Slot] current stored collection root
       def slot
+        if @deferred
+          publish
+          @deferred = false
+        end
         cursor.slot
       end
 
@@ -116,7 +121,7 @@ module XitDB
           sequence_collection!.put(index_selector!(selector),
                                    stored)
         end
-        publish
+        @deferred ? self : publish
       end
 
       # Removes a key, set member, or sequence element.
@@ -458,9 +463,7 @@ module XitDB
       # @param fields [Array<Core::Slot>] already encoded fields
       # @return [Core::ArrayList] new native array containing the fields
       def array(fields)
-        output = Core::ArrayList.new(@context.cursor(Core::Slot.new))
-        fields.each { |field| output.append(field) }
-        output
+        Core::ArrayList.new(@context.cursor(Core::Slot.new), fields: fields)
       end
 
       # Builds empty storage and its envelope, then replaces the root cursor.
@@ -507,15 +510,15 @@ module XitDB
       #
       # @return [self] this adapter
       def publish
-        if sorted?
-          envelope!.put(2, @collection.cursor.slot)
-        elsif ordered?
-          envelope!.put(1, Core::Slot.uint(@next_id))
-          envelope!.put(2, @lookup.cursor.slot)
-          envelope!.put(3, @order.cursor.slot)
-        else
-          envelope!.put(1, @collection.cursor.slot)
-        end
+        marker = Core::Slot.uint(MARKERS.fetch(kind))
+        fields = if sorted?
+                   [marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), @collection.cursor.slot]
+                 elsif ordered?
+                   [marker, Core::Slot.uint(@next_id), @lookup.cursor.slot, @order.cursor.slot]
+                 else
+                   [marker, @collection.cursor.slot]
+                 end
+        @envelope = array(fields)
         cursor.replace(envelope!.cursor.slot)
         self
       end

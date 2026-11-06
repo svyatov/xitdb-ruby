@@ -100,7 +100,7 @@ module XitDB
       def empty_container(kind, context:, path:)
         kind, key_kind = kind if kind.is_a?(::Array)
         XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path,
-                                                                          kind: kind, key_kind: key_kind)
+                                                                          kind: kind, key_kind: key_kind, defer: true)
       end
 
       # Retains the declared key kind when converting a typed sorted collection.

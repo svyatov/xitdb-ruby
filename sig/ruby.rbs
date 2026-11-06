@@ -260,8 +260,9 @@ module XitDB
       @lookup: Core::HashMap
       @order: Core::SortedMap
       @next_id: Integer
+      @deferred: bool
       @collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList
-      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, ?kind: Symbol?, ?key_kind: Symbol?) -> void
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, ?kind: Symbol?, ?key_kind: Symbol?, ?defer: bool) -> void
       attr_reader kind: XitDB::kind
       attr_reader cursor: Core::Cursor
       def slot: () -> Core::Slot
