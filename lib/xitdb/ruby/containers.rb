@@ -100,7 +100,7 @@ module XitDB
         bytes = key_bytes(selector)
         return nil unless @envelope
 
-        record_for(@profile.hasher.digest(bytes), expected_bytes: bytes)&.get(1)
+        record_for(@profile.hasher.digest(bytes), expected_bytes: bytes)&.[](1)
       end
 
       # Stores an encoded child at a key or sequence position.
@@ -386,7 +386,7 @@ module XitDB
       # @return [Core::Slot] required field
       # @raise [InvalidValueError] if the field is absent
       def fetch_slot(collection, index)
-        required_slot!(collection.get(index))
+        required_slot!(collection.is_a?(::Array) ? collection[index] : collection.get(index))
       end
 
       # Requires the marked envelope before reading or publishing its fields.
@@ -494,15 +494,18 @@ module XitDB
       # @raise [InvalidValueError] if the marker, field count, or child layout is inconsistent
       def read_envelope
         @envelope = Core::ArrayList.new(cursor)
-        marker = fetch_slot(envelope!, 0)
+        invalid! unless (2..4).cover?(envelope!.size)
+
+        fields = envelope!.to_a
+        marker = fetch_slot(fields, 0)
         invalid! unless marker.tag == :uint && (@kind = MARKERS.key(marker.value))
-        invalid! unless envelope!.size == envelope_size
+        invalid! unless fields.size == envelope_size
         if sorted?
-          read_sorted_envelope
+          read_sorted_envelope(fields)
         elsif ordered?
-          read_ordered_envelope
+          read_ordered_envelope(fields)
         else
-          read_sequence_envelope
+          read_sequence_envelope(fields)
         end
       end
 
@@ -565,16 +568,18 @@ module XitDB
       # @param expected_bytes [String, nil] requested key identity, when lookup supplied one
       # @return [Core::ArrayList, nil] validated three-field record, or nil when absent
       # @raise [InvalidValueError] if the record or either index is inconsistent
-      def record_for(digest, expected_bytes: nil)
+      def record_for(digest, expected_bytes: nil, order_id: nil)
         stored = @lookup.get(digest)
         return nil unless stored
 
         invalid! unless stored.tag == :array_list
-        record = Core::ArrayList.new(@context.cursor(stored))
-        invalid! unless record.size == 3
+        collection = Core::ArrayList.new(@context.cursor(stored))
+        invalid! unless collection.size == 3
+
+        record = collection.to_a
         id = fetch_slot(record, 2)
         invalid! unless id.tag == :uint && id.value < @next_id
-        validate_record!(record, digest, id, expected_bytes)
+        validate_record!(record, digest, id, expected_bytes, order_id)
         record
       end
 
@@ -679,8 +684,8 @@ module XitDB
       #
       # @return [void]
       # @raise [InvalidValueError] if the sequence field has the wrong native layout
-      def read_sequence_envelope
-        child = fetch_slot(envelope!, 1)
+      def read_sequence_envelope(fields)
+        child = fetch_slot(fields, 1)
         expected = kind == :array ? :array_list : :linked_array_list
         invalid! unless child.tag == expected
         klass = kind == :array ? Core::ArrayList : Core::LinkedArrayList
@@ -691,9 +696,9 @@ module XitDB
       #
       # @return [void]
       # @raise [InvalidValueError] if the key-kind identifier or child tag is invalid
-      def read_sorted_envelope
-        key = fetch_slot(envelope!, 1)
-        child = fetch_slot(envelope!, 2)
+      def read_sorted_envelope(fields)
+        key = fetch_slot(fields, 1)
+        child = fetch_slot(fields, 2)
         invalid! unless key.tag == :uint && (@key_kind = KEY_KINDS.key(key.value)) && child.tag == :sorted_map
         @collection = Core::SortedMap.new(@context.cursor(child))
       end
@@ -702,10 +707,10 @@ module XitDB
       #
       # @return [void]
       # @raise [InvalidValueError] if tags, counts, or the next insertion identifier disagree
-      def read_ordered_envelope
-        id = fetch_slot(envelope!, 1)
-        lookup = fetch_slot(envelope!, 2)
-        order = fetch_slot(envelope!, 3)
+      def read_ordered_envelope(fields)
+        id = fetch_slot(fields, 1)
+        lookup = fetch_slot(fields, 2)
+        order = fetch_slot(fields, 3)
         invalid! unless id.tag == :uint && lookup.tag == :counted_hash_map && order.tag == :sorted_map
         @next_id = id.value
         @lookup = Core::HashMap.new(@context.cursor(lookup), counted: true)
@@ -723,8 +728,8 @@ module XitDB
         invalid! unless id_bytes.bytesize == 8
         digest = raw_bytes(hash_slot)
         invalid! unless digest.bytesize == 32
-        record = record_for(digest)
-        invalid! unless record && fetch_slot(record, 2).value == id_bytes.unpack1("Q>")
+        record = record_for(digest, order_id: Core::Format.unsigned(id_bytes))
+        invalid! unless record
         [decode_key(fetch_slot(record, 0)), fetch_slot(record, 1)]
       end
 
@@ -736,7 +741,7 @@ module XitDB
       # @param expected_bytes [String, nil] requested canonical identity, when supplied
       # @return [void]
       # @raise [InvalidValueError] if key bytes, hashes, order references, or set values disagree
-      def validate_record!(record, digest, id, expected_bytes)
+      def validate_record!(record, digest, id, expected_bytes, order_id)
         bytes = raw_bytes(@lookup.key(digest))
         invalid! unless @profile.hasher.digest(bytes) == digest && (!expected_bytes || bytes == expected_bytes)
         begin
@@ -744,8 +749,17 @@ module XitDB
         rescue UnsupportedValueError
           invalid!
         end
-        invalid! unless raw_bytes(@order.get([id.value].pack("Q>"))) == digest
+        validate_order_reference!(digest, id.value, order_id)
         invalid! if kind == :set && fetch_slot(record, 1) != Core::Slot.null
+      end
+
+      # Reuses the order entry already read during enumeration, or checks it by lookup.
+      def validate_order_reference!(digest, id, order_id)
+        if order_id
+          invalid! unless id == order_id
+        else
+          invalid! unless raw_bytes(@order.get([id].pack("Q>"))) == digest
+        end
       end
 
       # Reports an invalid Ruby collection envelope or inconsistent index record.

@@ -292,7 +292,7 @@ module XitDB
       def index_selector!: (XitDB::selector) -> Integer
       def each_normalized_index: (Integer) { (XitDB::selector, Core::Slot) -> void } -> self
       def required_slot!: (Core::Slot?) -> Core::Slot
-      def fetch_slot: (Core::ArrayList, Integer) -> Core::Slot
+      def fetch_slot: (Core::ArrayList | Array[Core::Slot], Integer) -> Core::Slot
       def envelope!: () -> Core::ArrayList
       def declared_key_kind!: () -> Symbol
       def array_collection!: () -> Core::ArrayList
@@ -307,18 +307,19 @@ module XitDB
       def key_bytes: (XitDB::selector) -> String
       def raw_bytes: (Core::Slot?) -> String
       def decode_key: (Core::Slot) -> XitDB::selector
-      def record_for: (String, ?expected_bytes: String?) -> Core::ArrayList?
+      def record_for: (String, ?expected_bytes: String?, ?order_id: Integer?) -> Array[Core::Slot]?
       def sorted_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
       def invalid!: () -> bot
       def assign_sorted: (XitDB::selector, Core::Slot) -> void
       def assign_ordered: (XitDB::selector, Core::Slot) -> void
       def delete_array: (XitDB::selector) -> void
-      def read_sorted_envelope: () -> void
-      def read_ordered_envelope: () -> void
-      def read_sequence_envelope: () -> void
+      def read_sorted_envelope: (Array[Core::Slot]) -> void
+      def read_ordered_envelope: (Array[Core::Slot]) -> void
+      def read_sequence_envelope: (Array[Core::Slot]) -> void
       def envelope_size: () -> Integer
       def ordered_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
-      def validate_record!: (Core::ArrayList, String, Core::Slot, String?) -> void
+      def validate_record!: (Array[Core::Slot], String, Core::Slot, String?, Integer?) -> void
+      def validate_order_reference!: (String, Integer, Integer?) -> void
     end
   end
 end
