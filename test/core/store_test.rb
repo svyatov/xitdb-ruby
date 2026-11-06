@@ -5,6 +5,7 @@
 require "test_helper"
 require "tmpdir"
 require "timeout"
+require "objspace"
 
 # Covers file and memory storage, buffered writes, writer locks, and failure recovery.
 # @api private
@@ -128,6 +129,30 @@ class StoreTest < Minitest::Test
     initial.clear
 
     assert_equal "abc", store.read_at(0, 3)
+  end
+
+  # Checks that small tail reads cannot retain a complete backing string after each write.
+  def test_small_tail_reads_do_not_retain_store_sized_strings
+    store = XitDB::Core::MemoryStore.new("x".b * 65_536)
+    @stores << store
+    store.write_at(0, "y")
+    GC.start
+    disabled = GC.disable
+    begin
+      before = ObjectSpace.memsize_of_all(String)
+      reads = Array.new(10) do |index|
+        result = store.read_at(store.length - 144, 144)
+        store.write_at(store.length - 1, index.to_s)
+        result
+      end
+      allocated = ObjectSpace.memsize_of_all(String) - before
+    ensure
+      GC.enable unless disabled
+    end
+
+    assert_equal "x" * 144, reads.first
+    assert_equal "8", reads.last[-1]
+    assert_operator allocated, :<, 16_384
   end
 
   # Catches stale buffered overwrites and reads that omit either disk segment.

@@ -42,7 +42,8 @@ module XitDB
 
       # Reads a validated range from the binary string.
       def read_bytes(offset, length)
-        Format.slice(@bytes, offset, length)
+        # A shared tail slice would make the next write copy the complete store.
+        "".b.bytesplice(0, 0, @bytes, offset, length)
       end
 
       # Replaces a range, filling any gap before it with zero bytes.
