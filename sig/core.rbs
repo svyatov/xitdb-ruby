@@ -397,7 +397,8 @@ module XitDB
       BLOCK_SIZE: Integer
       EMPTY_BLOCK: String
       attr_reader cursor: Cursor
-      def initialize: (Cursor) -> void
+      def initialize: (Cursor, ?fields: Array[Slot]) -> void
+      def validate_initial_fields!: (Array[Slot]) -> void
       def size: () -> Integer
       def get: (Integer) -> Slot?
       def cursor_at: (Integer, ?create: bool) -> Cursor?

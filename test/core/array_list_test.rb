@@ -12,6 +12,33 @@ require_relative "../support/fault_store"
 class ArrayListTest < Minitest::Test
   Core = XitDB::Core
 
+  def test_initial_fields_preserve_slots_and_copy_on_write
+    Core::Database.memory do |core|
+      fields = [Core::Slot.null, Core::Slot.int(-1), Core::Slot.float(-0.0)]
+      core.transaction { |root| Core::ArrayList.new(root, fields: fields) }
+      original = Core::ArrayList.new(core.root_cursor)
+
+      assert_equal fields, original.to_a
+      core.transaction { |root| Core::ArrayList.new(root).append(Core::Slot.uint(4)) }
+
+      assert_equal fields, original.to_a
+      assert_equal fields + [Core::Slot.uint(4)], Core::ArrayList.new(core.root_cursor).to_a
+    end
+  end
+
+  def test_invalid_initial_fields_leave_storage_unchanged
+    Core::Database.memory do |core|
+      core.transaction do |root|
+        length = root.transaction.length
+        assert_raises(ArgumentError) { Core::ArrayList.new(root, fields: Array.new(17, Core::Slot.null)) }
+        assert_raises(XitDB::InvalidValueError) { Core::ArrayList.new(root, fields: [Core::Slot.new(tag: :index)]) }
+        assert_equal length, root.transaction.length
+        assert_empty root.slot
+      end
+      assert_raises(ArgumentError) { Core::ArrayList.new(core.root_cursor, fields: [Core::Slot.null]) }
+    end
+  end
+
   # Checks that constructing a writable empty array persists its type.
   def test_constructing_a_writable_empty_array_persists_its_type
     Dir.mktmpdir do |dir|
