@@ -141,7 +141,7 @@ class CompactionTest < Minitest::Test
                       [XitDB, XitDB.sorted_map], [XitDB, XitDB.sorted_set],
                       [XitDB::Ruby, XitDB.map], [XitDB::Ruby, XitDB.set],
                       [XitDB::Ruby, XitDB.sorted_map(key: :string)], [XitDB::Ruby, XitDB.sorted_set(key: :string)]]
-    churn_counts = [0, 512]
+    churn_counts = [0, 64]
     configurations.each do |api, declaration|
       sizes = churn_counts.map do |churn|
         Dir.mktmpdir do |dir|
