@@ -307,7 +307,7 @@ module XitDB
       def key_bytes: (XitDB::selector) -> String
       def raw_bytes: (Core::Slot?) -> String
       def decode_key: (Core::Slot) -> XitDB::selector
-      def record_for: (String, ?expected_bytes: String?, ?order_id: Integer?) -> Array[Core::Slot]?
+      def record_for: (String, ?expected_bytes: String?) -> Array[Core::Slot]?
       def sorted_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
       def invalid!: () -> bot
       def assign_sorted: (XitDB::selector, Core::Slot) -> void
@@ -318,8 +318,7 @@ module XitDB
       def read_sequence_envelope: (Array[Core::Slot]) -> void
       def envelope_size: () -> Integer
       def ordered_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
-      def validate_record!: (Array[Core::Slot], String, Core::Slot, String?, Integer?) -> void
-      def validate_order_reference!: (String, Integer, Integer?) -> void
+      def validate_record!: (Array[Core::Slot], String, Core::Slot, String?) -> void
     end
   end
 end

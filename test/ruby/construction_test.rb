@@ -17,7 +17,7 @@ class RubyConstructionTest < Minitest::Test
       end
 
       assert_equal records, database.snapshot["data"].to_ruby
-      assert_operator reads, :<, 3_000
+      assert_operator reads, :<, 3_500
     end
   end
 

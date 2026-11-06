@@ -309,6 +309,52 @@ class RubyDatabaseTest < Minitest::Test
     end
   end
 
+  # A malformed order leaf must not let two records claim the same insertion identifier.
+  def test_duplicate_insertion_identifiers_are_rejected
+    @db.transaction do |root|
+      root[:map] = { a: 1, b: 2 }
+      context = root.context
+      context.mutate([:map]) do |cursor|
+        transaction = context.writable_transaction!
+        envelope = XitDB::Core::ArrayList.new(cursor)
+        lookup_cursor = context.cursor(envelope.get(2))
+        lookup = XitDB::Core::HashMap.new(lookup_cursor, counted: true)
+        digest = @db.profile.hasher.digest(@db.profile.key_bytes(:b))
+        record_cursor = context.cursor(lookup.get(digest))
+        XitDB::Core::ArrayList.new(record_cursor).put(2, XitDB::Core::Slot.uint(0))
+        lookup.put(digest, key: lookup.key(digest), value: record_cursor.slot)
+        envelope.put(2, lookup_cursor.slot)
+        order = envelope.get(3)
+        _count, pointer = transaction.read_at(order.value, 16).unpack("Q>Q>")
+        leaf = transaction.read_at(pointer, XitDB::Core::BTree::LEAF_SIZE).dup
+        first = XitDB::Core::Slot.parse(leaf.byteslice(2, 9))
+        second = XitDB::Core::Slot.parse(leaf.byteslice(11, 9))
+        duplicate = transaction.append(transaction.read_at(first.value, 9) + transaction.read_at(second.value + 9, 9))
+        leaf[11, 9] = XitDB::Core::Slot.new(tag: :sorted_kv_pair, value: duplicate).to_bytes
+        header = transaction.append([2, transaction.append(leaf)].pack("Q>Q>"))
+        envelope.put(3, XitDB::Core::Slot.new(tag: :sorted_map, value: header))
+      end
+    end
+
+    assert_raises(XitDB::InvalidValueError) { @db.snapshot[:map].to_ruby }
+  end
+
+  # Marker validation precedes inspection of other envelope fields.
+  def test_unknown_marker_is_rejected_before_malformed_child_fields
+    @db.transaction do |root|
+      root[:array] = []
+      root.context.mutate([:array]) do |cursor|
+        transaction = root.context.writable_transaction!
+        start = transaction.length
+        block = (XitDB::Core::Slot.uint(0).to_bytes + XitDB::Core::Slot.new(tag: 127).to_bytes).ljust(144, "\0")
+        transaction.append([2, start + 16].pack("Q>Q>") + block)
+        cursor.replace(XitDB::Core::Slot.new(tag: :array_list, value: start))
+      end
+    end
+
+    assert_raises(XitDB::InvalidValueError) { @db.snapshot[:array].to_ruby }
+  end
+
   # Checks handle configuration is owned and rejected before file creation.
   def test_handle_configuration_is_owned_and_rejected_before_file_creation
     codecs = []

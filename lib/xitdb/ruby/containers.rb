@@ -381,7 +381,7 @@ module XitDB
 
       # Fetches an envelope or record field that must exist.
       #
-      # @param collection [Core::ArrayList] envelope or internal record
+      # @param collection [Core::ArrayList, Array<Core::Slot>] envelope or internal record fields
       # @param index [Integer] nonnegative field position
       # @return [Core::Slot] required field
       # @raise [InvalidValueError] if the field is absent
@@ -494,12 +494,11 @@ module XitDB
       # @raise [InvalidValueError] if the marker, field count, or child layout is inconsistent
       def read_envelope
         @envelope = Core::ArrayList.new(cursor)
-        invalid! unless (2..4).cover?(envelope!.size)
+        marker = fetch_slot(envelope!, 0)
+        invalid! unless marker.tag == :uint && (@kind = MARKERS.key(marker.value))
+        invalid! unless envelope!.size == envelope_size
 
         fields = envelope!.to_a
-        marker = fetch_slot(fields, 0)
-        invalid! unless marker.tag == :uint && (@kind = MARKERS.key(marker.value))
-        invalid! unless fields.size == envelope_size
         if sorted?
           read_sorted_envelope(fields)
         elsif ordered?
@@ -566,9 +565,9 @@ module XitDB
       #
       # @param digest [String] SHA-256 digest of the canonical key bytes
       # @param expected_bytes [String, nil] requested key identity, when lookup supplied one
-      # @return [Core::ArrayList, nil] validated three-field record, or nil when absent
+      # @return [Array<Core::Slot>, nil] validated three-field record fields, or nil when absent
       # @raise [InvalidValueError] if the record or either index is inconsistent
-      def record_for(digest, expected_bytes: nil, order_id: nil)
+      def record_for(digest, expected_bytes: nil)
         stored = @lookup.get(digest)
         return nil unless stored
 
@@ -579,7 +578,7 @@ module XitDB
         record = collection.to_a
         id = fetch_slot(record, 2)
         invalid! unless id.tag == :uint && id.value < @next_id
-        validate_record!(record, digest, id, expected_bytes, order_id)
+        validate_record!(record, digest, id, expected_bytes)
         record
       end
 
@@ -728,8 +727,8 @@ module XitDB
         invalid! unless id_bytes.bytesize == 8
         digest = raw_bytes(hash_slot)
         invalid! unless digest.bytesize == 32
-        record = record_for(digest, order_id: Core::Format.unsigned(id_bytes))
-        invalid! unless record
+        record = record_for(digest)
+        invalid! unless record && fetch_slot(record, 2).value == Core::Format.unsigned(id_bytes)
         [decode_key(fetch_slot(record, 0)), fetch_slot(record, 1)]
       end
 
@@ -741,7 +740,7 @@ module XitDB
       # @param expected_bytes [String, nil] requested canonical identity, when supplied
       # @return [void]
       # @raise [InvalidValueError] if key bytes, hashes, order references, or set values disagree
-      def validate_record!(record, digest, id, expected_bytes, order_id)
+      def validate_record!(record, digest, id, expected_bytes)
         bytes = raw_bytes(@lookup.key(digest))
         invalid! unless @profile.hasher.digest(bytes) == digest && (!expected_bytes || bytes == expected_bytes)
         begin
@@ -749,17 +748,8 @@ module XitDB
         rescue UnsupportedValueError
           invalid!
         end
-        validate_order_reference!(digest, id.value, order_id)
+        invalid! unless raw_bytes(@order.get([id.value].pack("Q>"))) == digest
         invalid! if kind == :set && fetch_slot(record, 1) != Core::Slot.null
-      end
-
-      # Reuses the order entry already read during enumeration, or checks it by lookup.
-      def validate_order_reference!(digest, id, order_id)
-        if order_id
-          invalid! unless id == order_id
-        else
-          invalid! unless raw_bytes(@order.get([id].pack("Q>"))) == digest
-        end
       end
 
       # Reports an invalid Ruby collection envelope or inconsistent index record.
