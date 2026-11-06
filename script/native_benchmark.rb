@@ -14,13 +14,15 @@ module NativeBenchmark
   CLOCK = Process::CLOCK_MONOTONIC
   ROOT = File.expand_path("..", __dir__)
 
-  def self.measure
+  def self.measure(operation)
     GC.start
     allocated = GC.stat(:total_allocated_objects)
     started = Process.clock_gettime(CLOCK)
     result = yield
-    [{ seconds: Process.clock_gettime(CLOCK) - started,
-       allocations: GC.stat(:total_allocated_objects) - allocated }, result]
+    sample = { seconds: Process.clock_gettime(CLOCK) - started,
+               allocations: GC.stat(:total_allocated_objects) - allocated }
+    warn "  #{operation}=#{sample[:seconds].round(6)}s"
+    [sample, result]
   end
 
   def self.fixture(path)
@@ -73,7 +75,9 @@ module NativeBenchmark
 
   def self.worker(input, count, store, layout)
     libroot = ENV.fetch("XITDB_LIBROOT")
-    loading, = measure { require File.join(libroot, layout == "ruby" ? "lib/xitdb/ruby" : "lib/xitdb") }
+    raise "xitdb loaded before timed require" if defined?(XitDB)
+
+    loading, = measure("load") { require File.join(libroot, layout == "ruby" ? "lib/xitdb/ruby" : "lib/xitdb") }
     # The parent owns this file. Marshal retains String encodings across workers.
     # rubocop:disable-next Security/MarshalLoad -- The parent owns this fixture in its private temporary directory.
     records = dataset(Marshal.load(File.binread(input)).fetch(:records), count)
@@ -88,14 +92,14 @@ module NativeBenchmark
       factory = layout == "ruby" ? XitDB::Ruby : XitDB
       database = store == "file" ? factory.open(path) : factory.memory
       operations = result[:operations]
-      operations[:insert], = measure do
+      operations[:insert], = measure("insert") do
         database.transaction { |root| root["data"] = layout == "json" ? JSON.generate(records) : records }
       end
       result[:initial_bytes] = size(database)
       original = database.snapshot
       check!(database, records, layout, snapshot: original)
-      operations[:read], = measure { check!(database, records, layout) }
-      operations[:indexed], = measure do
+      operations[:read], = measure("read") { check!(database, records, layout) }
+      operations[:indexed], = measure("indexed") do
         data = database.snapshot["data"]
         data = JSON.parse(data) if layout == "json"
         [0, records.size / 2, records.size - 1].each do |index|
@@ -106,18 +110,18 @@ module NativeBenchmark
       end
       if store == "file"
         database.close
-        operations[:reopen], database = measure { factory.open(path) }
-        operations[:reopened_read], = measure { check!(database, records, layout) }
+        operations[:reopen], database = measure("reopen") { factory.open(path) }
+        operations[:reopened_read], = measure("reopened_read") { check!(database, records, layout) }
         original = database.history[0]
       end
-      operations[:reassign], = measure do
+      operations[:reassign], = measure("reassign") do
         database.transaction { |root| root["data"] = layout == "json" ? JSON.generate(records) : records }
       end
       result[:reassign_bytes] = size(database)
       check!(database, records, layout)
       updated = records.map(&:dup)
       updated[records.size / 2]["complexity"] = 123
-      operations[:update], = measure do
+      operations[:update], = measure("update") do
         database.transaction do |root|
           if layout == "json"
             data = JSON.parse(root["data"])
@@ -131,14 +135,14 @@ module NativeBenchmark
       result[:update_bytes] = size(database)
       check!(database, updated, layout)
       check!(database, records, layout, snapshot: original)
-      operations[:commits], = measure do
+      operations[:commits], = measure("commits") do
         10.times { |index| database.transaction { |root| root["revision"] = index } }
       end
       result[:history_bytes] = size(database)
       result[:histories] = database.history.size
       check!(database, updated, layout)
       check!(database, records, layout, snapshot: original)
-      operations[:compact], compacted = measure { database.compact(to: File.join(dir, "compact.xit")) }
+      operations[:compact], compacted = measure("compact") { database.compact(to: File.join(dir, "compact.xit")) }
       result[:compacted_bytes] = size(compacted)
       check!(compacted, updated, layout)
       raise "compaction retained old histories" unless compacted.history.size == 1
@@ -167,6 +171,7 @@ module NativeBenchmark
                ruby: RUBY_DESCRIPTION, platform: RbConfig::CONFIG["host"], samples: options[:samples],
                warmups: options[:warmups], os_cache_control: "unavailable", fixture: fixture.except(:records),
                results: [] }
+    worker_environment = defined?(Bundler) ? Bundler.unbundled_env : ENV.to_h
     Dir.mktmpdir("xitdb-native-compare") do |dir|
       input = File.join(dir, "input.marshal")
       File.binwrite(input, Marshal.dump(fixture))
@@ -184,10 +189,11 @@ module NativeBenchmark
           order = sample.even? ? %w[baseline candidate] : %w[candidate baseline]
           order.each do |variant|
             libroot = variant == "baseline" ? baseline : ROOT
-            environment = { "XITDB_LIBROOT" => libroot, "RUBYOPT" => nil }
-            output, error, status = Open3.capture3(environment, RbConfig.ruby, __FILE__,
-                                                   "--worker", input, count, store, layout)
-            raise "worker failed: #{error}\n#{output}" unless status.success?
+            environment = worker_environment.merge("XITDB_LIBROOT" => libroot, "RUBYOPT" => nil)
+            warn "#{variant} #{count} #{store} #{layout} sample=#{sample} starting"
+            output, status = Open3.capture2(environment, RbConfig.ruby, __FILE__,
+                                            "--worker", input, count, store, layout, unsetenv_others: true)
+            raise "worker failed: #{output}" unless status.success?
 
             row = JSON.parse(output).merge("variant" => variant, "dataset" => count, "store" => store,
                                            "layout" => layout, "sample" => sample, "warmup" => sample.negative?)
