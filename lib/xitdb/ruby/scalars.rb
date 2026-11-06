@@ -7,41 +7,10 @@ require_relative "../input_guard"
 require_relative "wire"
 require_relative "key_encoding"
 
+require_relative "encoded_value"
+
 module XitDB
   module Ruby
-    # Preserves a complete scalar payload when its application codec is unavailable.
-    # The bytes include the Ruby payload version, type, codec identifier, and serialized data.
-    # Writing this object stores those bytes unchanged, which permits later decoding with the matching codec.
-    class EncodedValue
-      attr_reader :codec_id, :format_tag, :bytes
-
-      # @!attribute [r] codec_id
-      #   Frozen identifier for the missing application codec.
-      #
-      #   @return [String] frozen identifier for the missing application codec
-      # @!attribute [r] format_tag
-      #   Frozen storage format label.
-      #
-      #   @return [String, nil] frozen storage format label
-      # @!attribute [r] bytes
-      #   Frozen complete payload, including version and codec fields.
-      #
-      #   @return [String] frozen complete payload, including version and codec fields
-
-      # Copies and freezes the stored bytes and codec identifier.
-      #
-      # @param codec_id [String] identifier of the missing application codec
-      # @param bytes [String] complete encoded scalar payload
-      # @param format_tag [String] storage format label, normally "rb"
-      def initialize(codec_id:, bytes:, format_tag: "rb")
-        value = Core::ByteValue.new(bytes, format_tag: format_tag)
-        @codec_id = codec_id.dup.freeze
-        @format_tag = value.format_tag
-        @bytes = value.bytes
-        freeze
-      end
-    end
-
     # Converts individual Ruby values to slots and reconstructs them from storage.
     # A scalar is one value, such as a String or Time, rather than a map, set, or array.
     # Nil, machine-sized integers, and Float values use native slots.
@@ -71,7 +40,7 @@ module XitDB
           raise UnsupportedValueError, "unsupported Ruby scalar class"
         end
 
-        value = checked_builtin(value)
+        value = checked_builtin!(value)
         builtin_slot(value, core)
       end
 
@@ -80,10 +49,10 @@ module XitDB
       # @param value [Object] candidate built-in scalar
       # @return [Object] the supported value
       # @raise [UnsupportedValueError] if the value cannot be treated as a built-in scalar
-      def self.checked_builtin(value)
+      def self.checked_builtin!(value)
         case value
         when Object
-          checked_object_builtin(value)
+          checked_object_builtin!(value)
         else
           raise UnsupportedValueError, "unsupported Ruby scalar class"
         end
@@ -94,7 +63,7 @@ module XitDB
       # @param value [Object] candidate built-in scalar
       # @return [Object] the supported value
       # @raise [UnsupportedValueError] if no supported scalar type matches
-      def self.checked_object_builtin(value)
+      def self.checked_object_builtin!(value)
         return value if value.is_a?(DateTime)
         return value if value.is_a?(Date)
         return value if value.is_a?(BigDecimal)
@@ -103,7 +72,7 @@ module XitDB
         when Time, Rational, EncodedValue, Core::ByteValue
           value
         else
-          KeyEncoding.checked_key(value)
+          KeyEncoding.checked_key!(value)
         end
       end
 
@@ -243,7 +212,7 @@ module XitDB
         case type
         when 1 then read_string(reader)
         when 2 then read_symbol(reader)
-        when 3 then read_boolean?(reader)
+        when 3 then read_boolean(reader)
         when 4 then reader.z
         when 5 then read_time(reader)
         when 6 then Date.jd(reader.z, read_start(reader))
@@ -288,7 +257,7 @@ module XitDB
       # @param reader [Wire::Reader] reader at the flag
       # @return [Boolean] false for zero, true for one
       # @raise [InvalidValueError] if the flag exceeds one
-      def self.read_boolean?(reader)
+      def self.read_boolean(reader)
         flag = reader.byte
         raise InvalidValueError, "invalid Boolean flag" unless flag <= 1
 
@@ -448,9 +417,9 @@ module XitDB
       end
       private_class_method :decode_payload, :read_string, :decimal_bytes, :read_time, :read_start,
                            :read_datetime, :read_decimal, :builtin_slot, :builtin_payload, :time_bytes,
-                           :checked_builtin, :decimal_payload,
-                           :checked_object_builtin, :decode_type, :decode_extended_type, :read_symbol,
-                           :read_boolean?,
+                           :checked_builtin!, :decimal_payload,
+                           :checked_object_builtin!, :decode_type, :decode_extended_type, :read_symbol,
+                           :read_boolean,
                            :read_codec, :read_finite_decimal, :build_decimal
     end
   end

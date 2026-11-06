@@ -272,7 +272,7 @@ module XitDB
       # @return [Slot]
       # @raise [TransactionStateError] if no active transaction exists
       def bytes(data, format_tag: nil)
-        transaction = active_transaction
+        transaction = active_transaction!
         value = ByteValue.new(data, format_tag: format_tag)
         Bytes.append(transaction, size: value.bytes.bytesize, format_tag: value.format_tag) do |position, length|
           Format.slice(value.bytes, position, length)
@@ -366,9 +366,9 @@ module XitDB
           initialize_empty_file(hash_size, hash_id, file_id, require_empty)
         else
           @header = Header.parse(@store.read_at(0, Header::SIZE))
-          check_header(:hash_size, hash_size, @header.hash_size)
-          check_header(:hash_id, hash_id, @header.hash_id)
-          check_header(:file_id, file_id, @header.file_id)
+          check_header!(:hash_size, hash_size, @header.hash_size)
+          check_header!(:hash_id, hash_id, @header.hash_id)
+          check_header!(:file_id, file_id, @header.file_id)
           committed_state
         end
       end
@@ -392,7 +392,7 @@ module XitDB
       end
 
       # Rejects a requested profile value that differs from the file header.
-      def check_header(name, expected, actual)
+      def check_header!(name, expected, actual)
         return if expected.nil? || expected == actual
 
         raise ProfileMismatchError, "#{name} does not match the database header"
@@ -423,7 +423,7 @@ module XitDB
       protected :restore_empty_target
 
       # Returns the active transaction after checking thread ownership.
-      def active_transaction
+      def active_transaction!
         transaction = @transaction
         raise TransactionStateError, "allocation requires a transaction" unless transaction
 

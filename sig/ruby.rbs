@@ -52,7 +52,7 @@ module XitDB
 
       def self.float_bytes: (Float) -> String
 
-      def self.checked_key: (top) -> XitDB::selector
+      def self.checked_key!: (top) -> XitDB::selector
 
       def self.string_body: (String) -> String
     end
@@ -82,9 +82,9 @@ module XitDB
 
       def self.builtin_slot: (XitDB::value, Core::Database) -> Core::Slot
 
-      def self.checked_builtin: (top) -> XitDB::value
+      def self.checked_builtin!: (top) -> XitDB::value
 
-      def self.checked_object_builtin: (Object) -> XitDB::value
+      def self.checked_object_builtin!: (Object) -> XitDB::value
 
       def self.builtin_payload: (XitDB::value) -> String
 
@@ -105,7 +105,7 @@ module XitDB
 
       def self.read_symbol: (Wire::Reader) -> Symbol
 
-      def self.read_boolean?: (Wire::Reader) -> bool
+      def self.read_boolean: (Wire::Reader) -> bool
 
       def self.decode_extended_type: (Integer, Wire::Reader, String, nil) -> XitDB::value
                                    | (Integer, Wire::Reader, String, CodecRegistry?) -> top
@@ -155,7 +155,7 @@ module XitDB
       attr_reader codecs: Array[Codec]
       def initialize: (Array[Codec]) -> void
       def for_value: (top) -> Codec?
-      def validate_registration: (Codec) -> void
+      def validate_registration!: (Codec) -> void
       def for_id: (String) -> Codec?
     end
   end
@@ -177,7 +177,7 @@ module XitDB
       def conversion_bytes: (Core::Slot, context: Context) -> [ Conversion::ByteSource, Symbol? ]?
       def copy_conversion_bytes: (Conversion::ByteSource, Symbol | Encoding | nil, context: Context, path: XitDB::path) -> Core::Slot
       def input_kind: (top, path: XitDB::path) -> Symbol?
-      def validate_container: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
+      def validate_container!: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
       def hash_defaults?: (Hash[top, top]) -> bool
       def input_entries: (top, path: XitDB::path) -> Enumerator[[ XitDB::selector, top ], void]
     end
@@ -198,7 +198,7 @@ module XitDB
       def conversion_bytes: (Core::Slot, context: Context) -> [ Conversion::ByteSource, Symbol | Encoding | nil ]?
       def copy_conversion_bytes: (Conversion::ByteSource, Symbol | Encoding | nil, context: Context, path: XitDB::path) -> Core::Slot
       def input_kind: (top, path: XitDB::path) -> (Symbol | [ Symbol, Symbol? ] | nil)
-      def validate_container: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
+      def validate_container!: (Hash[top, top] | Array[top] | Set[top], Class, XitDB::path) -> void
       def hash_defaults?: (Hash[top, top]) -> bool
       def declaration_kind: (CollectionDeclaration, Class, XitDB::path) -> (Symbol | [ Symbol, Symbol? ])
       def input_entries: (top, path: XitDB::path) -> Enumerator[[ XitDB::selector, top ], void]
@@ -235,13 +235,13 @@ module XitDB
                       | () { (XitDB::selector, Core::Slot) -> void } -> self
 
         private
-        def index_selector: (XitDB::selector) -> Integer
-        def required_slot: (Core::Slot?) -> Core::Slot
-        def array_collection: () -> Core::ArrayList
-        def linked_collection: () -> Core::LinkedArrayList
-        def sorted_collection: () -> Core::SortedMap
-        def hash_collection: () -> Core::HashMap
-        def sequence_collection: () -> (Core::ArrayList | Core::LinkedArrayList)
+        def index_selector!: (XitDB::selector) -> Integer
+        def required_slot!: (Core::Slot?) -> Core::Slot
+        def array_collection!: () -> Core::ArrayList
+        def linked_collection!: () -> Core::LinkedArrayList
+        def sorted_collection!: () -> Core::SortedMap
+        def hash_collection!: () -> Core::HashMap
+        def sequence_collection!: () -> (Core::ArrayList | Core::LinkedArrayList)
         def decode_key: (String) -> String
         def key_bytes: (XitDB::selector) -> String
       end
@@ -286,17 +286,17 @@ module XitDB
       def clear: () -> self
       def selector_identity: (XitDB::selector) -> XitDB::selector
       attr_reader collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList
-      def linked_collection: () -> Core::LinkedArrayList
+      def linked_collection!: () -> Core::LinkedArrayList
       private
-      def index_selector: (XitDB::selector) -> Integer
+      def index_selector!: (XitDB::selector) -> Integer
       def each_normalized_index: (Integer) { (XitDB::selector, Core::Slot) -> void } -> self
-      def required_slot: (Core::Slot?) -> Core::Slot
+      def required_slot!: (Core::Slot?) -> Core::Slot
       def fetch_slot: (Core::ArrayList, Integer) -> Core::Slot
-      def envelope: () -> Core::ArrayList
-      def declared_key_kind: () -> Symbol
-      def array_collection: () -> Core::ArrayList
-      def sorted_collection: () -> Core::SortedMap
-      def sequence_collection: () -> (Core::ArrayList | Core::LinkedArrayList)
+      def envelope!: () -> Core::ArrayList
+      def declared_key_kind!: () -> Symbol
+      def array_collection!: () -> Core::ArrayList
+      def sorted_collection!: () -> Core::SortedMap
+      def sequence_collection!: () -> (Core::ArrayList | Core::LinkedArrayList)
       def ordered?: () -> bool
       def sorted?: () -> bool
       def array: (Array[Core::Slot]) -> Core::ArrayList
@@ -317,7 +317,7 @@ module XitDB
       def read_sequence_envelope: () -> void
       def envelope_size: () -> Integer
       def ordered_entry: (String, Core::Slot) -> [ XitDB::selector, Core::Slot ]
-      def validate_record: (Core::ArrayList, String, Core::Slot, String?) -> void
+      def validate_record!: (Core::ArrayList, String, Core::Slot, String?) -> void
     end
   end
 end

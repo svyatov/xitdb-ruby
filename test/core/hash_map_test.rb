@@ -50,7 +50,7 @@ class HashMapTest < Minitest::Test
         assert_equal 3, map.size
         assert_equal (1 << 64) - 1, map.key(hash(1)).value
         assert_equal 1 << 63, map.key(hash(2)).value
-        assert map.get(hash(2)).full
+        assert_predicate map.get(hash(2)), :full?
         assert_empty map.get(hash(3))
         assert_includes map, hash(3)
         refute_includes map, hash(4)

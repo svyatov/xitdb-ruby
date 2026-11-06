@@ -56,7 +56,7 @@ module XitDB
       def remap(slot)
         return slot if INLINE_TAGS.include?(slot.tag)
 
-        Slot.new(tag: slot.tag, full: slot.full, value: remap_pointer(slot))
+        Slot.new(tag: slot.tag, full: slot.full?, value: remap_pointer(slot))
       end
 
       # Selects the record layout that determines which child pointers require copying.
@@ -151,7 +151,7 @@ module XitDB
                    else
                      raise CorruptionError, "invalid array branch" unless slot.tag == :index
 
-                     Slot.new(tag: :index, full: slot.full,
+                     Slot.new(tag: :index, full: slot.full?,
                               value: array_index(slot.value, [size, child_size].min, shift - 1))
                    end
           @transaction.write_at(target + (index * Slot::SIZE), mapped.to_bytes)
@@ -190,7 +190,7 @@ module XitDB
         16.times do |index|
           offset = 2 + (index * Slot::SIZE)
           slot = parse(read(source + offset, Slot::SIZE))
-          slot = Slot.new(tag: :index, full: slot.full, value: tree_node(slot.value, sorted)) if slot.tag == :index
+          slot = Slot.new(tag: :index, full: slot.full?, value: tree_node(slot.value, sorted)) if slot.tag == :index
           @transaction.write_at(target + offset, slot.to_bytes)
         end
         slots(source, target, 2 + BLOCK_SIZE, 16) if sorted

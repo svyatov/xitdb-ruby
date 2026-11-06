@@ -74,7 +74,7 @@ class FormatTest < Minitest::Test
     assert_predicate empty, :empty?
     assert_equal :none, empty.tag
     assert_equal 0, empty.value
-    assert_same false, empty.full
+    assert_same false, empty.full?
     refute_predicate XitDB::Core::Slot.uint(0), :empty?
   end
 
@@ -130,7 +130,7 @@ class FormatTest < Minitest::Test
       slot = XitDB::Core::Slot.parse(bytes)
 
       assert_equal tag, slot.tag
-      assert_same true, slot.full
+      assert_same true, slot.full?
       assert_equal bytes, slot.to_bytes
     end
     [17, 127].each do |code|

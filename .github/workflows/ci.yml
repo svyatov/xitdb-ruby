@@ -91,7 +91,7 @@ jobs:
             go 1.27.3
             bun 1.4.4
             java temurin-25.0.5+8.0.LTS
-            zig 0.17.0
+            zig 0.17.1
       - run: bundle exec rake interop
 
   linux-memory:

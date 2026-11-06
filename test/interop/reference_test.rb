@@ -67,7 +67,7 @@ class ReferenceTest < Minitest::Test
       File.chmod(0o444, path)
 
       assert_equal Interop.expected_tree(linked_hole: true), @invoke.call("read", "all-kinds", path).fetch("tree")
-      Interop.check_maintenance(@invoke, path, Interop.expected_tree(linked_hole: true))
+      Interop.check_maintenance!(@invoke, path, Interop.expected_tree(linked_hole: true))
 
       assert_equal original, File.binread(path)
       assert_equal 0o444, File.stat(path).mode & 0o777

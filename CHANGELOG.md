@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Core boolean readers are now `Slot#full?` and `Cursor#valid?`; the old names were removed.
+- Validation and assertion helpers now use `!`, including `Core::Format.integer!` and `Core::Format.ensure_width!`.
+- Substantial classes have dedicated files. Existing require entry points and on-disk encodings remain unchanged.
+- The interoperability workflow uses Zig 0.17.1.
+
 ## 0.1.0 - 2026-11-05
 
 Initial release of the `xitdb` gem. Requires MRI 3.3 or later.

@@ -42,7 +42,7 @@ module XitDB
         ancestor = self
         loop do
           transaction&.check_cursor!(ancestor)
-          raise ExpiredViewError, "cursor ancestor was replaced" unless ancestor.valid
+          raise ExpiredViewError, "cursor ancestor was replaced" unless ancestor.valid?
           break unless ancestor.parent
 
           path << ancestor
@@ -97,13 +97,13 @@ module XitDB
         return nil if slot.tag == :none
 
         if kind == :array_list
-          ArrayList.new(self).cursor_at(integer_selector(selector))
+          ArrayList.new(self).cursor_at(integer_selector!(selector))
         elsif kind == :linked_array_list
-          LinkedArrayList.new(self).cursor_at(integer_selector(selector))
+          LinkedArrayList.new(self).cursor_at(integer_selector!(selector))
         elsif %i[sorted_map sorted_set].include?(kind)
-          SortedMap.new(self).cursor_at(string_selector(selector))
+          SortedMap.new(self).cursor_at(string_selector!(selector))
         else
-          HashMap.from_cursor(self).cursor_at(string_selector(selector))
+          HashMap.from_cursor(self).cursor_at(string_selector!(selector))
         end
       end
 
@@ -156,7 +156,7 @@ module XitDB
       # @api private
       def cached_child(index, slot)
         @children.each_pair do |child, selector|
-          next unless selector == index && child.valid
+          next unless selector == index && child.valid?
 
           begin
             child.slot
@@ -219,9 +219,9 @@ module XitDB
       def collection_get(selector)
         target = collection
         if target.is_a?(ArrayList) || target.is_a?(LinkedArrayList)
-          target.get(integer_selector(selector))
+          target.get(integer_selector!(selector))
         else
-          target.get(string_selector(selector))
+          target.get(string_selector!(selector))
         end
       end
 
@@ -229,23 +229,23 @@ module XitDB
       def collection_replace(selector, slot, owner: nil, collection: false, propagate: true)
         target = self.collection
         if target.is_a?(ArrayList) || target.is_a?(LinkedArrayList)
-          target.replace_child(integer_selector(selector), slot, owner: owner, collection: collection,
-                                                                 propagate: propagate)
+          target.replace_child(integer_selector!(selector), slot, owner: owner, collection: collection,
+                                                                  propagate: propagate)
         else
-          target.replace_child(string_selector(selector), slot, owner: owner, collection: collection,
-                                                                propagate: propagate)
+          target.replace_child(string_selector!(selector), slot, owner: owner, collection: collection,
+                                                                 propagate: propagate)
         end
       end
 
       # Checks that an array selector is an Integer.
-      def integer_selector(selector)
+      def integer_selector!(selector)
         raise TypeError, "array index must be an Integer" unless selector.is_a?(Integer)
 
         selector
       end
 
       # Checks that a collection selector is a String.
-      def string_selector(selector)
+      def string_selector!(selector)
         raise TypeError, "collection key must be a String" unless selector.is_a?(String)
 
         selector
@@ -257,10 +257,13 @@ module XitDB
       # @!attribute [r] selector
       #   Index or encoded key locating this child in its parent.
       #   @return [Integer, String]
-      # @!attribute [r] valid
-      #   Whether this view has avoided explicit invalidation.
-      #   @return [Boolean]
-      attr_reader :parent, :selector, :valid
+      attr_reader :parent, :selector
+
+      # Reports whether this view has avoided explicit invalidation.
+      # @return [Boolean]
+      def valid?
+        @valid
+      end
 
       # Chooses the collection reader from the current slot tag.
       def collection

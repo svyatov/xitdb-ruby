@@ -88,7 +88,7 @@ module XitDB
       # @return [self]
       # @raise [ReadOnlyError] if the collection has no writable transaction
       def append(slot)
-        validate_slot(slot)
+        validate_slot!(slot)
         mutate do |transaction|
           count, pointer, start = writable_header(transaction)
           raise RangeError, "array size exceeds unsigned 64-bit range" if count == Format::UINT64_MAX
@@ -126,7 +126,7 @@ module XitDB
       # @raise [IndexError] if the index or range is outside the allowed list positions
       # @api private
       def replace_child(index, slot, owner: nil, collection: false, propagate: true)
-        validate_slot(slot)
+        validate_slot!(slot)
         index = resolve_index(index, size)
         raise IndexError, "array index outside list" unless index
 
@@ -146,7 +146,7 @@ module XitDB
       # @raise [ReadOnlyError] if the collection has no writable transaction
       # @raise [IndexError] if the index or range is outside the allowed list positions
       def truncate(count)
-        Format.integer(count, 0..Format::UINT64_MAX)
+        Format.integer!(count, 0..Format::UINT64_MAX)
         raise IndexError, "array size outside list" if count > size
 
         mutate do |transaction|
@@ -285,7 +285,7 @@ module XitDB
       end
 
       # Rejects unknown slots and branch pointers supplied as list elements.
-      def validate_slot(slot)
+      def validate_slot!(slot)
         raise TypeError, "expected Slot" unless slot.is_a?(Slot)
         raise CorruptionError, "unknown slot tag" unless Slot::TAGS.include?(slot.tag)
         raise InvalidValueError, "index slot is internal to array branches" if slot.tag == :index

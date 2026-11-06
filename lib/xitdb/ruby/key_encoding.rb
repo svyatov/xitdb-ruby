@@ -65,7 +65,7 @@ module XitDB
       # @param value [Object] candidate scalar
       # @return [nil, Boolean, Integer, Float, String, Symbol] the supplied value
       # @raise [UnsupportedValueError] if the value is outside these scalar types
-      def self.checked_key(value)
+      def self.checked_key!(value)
         case value
         when NilClass, FalseClass, TrueClass, String, Integer, Float, Symbol then value
         else raise UnsupportedValueError, "unsupported Ruby key class"

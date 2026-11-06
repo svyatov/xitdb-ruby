@@ -41,8 +41,8 @@ module XitDB
       def replication_start(state)
         raise TypeError, "expected ReplicaState" unless state.is_a?(ReplicaState)
 
-        Replication.position(state.committed_size)
-        Format.integer(state.checksum, 0..Format::UINT64_MAX)
+        Replication.ensure_position!(state.committed_size)
+        Format.integer!(state.checksum, 0..Format::UINT64_MAX)
         with_operation do
           size, = committed_state
           next 0 if state.committed_size > size || state.committed_size < Database::MINIMUM_SIZE
@@ -65,8 +65,8 @@ module XitDB
       # @raise [ArgumentError] if the byte range is invalid or exceeds committed data
       # @raise [IOError] if the destination reports an invalid write count
       def read_committed(start, finish, io)
-        Replication.position(start)
-        Replication.position(finish)
+        Replication.ensure_position!(start)
+        Replication.ensure_position!(finish)
         with_operation do
           size, = committed_state
           if start > finish || finish > size || (start.positive? && start < Database::DATA_OFFSET)
@@ -98,8 +98,8 @@ module XitDB
       # @raise [CommitError] if storage fails; its outcome describes possible publication
       # @raise [TransactionStateError] if this handle requires reopening
       def apply_replicated(start, io, length)
-        Replication.position(start)
-        Replication.position(length)
+        Replication.ensure_position!(start)
+        Replication.ensure_position!(length)
         raise ArgumentError, "full replacement requires Database.copy_replica" if start.zero?
         raise TransactionStateError, "database requires reopening" if @needs_reopen
 
@@ -171,7 +171,7 @@ module XitDB
       # @raise [EOFError] if the stream ends before length bytes
       # @raise [CommitError] if durable staging or cleanup fails
       def self.copy_replica(to:, source_io:, length:)
-        position(length)
+        ensure_position!(length)
         raise ArgumentError, "full replica is shorter than a database" if length < Database::MINIMUM_SIZE
 
         store = FileStore.open(to)
@@ -187,7 +187,7 @@ module XitDB
 
             begin
               read_chunks(source_io, length) { |chunk| storage_write { store.append(chunk) } }
-              validate_replica(store, length)
+              validate_replica!(store, length)
 
               outcome = :unknown
               storage_write(outcome: outcome) { store.sync }
@@ -222,7 +222,7 @@ module XitDB
       private_class_method :cleanup_staged_replica
 
       # Checks the declared size and matching root header and trailer.
-      def self.validate_replica(store, length)
+      def self.validate_replica!(store, length)
         header = Header.parse(store.read_at(0, Header::SIZE))
         root = store.read_at(Database::ROOT_OFFSET, 17)
         unless Format.unsigned(Format.slice(root, 9, 8)) == length
@@ -234,12 +234,12 @@ module XitDB
 
         raise CorruptionError, "full replica root does not match its trailer"
       end
-      private_class_method :validate_replica
+      private_class_method :validate_replica!
 
       # Rejects offsets and lengths that are not nonnegative integers.
       # @param value [Integer] integer value
       # @return [void]
-      def self.position(value)
+      def self.ensure_position!(value)
         raise TypeError, "offset and length must be Integers" unless value.is_a?(Integer)
         raise ArgumentError, "offset and length must be nonnegative" if value.negative?
       end
