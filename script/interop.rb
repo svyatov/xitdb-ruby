@@ -248,7 +248,7 @@ module Interop
     assert_equal! compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
   end
 
-  # Checks that reference maintenance preserves Ruby values and unknown codec bytes.
+  # Checks opaque Ruby scalar maintenance inside portable Core containers.
   # @param invoke [Proc] reference adapter
   # @param dir [String] scratch directory
   def self.check_opaque!(invoke, dir)
@@ -259,24 +259,32 @@ module Interop
     codec = XitDB::Ruby::Codec.new(id: "interop/opaque/v1", type: type, dump: lambda(&:payload), load: lambda { |bytes|
       type.new(bytes)
     })
-    XitDB::Ruby.open(path, codecs: [codec]) do |db|
-      db.transaction { |tx| tx[:old] = "first" }
+    registry = XitDB::Ruby::CodecRegistry.new([codec])
+    values = [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)]
+    XitDB::Core::Database.open(path) do |db|
+      db.transaction { |root| XitDB::Core::ArrayList.new(root).append(db.bytes("first")) }
       first = File.size(path)
-      db.transaction do |tx|
-        tx[:opaque] = [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)]
-        tx[:unknown] = type.new(payload)
+      db.transaction do |root|
+        history = XitDB::Core::ArrayList.new(root)
+        history.append(XitDB::Core::Slot.new)
+        array = XitDB::Core::ArrayList.new(history.cursor_at(1))
+        (values + [type.new(payload)]).each do |value|
+          array.append(XitDB::Ruby::Scalars.encode(value, core: db, registry: registry))
+        end
       end
-      XitDB::Core::Database.open(path, readonly: true) { |core| export_parts(core, path, first) }
+      export_parts(db, path, first)
     end
     expected = read_tree(path)
     check_maintenance!(invoke, path, expected)
-    XitDB::Ruby.open("#{path}.compact", readonly: true) do |db|
-      assert_equal! [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)], db.snapshot[:opaque].to_ruby
-      assert_equal! XitDB::Ruby::EncodedValue, db.snapshot[:unknown].class
-      assert_equal! "interop/opaque/v1", db.snapshot[:unknown].codec_id
-    end
-    XitDB::Ruby.open("#{path}.compact", readonly: true, codecs: [codec]) do |db|
-      assert_equal! payload, db.snapshot[:unknown].payload
+    XitDB::Core::Database.open("#{path}.compact", readonly: true) do |db|
+      history = XitDB::Core::ArrayList.new(db.root_cursor)
+      slots = XitDB::Core::ArrayList.new(history.cursor_at(-1)).to_a
+      decoded = slots.map { |slot| XitDB::Ruby::Scalars.decode(slot, core: db) }
+
+      assert_equal! values, decoded.first(4)
+      assert_equal! XitDB::Ruby::EncodedValue, decoded.last.class
+      assert_equal! "interop/opaque/v1", decoded.last.codec_id
+      assert_equal! payload, XitDB::Ruby::Scalars.decode(slots.last, core: db, registry: registry).payload
     end
   end
 
@@ -343,7 +351,7 @@ module Interop
       check_sha384!(name, invoke, dir)
     end
     puts "#{name}: independent all-kinds writes, reads, history, compact, interrupted replication, " \
-         "and opaque rb01 maintenance passed in both directions"
+         "and opaque Ruby scalar maintenance in portable containers passed in both directions"
   end
 
   # Repeats all-kinds and maintenance checks with a 48-byte SHA-384 profile.

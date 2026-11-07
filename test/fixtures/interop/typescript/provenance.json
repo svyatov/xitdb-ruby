@@ -4,12 +4,12 @@
   "source_glob": "src/**/*.ts",
   "source_sha256": "e5852414c881ddea44a7c4a594a12ab6a02f9c50bf4d7701c9014a236edf2e9b",
   "runtime": "Bun 1.4.4",
-  "generated_at": "2026-11-06T11:34:28Z",
+  "generated_at": "2026-11-07T11:06:20Z",
   "producer": "pinned upstream library through test/interop/typescript",
   "fetch_command": "gh api repos/xit-vcs/xitdb-ts/tarball/01ca291fd1a57a2047ee03ca6344abd009480730",
   "generate_command": "ruby script/interop.rb --generate-fixtures",
-  "generator_sha256": "72b23f50d8e05b1ecd778875634ae15decded9b4f8641eacb0a1de6a786dbb75",
+  "generator_sha256": "0ea0f308c05e9bbd29a5329f3cab51e14b8fc802314872bfb222b7f7f5bf4eca",
   "adapter_sha256": "94087b476c840e9ec51103c8973b5f4e0b35b76442dd4bbeb89161d0a149ff79",
   "manifest_sha256": "8a32777b647cf299ac638f889901eaa6bd01868571b56e18bb293501cf9e299b",
-  "fixture_sha256": "86137348a57805b5675d4cae9967f5f38104c6903123dff64d22abe7a7146cfd"
+  "fixture_sha256": "a062e92f11a74d3eab16cca5e738879f053f8725dd101bcab72555306fd322eb"
 }
