@@ -36,4 +36,6 @@ Both new tests pass against the implementation. In a contained scratch copy, rem
 
 After adding the regressions, `bundle exec ruby script/ci.rb` passed 489 tests and 41,640 assertions, style, RBS, Steep, 100% typed calls across 70 library files, CRAP, packaged examples, and gem inspection.
 
-The complete performance matrix, production byte ledger, and final report are pending at this checkpoint. This review does not establish task completion.
+The final checkpoint completed both seven-sample matrices, production byte accounting, I/O instrumentation, and CPU/allocation profiles. A supplemental independent reader found no actionable issues in the final report or diagnostic drivers. Reported medians, allocations, history growth, byte ledgers, and traffic agree with the archived JSON. Historical measurements and fresh paired comparisons are identified separately.
+
+The final `bundle exec ruby script/ci.rb` passed 489 tests and 41,640 assertions and all quality/package checks. Linux stress passed five tests and 326 assertions. All four pinned reference interoperability checks passed for portable graphs and opaque Ruby scalars. The frozen runtime's 70 source hashes match the measured implementation and Linux native stress evidence. See [the completed performance report](../../native-profile-performance.md) for results, limitations, and reproduction commands.

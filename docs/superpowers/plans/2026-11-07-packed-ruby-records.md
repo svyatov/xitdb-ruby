@@ -73,63 +73,63 @@
 
 ### Task 3.2: Compact maps and sets
 
-- [ ] Add `Ruby::PackedMap < Containers` for maps and sets with at most sixteen members.
-- [ ] Store original key slots in order. Compare canonical identities without separate persistent indexes.
-- [ ] Implement lookup, assignment, deletion, clearing, ordinal traversal, and promotion.
-- [ ] Promote oversized keys or the seventeenth member to existing indexed `Containers`.
-- [ ] Bound decoded key payloads before decoding. Reject duplicate canonical identities and invalid set values.
-- [ ] Preserve the first original key on replacement. Append a deleted key when inserted again.
-- [ ] Test both stores, encoding distinctions, signed zero, promotion, rollback, failure injection, and old snapshots.
-- [ ] Select `rb02` in native handles. Reject `rb01` through ordinary profile mismatch checks.
-- [ ] Keep existing indexed, sorted, and linked adapters. Their internal envelopes can remain within `rb02`.
+- [x] Add `Ruby::PackedMap < Containers` for maps and sets with at most sixteen members.
+- [x] Store original key slots in order. Compare canonical identities without separate persistent indexes.
+- [x] Implement lookup, assignment, deletion, clearing, ordinal traversal, and promotion.
+- [x] Promote oversized keys or the seventeenth member to existing indexed `Containers`.
+- [x] Bound decoded key payloads before decoding. Reject duplicate canonical identities and invalid set values.
+- [x] Preserve the first original key on replacement. Append a deleted key when inserted again.
+- [x] Test both stores, encoding distinctions, signed zero, promotion, rollback, failure injection, and old snapshots.
+- [x] Select `rb02` in native handles. Reject `rb01` through ordinary profile mismatch checks.
+- [x] Keep existing indexed, sorted, and linked adapters. Their internal envelopes can remain within `rb02`.
 
 ### Task 3.3: Compact arrays and bounded construction
 
-- [ ] Add `Core::ArrayBuilder.new(transaction)`, `append(slot)`, and `slot` with sixteen slots per active level.
-- [ ] Test boundaries through 10,000 elements, empty input, invalid slots, ended transactions, and repeated finalization.
-- [ ] Add `Ruby::PackedArray < Containers` with inline slots through sixteen elements.
-- [ ] Store larger arrays as a compact record referencing the existing Core array tree.
-- [ ] Implement insertion, deletion, truncation, slices, concatenation, and normalized traversal.
-- [ ] Use the builder only during unpublished encoding. Existing selective updates use Core copy-on-write paths.
-- [ ] Test deep inputs, sparse public assignments, threshold transitions, snapshots, and aborted construction.
+- [x] Add `Core::ArrayBuilder.new(transaction)`, `append(slot)`, and `slot` with sixteen slots per active level.
+- [x] Test boundaries through 10,000 elements, empty input, invalid slots, ended transactions, and repeated finalization.
+- [x] Add `Ruby::PackedArray < Containers` with inline slots through sixteen elements.
+- [x] Store larger arrays as a compact record referencing the existing Core array tree.
+- [x] Implement insertion, deletion, truncation, slices, concatenation, and normalized traversal.
+- [x] Use the builder only during unpublished encoding. Existing selective updates use Core copy-on-write paths.
+- [x] Test deep inputs, sparse public assignments, threshold transitions, snapshots, and aborted construction.
 
 ### Task 3.4: Dictionaries and operation state
 
-- [ ] Add private `Ruby::PackingState` with bounded encoded scalar and schema tables.
-- [ ] Pass state explicitly through profile construction and materialization. Avoid shared context caches.
-- [ ] Bound scalar sharing to 256 exact short names or Strings and schema sharing to 64 shapes per operation.
-- [ ] Reuse canonical identities for at most 256 validated frozen String key objects per encoding operation.
-- [ ] Carry state into input Enumerators explicitly. Fiber-local state alone misses their validation calls.
-- [ ] Include scalar type, String encoding, and exact bytes in shared identities.
-- [ ] Store schema maps as one schema slot followed by ordered value slots.
-- [ ] Cache decoded schema keys only within read-only materialization. Transaction reads remain uncached.
-- [ ] Reuse existing schemas for value updates. Key changes can publish ordinary compact maps.
-- [ ] Test concurrent and reentrant reads, codec errors, rollback offset reuse, cache limits, and independent decoded Strings.
+- [x] Add private `Ruby::PackingState` with bounded encoded scalar and schema tables.
+- [x] Pass state explicitly through profile construction and materialization. Avoid shared context caches.
+- [x] Bound scalar sharing to 256 exact short names or Strings and schema sharing to 64 shapes per operation.
+- [x] Reuse canonical identities for at most 256 validated frozen String key objects per encoding operation.
+- [x] Carry state into input Enumerators explicitly. Fiber-local state alone misses their validation calls.
+- [x] Include scalar type, String encoding, and exact bytes in shared identities.
+- [x] Store schema maps as one schema slot followed by ordered value slots.
+- [x] Cache decoded schema keys only within read-only materialization. Transaction reads remain uncached.
+- [x] Reuse existing schemas for value updates. Key changes can publish ordinary compact maps.
+- [x] Test concurrent and reentrant reads, codec errors, rollback offset reuse, cache limits, and independent decoded Strings.
 
 ### Task 3.5: Measured encoding costs
 
-- [ ] Test exact immediate scalar classes and rejection of singleton, private, removed, or overridden object methods.
-- [ ] Remove duplicate checks after profile input validation. Keep validated scalar dispatch owned by the profile.
-- [ ] Keep guards on direct scalar encoding and map key entry points.
-- [ ] Derive stored key identities from validated built-in decoders without repeating application-object introspection.
-- [ ] Stream String, Symbol, and codec prefixes into byte storage without concatenating entire payload copies.
-- [ ] Test exact scalar wire bytes and bounded append requests for oversized values.
+- [x] Test exact immediate scalar classes and rejection of singleton, private, removed, or overridden object methods.
+- [x] Remove duplicate checks after profile input validation. Keep validated scalar dispatch owned by the profile.
+- [x] Keep guards on direct scalar encoding and map key entry points.
+- [x] Derive stored key identities from validated built-in decoders without repeating application-object introspection.
+- [x] Stream String, Symbol, and codec prefixes into byte storage without concatenating entire payload copies.
+- [x] Test exact scalar wire bytes and bounded append requests for oversized values.
 
 ### Task 3.6: Contract and verification
 
-- [ ] Document `rb02`, record metadata, validation, limits, and intentional interoperability changes.
-- [ ] Update structural fixtures and provenance for the selected format.
-- [ ] Run all public behavior tests, quality gates, package checks, reference tests, and Linux memory checks.
+- [x] Document `rb02`, record metadata, validation, limits, and intentional interoperability changes.
+- [x] Update structural fixtures and provenance for the selected format.
+- [x] Run all public behavior tests, quality gates, package checks, reference tests, and Linux memory checks.
 
 ## Task 4: Verify and publish reproducible evidence
 
 **Files:** Benchmark drivers, `docs/native-profile-performance.md`, and compressed raw evidence.
 
-- [ ] Run focused tests, then the repository quality and package gates.
-- [ ] Run affected reference interoperability and Linux memory checks.
-- [ ] Stabilize the candidate before running seven measured alternating pairs with excluded warmups.
-- [ ] Compare against original baseline history, optimized rb01, portable records, and JSON workflows.
-- [ ] Publish absolute values, ratios, byte accounting, update amplification, limits, and remaining bottlenecks.
-- [ ] Review the completed change and remove temporary experiment scripts.
+- [x] Run focused tests, then the repository quality and package gates.
+- [x] Run affected reference interoperability and Linux memory checks.
+- [x] Stabilize the candidate before running seven measured alternating pairs with excluded warmups.
+- [x] Compare against original baseline history, optimized rb01, portable records, and JSON workflows.
+- [x] Publish absolute values, ratios, byte accounting, update amplification, limits, and remaining bottlenecks.
+- [x] Review the completed change and remove temporary experiment scripts.
 
 The user authorized autonomous execution. Representation and API experiments require no additional approval.

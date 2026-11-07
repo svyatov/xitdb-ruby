@@ -6,6 +6,9 @@ Both commands require Docker and the cached `ruby:4.0.9-slim` image.
 They use `--pull=never` and `--network=none` and fail when the required capability is unavailable.
 They install nothing.
 
+The separate [native Ruby record comparison](native-profile-performance.md) measures construction, reads, updates, history growth, and compaction against a fixed baseline revision.
+It runs directly on the host and includes portable and JSON controls.
+
 ## Run the workloads
 
 1. Run `ruby script/stress.rb --limit-mib 256 --data-mib 768`.
