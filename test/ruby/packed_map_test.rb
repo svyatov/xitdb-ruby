@@ -81,6 +81,18 @@ class RubyPackedMapTest < Minitest::Test
     end
   end
 
+  def test_native_handles_reject_previous_profile_files_without_changes
+    Dir.mktmpdir do |directory|
+      path = File.join(directory, "previous.xit")
+      XitDB::Core::Database.open(path, hash_id: "rb01", hash_size: 32).close
+      original = File.binread(path)
+
+      assert_raises(XitDB::ProfileMismatchError) { XitDB::Ruby.open(path) }
+      assert_raises(XitDB::ProfileMismatchError) { XitDB::Ruby.open(path, readonly: true) }
+      assert_equal original, File.binread(path)
+    end
+  end
+
   def test_failed_record_append_rolls_back_and_allows_retry
     XitDB::Ruby.memory do |database|
       database.transaction { |root| root[:map] = { first: 1 } }
