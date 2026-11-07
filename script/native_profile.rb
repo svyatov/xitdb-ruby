@@ -101,6 +101,17 @@ end)
  [XitDB::Core::CRC64.singleton_class, :call],
  [XitDB::Core::Database, :read_at]].each { |klass, name| NativeProfile.observe(klass, name) }
 
+[[XitDB::InputGuard.singleton_class, :check!], [XitDB::Profiles::Ruby, :encode_scalar],
+ [XitDB::Ruby::Scalars.singleton_class, :encode_validated]].each do |klass, name|
+  NativeProfile.observe(klass, name) if klass.method_defined?(name)
+end
+if defined?(XitDB::Core::Record)
+  [[XitDB::Core::Record.singleton_class, :append], [XitDB::Core::Record.singleton_class, :read],
+   [XitDB::Core::ArrayBuilder, :append], [XitDB::Core::ArrayBuilder, :slot],
+   [XitDB::Ruby::PackedMap, :initialize], [XitDB::Ruby::PackedArray, :initialize],
+   [XitDB::Ruby::PackingState, :scalar_identity]].each { |klass, name| NativeProfile.observe(klass, name) }
+end
+
 options = { fixture: "/Users/leonid/Projects/My/open-source/crap4ruby", store: "file" }
 OptionParser.new do |parser|
   parser.on("--fixture PATH") { |value| options[:fixture] = value }
@@ -112,8 +123,14 @@ raise ArgumentError, "store must be file or memory" unless %w[file memory].inclu
 
 records = NativeBenchmark.fixture(options[:fixture]).fetch(:records)
 records = NativeBenchmark.dataset(records, options.fetch(:count, "fixture"))
+library = ENV.fetch("XITDB_LIBROOT", NativeBenchmark::ROOT)
 report = { ruby: RUBY_DESCRIPTION, count: records.size, store: options[:store],
-           input_sha256: Digest::SHA256.hexdigest(JSON.generate(records)), operations: {} }
+           input_sha256: Digest::SHA256.hexdigest(JSON.generate(records)),
+           driver_sha256: Digest::SHA256.file(__FILE__).hexdigest,
+           library_sha256: Dir[File.join(library, "lib/**/*.rb")].to_h do |path|
+             [path.split("/lib/").last, Digest::SHA256.file(path).hexdigest]
+           end,
+           operations: {} }
 Dir.mktmpdir("xitdb-native-profile") do |dir|
   database = options[:store] == "memory" ? XitDB::Ruby.memory : XitDB::Ruby.open(File.join(dir, "data.xit"))
   begin
