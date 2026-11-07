@@ -1,0 +1,13 @@
+{
+  "status": "interrupted at user request before compact-representation experiments",
+  "baseline": "89f714d8de855cb9fdd31eb3f9e5e8d666cd8bef",
+  "candidate": "fde9a5dda601643398289f5bd0ebfdbfa7f2089e",
+  "completed_samples": 245,
+  "measured_samples": 213,
+  "incomplete_worker": "10000/file/ruby/baseline/sample1, excluded from completed results",
+  "artifacts": {
+    "rb01-construction-read-samples.json.gz": "0d30c33cd67517a7ac1fd63a321a53745080258db4d276bef984e2e2414527e3",
+    "rb01-historical-samples.json.gz": "04dd60b4242e896d34052a8cd440d912e2a5cec09734b5baeb7f4e76354580c4",
+    "rb01-profiles.json.gz": "191bcce863ca2c65abcffe31334b7c0e13d1a5b235476fcc2a6770e349ffbb71"
+  }
+}
