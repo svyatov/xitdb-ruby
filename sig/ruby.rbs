@@ -47,6 +47,7 @@ module XitDB
       TYPES: Array[Class]
 
       def self.dump: (XitDB::value) -> String
+      def self.dump_stored: (XitDB::value) -> String
 
       def self.scalar_bytes: (XitDB::value) -> String
 
@@ -79,6 +80,7 @@ module XitDB
       TYPES: Array[Class]
 
       def self.encode: (top, core: Core::Database, ?registry: CodecRegistry?) -> Core::Slot
+      def self.encode_validated: (top, core: Core::Database, ?registry: CodecRegistry?) -> Core::Slot
 
       def self.builtin_slot: (XitDB::value, Core::Database) -> Core::Slot
 
@@ -165,7 +167,7 @@ module XitDB
       KINDS: Hash[Symbol, XitDB::kind]
       attr_reader hasher: Core::Hasher
       def initialize: (?hasher: Core::Hasher) -> void
-      def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?) -> Core::Slot
+      def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?, ?validated: bool) -> Core::Slot
       def packing_state: (context: Context, reading: bool) -> nil
       def decode_scalar: (Core::Slot, core: Core::Database, ?bound: Integer?, ?immutable: bool) -> XitDB::value
       def key_bytes: (XitDB::value) -> String
@@ -189,10 +191,11 @@ module XitDB
       attr_reader codecs: Array[XitDB::Ruby::Codec]
       def initialize: (?codecs: Array[XitDB::Ruby::Codec]) -> void
       def encode: (top, context: Context, path: XitDB::path) -> Core::Slot
-      def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?) -> Core::Slot
+      def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?, ?validated: bool) -> Core::Slot
       def packing_state: (context: Context, reading: bool) -> XitDB::Ruby::PackingState?
       def decode: (Core::Slot, context: Context, path: XitDB::path, ?immutable: bool) -> top
       def key_bytes: (XitDB::value, ?state: XitDB::Ruby::PackingState?) -> String
+      def stored_key_bytes: (XitDB::value) -> String
       def container: (Core::Slot, context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers?
       def empty_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
       def conversion_kind: (XitDB::adapter) -> (Symbol | [ Symbol, Symbol? ])

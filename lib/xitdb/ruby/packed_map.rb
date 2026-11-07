@@ -125,7 +125,7 @@ module XitDB
       private
 
       def append_member(selector, identity, stored)
-        @key_slots << @profile.encode_scalar(selector, core: @context.database.core, state: @state)
+        @key_slots << @profile.encode_scalar(selector, core: @context.database.core, state: @state, validated: true)
         @keys << (selector.is_a?(String) ? String.new(selector).freeze : selector)
         @identities << identity
         @values << (kind == :set ? Core::Slot.null : stored)
@@ -159,7 +159,7 @@ module XitDB
         (fields.size / stride).times do |index|
           original = fields.fetch(index * stride)
           key = bounded_key(original)
-          identity = @profile.key_bytes(key)
+          identity = @profile.stored_key_bytes(key)
           invalid! if identity.bytesize > MAX_KEY_BYTES || @identities.include?(identity)
 
           @key_slots << original
@@ -190,7 +190,7 @@ module XitDB
         record = Core::Record.read(@context.database.core, slot, bound: @context.read_bound)
         invalid! unless record.metadata == DICTIONARY && (2..MAX_MEMBERS).cover?(record.fields.size)
         keys = record.fields.map { |original| bounded_key(original) }
-        identities = keys.map { |key| @profile.key_bytes(key) }
+        identities = keys.map { |key| @profile.stored_key_bytes(key) }
         invalid! if identities.any? { |identity| identity.bytesize > MAX_KEY_BYTES }
         invalid! unless identities.uniq.size == identities.size
 

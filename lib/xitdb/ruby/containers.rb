@@ -752,7 +752,7 @@ module XitDB
         bytes = raw_bytes(@lookup.key(digest))
         invalid! unless @profile.hasher.digest(bytes) == digest && (!expected_bytes || bytes == expected_bytes)
         begin
-          invalid! unless @profile.key_bytes(decode_key(fetch_slot(record, 0))) == bytes
+          invalid! unless @profile.stored_key_bytes(decode_key(fetch_slot(record, 0))) == bytes
         rescue UnsupportedValueError
           invalid!
         end

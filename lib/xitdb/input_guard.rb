@@ -6,6 +6,10 @@ module XitDB
   # Rejects objects with altered method behavior before encoding them.
   # @api private
   module InputGuard
+    # These exact classes cannot have separate per-object method tables.
+    IMMEDIATE_TYPES = [NilClass, FalseClass, TrueClass, Integer, Float, Symbol].freeze
+    private_constant :IMMEDIATE_TYPES
+
     # Reject objects whose per-object methods can change native encoding behavior.
     #
     # Bound native methods inspect the object without trusting its own overrides.
@@ -18,11 +22,13 @@ module XitDB
         raise UnsupportedValueError.new("unsupported Ruby object", path: path)
       end
 
+      klass = Object.instance_method(:class).bind_call(value)
+      return if IMMEDIATE_TYPES.any? { |type| type.equal?(klass) }
+
       unless Object.instance_method(:singleton_methods).bind_call(value).empty?
         raise UnsupportedValueError.new("singleton behavior is unsupported", path: path)
       end
 
-      klass = Object.instance_method(:class).bind_call(value)
       # @type var methods: ::Array[native_visibility_pair]
       methods = [%i[public_instance_methods public_methods], %i[protected_instance_methods protected_methods],
                  %i[private_instance_methods private_methods]]

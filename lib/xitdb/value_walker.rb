@@ -94,9 +94,10 @@ module XitDB
     # Validate input and encode a scalar or push a container traversal frame.
     # @return [Core::Slot, nil]
     def self.begin_encoding(input, location, context, active, stack, state)
-      InputGuard.check!(input, path: location)
       case input
-      when Views::Base then encode_view(input, context, location)
+      when Views::Base
+        InputGuard.check!(input, path: location)
+        encode_view(input, context, location)
       else
         profile = context.profile
         kind = profile.input_kind(input, path: location)
@@ -129,7 +130,7 @@ module XitDB
     # Encode a scalar and attach its logical path to value errors.
     # @return [Core::Slot]
     def self.encode_scalar(input, context, location, state)
-      context.profile.encode_scalar(input, core: context.database.core, state: state)
+      context.profile.encode_scalar(input, core: context.database.core, state: state, validated: true)
     rescue ValueError => e
       raise e.class.new("#{e.message} at #{location.inspect}", path: location), cause: e
     end

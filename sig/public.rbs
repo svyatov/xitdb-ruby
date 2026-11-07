@@ -166,6 +166,7 @@ module XitDB
   end
 
   module InputGuard
+    IMMEDIATE_TYPES: Array[Class]
     def self.check!: (top, ?path: path) -> void
   end
 

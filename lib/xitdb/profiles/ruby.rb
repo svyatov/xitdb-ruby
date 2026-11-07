@@ -48,13 +48,13 @@ module XitDB
       # @param core [Core::Database] destination storage
       # @return [Core::Slot] stored scalar descriptor
       # @raise [ValueError] if the scalar cannot be represented
-      def encode_scalar(value, core:, state: nil)
-        InputGuard.check!(value) if state
+      def encode_scalar(value, core:, state: nil, validated: false)
+        InputGuard.check!(value) unless validated
         identity = state&.scalar_identity(value)
         cached = state.scalars[identity] if state && identity
         return cached if cached
 
-        stored = XitDB::Ruby::Scalars.encode(value, core: core, registry: @registry)
+        stored = XitDB::Ruby::Scalars.encode_validated(value, core: core, registry: @registry)
         state.store_scalar(identity, stored) if state && identity
         stored
       end
@@ -90,6 +90,11 @@ module XitDB
         return state.key_bytes(value) { XitDB::Ruby::KeyEncoding.dump(value) } if state
 
         XitDB::Ruby::KeyEncoding.dump(value)
+      end
+
+      # Stored keys come from built-in decoders, without application callbacks.
+      def stored_key_bytes(value)
+        XitDB::Ruby::KeyEncoding.dump_stored(value)
       end
 
       # Recognizes this profile's collection layout and binds it to the context.

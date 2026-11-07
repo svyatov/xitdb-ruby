@@ -32,6 +32,12 @@ module XitDB
       # @raise [CodecError] if application serialization fails
       def self.encode(value, core:, registry: nil)
         InputGuard.check!(value)
+        encode_validated(value, core: core, registry: registry)
+      end
+
+      # Stores an input already checked by the owning profile traversal.
+      # @api private
+      def self.encode_validated(value, core:, registry: nil)
         if (codec = registry&.for_value(value))
           payload = "\x01\x0a".b + Wire.t(codec.id) + Wire.b(codec.dump(value))
           return core.bytes(payload, format_tag: "rb")
