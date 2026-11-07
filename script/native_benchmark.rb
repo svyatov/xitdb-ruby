@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Compare rb01 collections with a fixed revision. Each worker owns its database.
+# Compare native collections with a fixed revision. Each worker owns its database.
 require "json"
 require "digest"
 require "tmpdir"
@@ -111,6 +111,15 @@ module NativeBenchmark
       if store == "file"
         database.close
         operations[:reopen], database = measure("reopen") { factory.open(path) }
+        operations[:reopened_indexed], = measure("reopened_indexed") do
+          data = database.snapshot["data"]
+          data = JSON.parse(data) if layout == "json"
+          [0, records.size / 2, records.size - 1].each do |index|
+            row = data[index]
+            row = row.to_ruby unless layout == "json"
+            raise "reopened indexed mismatch" unless row == records[index]
+          end
+        end
         operations[:reopened_read], = measure("reopened_read") { check!(database, records, layout) }
         original = database.history[0]
       end
@@ -170,25 +179,44 @@ module NativeBenchmark
     report = { baseline: revision.strip, candidate: Open3.capture2("git", "rev-parse", "HEAD").first.strip,
                ruby: RUBY_DESCRIPTION, platform: RbConfig::CONFIG["host"], samples: options[:samples],
                warmups: options[:warmups], os_cache_control: "unavailable", fixture: fixture.except(:records),
+               driver_sha256: Digest::SHA256.file(__FILE__).hexdigest, started_at: Time.now.utc.to_s,
                results: [] }
+    if options[:resume]
+      previous = JSON.parse(File.read(options.fetch(:output)), symbolize_names: true)
+      %i[baseline candidate ruby samples warmups fixture driver_sha256].each do |key|
+        next if JSON.generate(previous.fetch(key)) == JSON.generate(report.fetch(key))
+
+        raise "resume provenance mismatch: #{key}"
+      end
+      report = previous
+    end
     worker_environment = defined?(Bundler) ? Bundler.unbundled_env : ENV.to_h
     Dir.mktmpdir("xitdb-native-compare") do |dir|
       input = File.join(dir, "input.marshal")
       File.binwrite(input, Marshal.dump(fixture))
-      baseline = File.join(dir, "baseline")
-      FileUtils.mkdir_p(baseline)
-      archive, status = Open3.capture2("git", "archive", options[:baseline])
-      raise "git archive failed" unless status.success?
+      roots = %i[baseline candidate].to_h do |variant|
+        root = File.join(dir, variant.to_s)
+        FileUtils.mkdir_p(root)
+        archive, status = Open3.capture2("git", "archive", report.fetch(variant))
+        raise "git archive failed" unless status.success?
 
-      archive_path = File.join(dir, "baseline.tar")
-      File.binwrite(archive_path, archive)
-      raise "extract failed" unless system("tar", "-xf", archive_path, "-C", baseline)
+        archive_path = File.join(dir, "#{variant}.tar")
+        File.binwrite(archive_path, archive)
+        raise "extract failed" unless system("tar", "-xf", archive_path, "-C", root)
+
+        [variant.to_s, root]
+      end
 
       options[:counts].product(options[:stores], options[:layouts]).each do |count, store, layout|
         (-options[:warmups]...options[:samples]).each do |sample|
           order = sample.even? ? %w[baseline candidate] : %w[candidate baseline]
           order.each do |variant|
-            libroot = variant == "baseline" ? baseline : ROOT
+            completed = report[:results].any? do |row|
+              row.values_at(:variant, :dataset, :store, :layout, :sample) == [variant, count, store, layout, sample]
+            end
+            next if completed
+
+            libroot = roots.fetch(variant)
             environment = worker_environment.merge("XITDB_LIBROOT" => libroot, "RUBYOPT" => nil)
             warn "#{variant} #{count} #{store} #{layout} sample=#{sample} starting"
             output, status = Open3.capture2(environment, RbConfig.ruby, __FILE__,
@@ -197,8 +225,11 @@ module NativeBenchmark
 
             row = JSON.parse(output).merge("variant" => variant, "dataset" => count, "store" => store,
                                            "layout" => layout, "sample" => sample, "warmup" => sample.negative?)
-            report[:results] << row
-            File.write(options[:output], "#{JSON.pretty_generate(report)}\n")
+            row["completed_at"] = Time.now.utc.to_s
+            report[:results] << row.transform_keys(&:to_sym)
+            temporary = "#{options[:output]}.pending"
+            File.write(temporary, "#{JSON.pretty_generate(report)}\n")
+            File.rename(temporary, options[:output])
             warn "#{variant} #{count} #{store} #{layout} sample=#{sample} insert=#{row.dig("operations", "insert",
                                                                                            "seconds").round(3)}s"
           end
@@ -225,6 +256,7 @@ else
     parser.on("--counts LIST") { |value| options[:counts] = value.split(",") }
     parser.on("--stores LIST") { |value| options[:stores] = value.split(",") }
     parser.on("--layouts LIST") { |value| options[:layouts] = value.split(",") }
+    parser.on("--resume") { options[:resume] = true }
   end.parse!
   NativeBenchmark.run(options)
 end
