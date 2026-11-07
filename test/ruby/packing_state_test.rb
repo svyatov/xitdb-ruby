@@ -119,6 +119,51 @@ class RubyPackingStateTest < Minitest::Test
     assert_empty calls
   end
 
+  def test_malformed_dictionaries_reject_duplicate_canonical_keys_and_shapes
+    XitDB::Ruby.memory do |database|
+      database.transaction do |root|
+        root[:bad] = {}
+        before = root.to_ruby
+        first = database.profile.encode_scalar("key", core: database.core)
+        alias_key = database.profile.encode_scalar("key".b, core: database.core)
+        [[5, [first, alias_key]], [99, [first, first]], [5, [first]]].each do |metadata, keys|
+          bound = root.context.read_bound
+          assert_raises(XitDB::InvalidValueError) do
+            root.context.mutate([:bad]) do |cursor|
+              dictionary = XitDB::Core::Record.append(root.context.transaction, metadata: metadata, fields: keys)
+              fields = [dictionary, XitDB::Core::Slot.int(1), XitDB::Core::Slot.int(2)]
+              cursor.replace(XitDB::Core::Record.append(root.context.transaction, metadata: 4, fields: fields))
+              database.profile.container(cursor.slot, context: root.context, path: [:bad])
+            end
+          end
+          assert_equal bound, root.context.read_bound
+          assert_equal before, root.to_ruby
+        end
+      end
+    end
+  end
+
+  def test_a_cached_dictionary_still_checks_each_referring_maps_value_count
+    XitDB::Ruby.memory do |database|
+      original = [{ "first" => 1, "second" => 2 }, { "first" => 3, "second" => 4 }]
+      database.transaction { |root| root[:rows] = original }
+      before = database.snapshot
+      dictionary = record(database, before[:rows][0].slot).fields[0]
+
+      assert_equal dictionary, record(database, before[:rows][1].slot).fields[0]
+      database.transaction do |root|
+        root.context.mutate([:rows, 1]) do |cursor|
+          fields = [dictionary, XitDB::Core::Slot.int(3), XitDB::Core::Slot.int(4), XitDB::Core::Slot.int(5)]
+          cursor.replace(XitDB::Core::Record.append(root.context.transaction, metadata: 4, fields: fields))
+        end
+      end
+
+      assert_raises(XitDB::InvalidValueError) { database.snapshot[:rows].to_ruby }
+      assert_equal original.first, database.snapshot[:rows][0].to_ruby
+      assert_equal original, before[:rows].to_ruby
+    end
+  end
+
   private
 
   def record(database, slot)
