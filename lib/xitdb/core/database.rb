@@ -269,12 +269,15 @@ module XitDB
       # Allocates a byte value inside the active transaction.
       # @param data [String] payload bytes
       # @param format_tag [String, nil] optional two-byte application format identifier
+      # @param prefix [String] owned bytes prepended without joining the full payload
       # @return [Slot]
       # @raise [TransactionStateError] if no active transaction exists
-      def bytes(data, format_tag: nil)
+      def bytes(data, format_tag: nil, prefix: "".b)
         transaction = active_transaction!
         value = ByteValue.new(data, format_tag: format_tag)
-        Bytes.append(transaction, size: value.bytes.bytesize, format_tag: value.format_tag) do |position, length|
+        prefix = ByteValue.new(prefix).bytes
+        Bytes.append(transaction, size: value.bytes.bytesize, format_tag: value.format_tag,
+                                  prefix: prefix) do |position, length|
           Format.slice(value.bytes, position, length)
         end
       end

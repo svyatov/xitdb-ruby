@@ -284,7 +284,7 @@ module XitDB
       def transaction: () { (Cursor) -> top } -> Cursor
       def handle_transaction_error: (Exception, Exception?, bool?, :not_committed | :committed | :unknown) -> bot
       def finish_transaction: (Transaction, Integer, :not_committed | :committed | :unknown, bool, Exception?) -> void
-      def bytes: (String, ?format_tag: String?) -> Slot
+      def bytes: (String, ?format_tag: String?, ?prefix: String) -> Slot
       def read_bytes: (Slot, ?bound: Integer?) -> ByteValue
       def read_at: (Integer, Integer, bound: Integer) -> String
       def close_unreturned: () -> void

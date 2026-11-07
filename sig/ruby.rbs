@@ -83,6 +83,7 @@ module XitDB
       def self.encode_validated: (top, core: Core::Database, ?registry: CodecRegistry?) -> Core::Slot
 
       def self.builtin_slot: (XitDB::value, Core::Database) -> Core::Slot
+      def self.text_slot: (String, Integer, Core::Database) -> Core::Slot
 
       def self.checked_builtin!: (top) -> XitDB::value
 
