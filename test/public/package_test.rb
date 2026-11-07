@@ -17,7 +17,7 @@ class PackageTest < Minitest::Test
       assert_same true, packaged_example("ruby").fetch("enabled")
       assert_equal %w[Ada Grace], packaged_example("indexed_users").fetch("names")
       %w[README.md CHANGELOG.md LICENSE docs/core.md docs/portable.md docs/ruby.md
-         docs/ruby-profile-v1.md sig/base.rbs sig/core.rbs sig/native.rbs sig/public.rbs
+         docs/ruby-profile-v1.md docs/ruby-profile-v2.md sig/base.rbs sig/core.rbs sig/native.rbs sig/public.rbs
          sig/ruby.rbs sig/manifest.yaml].each do |path|
         assert_includes spec.files, path
       end

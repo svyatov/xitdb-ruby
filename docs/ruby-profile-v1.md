@@ -1,5 +1,7 @@
 # Ruby profile version 1 wire contract
 
+This is the historical `rb01` contract. Native handles use the incompatible [version 2 contract](ruby-profile-v2.md).
+
 This contract defines the `rb01` profile without changing upstream format version 1.
 
 ## File identity

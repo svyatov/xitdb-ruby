@@ -6,6 +6,20 @@ require "tmpdir"
 class RecordTest < Minitest::Test
   Core = XitDB::Core
 
+  def test_literal_record_wire_bytes
+    source = Core::Database.memory
+    source.transaction do |root|
+      stored = Core::Record.append(root.transaction, metadata: 1, fields: [Core::Slot.null, Core::Slot.int(1)])
+      root.replace(stored)
+
+      assert_equal 17, stored.to_bytes.getbyte(0)
+      assert_equal "0000000100000002800000000000000000090000000000000001",
+                   source.read_at(stored.value, 26, bound: root.bound).unpack1("H*")
+    end
+  ensure
+    source&.close
+  end
+
   def test_bounded_records_preserve_fields_and_compacted_sharing
     Dir.mktmpdir do |dir|
       source = Core::Database.memory

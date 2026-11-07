@@ -68,4 +68,4 @@ Callbacks can read transaction views. Coercion, dump, load, and conversion callb
 The guard applies across Context instances; nested writes raise `TransactionStateError` before changing state.
 Callback failure aborts the affected assignment. Byte-stream callbacks retain their separate non-overlapping sibling-write behavior.
 
-See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v1.md).
+See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v2.md).
