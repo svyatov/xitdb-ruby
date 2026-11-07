@@ -6,7 +6,7 @@ module XitDB
   module Profiles
     # Connects Ruby values to scalar encoders and collection adapters.
     # Maps and sets preserve insertion order; typed sorted collections preserve their declared key order.
-    # SHA-256 hashes canonical key bytes under the "rb01" header identifier.
+    # SHA-256 hashes canonical key bytes under the "rb02" header identifier.
     # Application codecs belong to this profile instance and are not written as executable code.
     class Ruby
       attr_reader :hasher, :codecs
@@ -27,7 +27,7 @@ module XitDB
       def initialize(codecs: [])
         @registry = XitDB::Ruby::CodecRegistry.new(codecs)
         @codecs = @registry.codecs
-        @hasher = Core::Hasher.new(id: "rb01", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
+        @hasher = Core::Hasher.new(id: "rb02", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end
 
@@ -86,7 +86,10 @@ module XitDB
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers, nil] bound adapter, or nil for a scalar
       def container(slot, context:, path:)
-        return nil unless slot.tag == :array_list || (slot.empty? && path.empty?)
+        if slot.tag == :record || (slot.empty? && path.empty?)
+          return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path)
+        end
+        return nil unless slot.tag == :array_list
 
         XitDB::Ruby::Containers.new(self, context.cursor(slot), context: context, path: path)
       end
@@ -99,6 +102,10 @@ module XitDB
       # @return [XitDB::Ruby::Containers] new empty collection adapter
       def empty_container(kind, context:, path:)
         kind, key_kind = kind if kind.is_a?(::Array)
+        if %i[map set].include?(kind)
+          return XitDB::Ruby::PackedMap.new(self, context.cursor(Core::Slot.new), context: context, path: path,
+                                                                                  kind: kind, defer: true)
+        end
         XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path,
                                                                           kind: kind, key_kind: key_kind, defer: true)
       end

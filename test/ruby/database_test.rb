@@ -39,7 +39,7 @@ class RubyDatabaseTest < Minitest::Test
       path = File.join(directory, "native.xit")
       XitDB::Ruby.open(path) { |db| db.transaction { |root| root[:name] = "native" } }
       assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path) }
-      assert_equal "rb01", File.binread(path, 4, 8)
+      assert_equal "rb02", File.binread(path, 4, 8)
       assert_equal 32, File.binread(path, 2, 6).unpack1("n")
       portable = File.join(directory, "portable.xit")
       XitDB.open(portable, &:close)
@@ -214,8 +214,8 @@ class RubyDatabaseTest < Minitest::Test
   def test_insertion_overflow_preserves_updates_and_clear_resets_empty_indexes
     [false, true].each do |set|
       @db.transaction do |root|
-        root[:items] = set ? Set[:first] : { first: 1 }
-        items = root[:items]
+        items = indexed_collection(root, :items, set: set)
+        set ? items.add(:first) : items[:first] = 1
         context = items.context
         context.mutate(items.path) do |cursor|
           envelope = XitDB::Core::ArrayList.new(cursor)
@@ -241,9 +241,11 @@ class RubyDatabaseTest < Minitest::Test
   # Checks raw Ruby collection envelopes and their index records against the expected layout.
   def test_exact_envelopes_and_index_records
     @db.transaction do |root|
+      17.times { |index| root[index] = index }
+      root.clear
       root[:array] = [1]
       root[:linked] = XitDB.linked_array
-      root[:set] = Set[:member]
+      indexed_collection(root, :set, set: true).add(:member)
     end
     snapshot = @db.snapshot
     envelope = physical_envelope(snapshot)
@@ -284,7 +286,7 @@ class RubyDatabaseTest < Minitest::Test
   def test_malformed_envelopes_and_conflicting_indexes_are_rejected
     @db.transaction do |root|
       root[:array] = []
-      root[:map] = { key: 1 }
+      indexed_collection(root, :map)[:key] = 1
       [[0, XitDB::Core::Slot.uint(0)], [1, XitDB::Core::Slot.int(1)]].each do |index, value|
         context = root.context
         assert_raises(XitDB::InvalidValueError) do
@@ -312,7 +314,9 @@ class RubyDatabaseTest < Minitest::Test
   # A malformed order leaf must not let two records claim the same insertion identifier.
   def test_duplicate_insertion_identifiers_are_rejected
     @db.transaction do |root|
-      root[:map] = { a: 1, b: 2 }
+      map = indexed_collection(root, :map)
+      map[:a] = 1
+      map[:b] = 2
       context = root.context
       context.mutate([:map]) do |cursor|
         transaction = context.writable_transaction!
@@ -473,7 +477,7 @@ class RubyDatabaseTest < Minitest::Test
       items.clear
       assert_raises(XitDB::ExpiredViewError) { child.size }
       assert_raises(XitDB::ConcurrentModificationError) { iterator.next }
-      assert_equal 0, physical_envelope(items).get(1).value
+      assert_empty items
       root.write_bytes(:stream) do |writer|
         assert_raises(XitDB::ConcurrentModificationError) { root.clear }
         writer.write("kept")
@@ -604,8 +608,8 @@ class RubyDatabaseTest < Minitest::Test
   # Checks failed lookup index write restores order and identifier.
   def test_failed_lookup_index_write_restores_order_and_identifier
     @db.transaction do |root|
-      root[:items] = { first: 1 }
-      items = root[:items]
+      items = indexed_collection(root, :items)
+      items[:first] = 1
       transaction = root.context.transaction
       original = transaction.method(:append)
       fail_record = true
@@ -631,8 +635,9 @@ class RubyDatabaseTest < Minitest::Test
   # Checks failed lookup removal restores both indexes.
   def test_failed_lookup_removal_restores_both_indexes
     @db.transaction do |root|
-      root[:items] = { first: 1, second: 2 }
-      items = root[:items]
+      items = indexed_collection(root, :items)
+      items[:first] = 1
+      items[:second] = 2
       transaction = root.context.transaction
       original = transaction.method(:write_at)
       fail_count = true
@@ -922,6 +927,14 @@ class RubyDatabaseTest < Minitest::Test
   end
 
   private
+
+  # Exercises the indexed backend after promotion, including its empty state.
+  def indexed_collection(root, key, set: false)
+    entries = (0...17).to_h { |index| [index, index] }
+    root[key] = set ? Set.new(entries.keys) : entries
+    root[key].clear
+    root[key]
+  end
 
   # Exposes a Ruby collection envelope as a raw array for layout assertions.
   # @param view [Object] Ruby collection view

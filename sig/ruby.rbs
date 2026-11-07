@@ -249,6 +249,26 @@ module XitDB
   end
 
   module Ruby
+    class PackedMap < Containers
+      MAP: Integer
+      SET: Integer
+      MAX_MEMBERS: Integer
+      MAX_KEY_BYTES: Integer
+      MAX_KEY_PAYLOAD: Integer
+      @fallback: Containers?
+      @keys: Array[XitDB::selector]
+      @identities: Array[String]
+      @key_slots: Array[Core::Slot]
+      @values: Array[Core::Slot]
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, ?kind: Symbol?, ?defer: bool, ?record: Core::Record?) -> void
+      private
+      def append_member: (XitDB::selector, String, Core::Slot) -> void
+      def read_record: (Core::Record) -> void
+      def bounded_key: (Core::Slot) -> XitDB::selector
+      def promote: (XitDB::selector, Core::Slot) -> void
+      def record_fields: () -> Array[Core::Slot]
+    end
+
     class Containers
       MARKERS: Hash[Symbol, Integer]
       KEY_KINDS: Hash[Symbol, Integer]

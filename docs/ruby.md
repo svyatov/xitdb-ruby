@@ -1,7 +1,11 @@
 # Ruby profile
 
 `require "xitdb/ruby"` provides `XitDB::Ruby.open(path, readonly: false, lock_timeout: 5.0, codecs: [])` and `XitDB::Ruby.memory(codecs: [])`.
-Configuration belongs to each handle. The file identifier `rb01` selects SHA-256 over canonical typed keys and version-one container envelopes.
+Configuration belongs to each handle. The file identifier `rb02` selects SHA-256 over canonical typed keys and compact native containers. Existing `rb01` files are incompatible; this pre-1.0 format has no migration or backward reader.
+
+Small maps and sets store up to sixteen original keys directly in insertion order in a Core record. Map metadata is `1`, followed by alternating original-key and value slots; set metadata is `6`, followed by original-key slots. Keys must have distinct canonical identities, at most 128 canonical bytes and at most 256 encoded scalar bytes. Larger collections and oversized keys use the indexed envelope representation. Promotion preserves order and the first original key representation, and clearing an indexed collection retains that representation.
+
+The Core record extension has tag `17`, an unsigned big-endian 32-bit metadata word, an unsigned big-endian 32-bit field count, and up to 32 consecutive nine-byte slots. Compaction follows all fields and preserves shared references. Pinned reference implementations do not support this extension. Portable containers retain their existing wire representation.
 The [portable guide](portable.md) defines the shared transaction, snapshot, history, ownership, stream, and view contracts.
 
 ## Native values and keys
