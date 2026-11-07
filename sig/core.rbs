@@ -620,6 +620,16 @@ module XitDB
       def initialize: (Cursor) -> void
     end
 
+    class Record
+      MAX_FIELDS: Integer
+      HEADER_SIZE: Integer
+      attr_reader metadata: Integer
+      attr_reader fields: Array[Slot]
+      def initialize: (metadata: Integer, fields: Array[Slot]) -> void
+      def self.append: (Transaction, metadata: Integer, fields: Array[Slot]) -> Slot
+      def self.read: (Database, Slot, bound: Integer) -> Record
+    end
+
     class Compaction
       INLINE_TAGS: Array[Symbol]
       BLOCK_SIZE: Integer
@@ -634,6 +644,8 @@ module XitDB
       def parse: (String) -> Slot
       def remap: (Slot) -> Slot
       def remap_pointer: (Slot) -> Integer
+      def copy_record: (Slot) -> Integer
+      def copy_pair: (Slot) -> Integer
       def reserve: (Integer, Integer, ?cache: bool) { (Integer, Integer) -> void } -> Integer
       def reserve_slots: (Integer, Integer, Integer, Integer) -> Integer
       def copy_bytes: (Slot) -> Integer

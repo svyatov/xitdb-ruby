@@ -121,10 +121,10 @@ class FormatTest < Minitest::Test
     assert_raises(TypeError) { XitDB::Core::Slot.float("1.5") }
   end
 
-  # Checks all upstream tags and unknown tags round trip.
-  def test_all_upstream_tags_and_unknown_tags_round_trip
+  # Checks upstream tags, the record extension, and unknown tags round trip.
+  def test_upstream_extension_and_unknown_tags_round_trip
     tags = %i[none index array_list linked_array_list hash_map kv_pair bytes short_bytes uint int float
-              hash_set counted_hash_map counted_hash_set sorted_map sorted_set sorted_kv_pair]
+              hash_set counted_hash_map counted_hash_set sorted_map sorted_set sorted_kv_pair record]
     tags.each_with_index do |tag, code|
       bytes = [code | 0x80, 0x0123456789abcdef].pack("CQ>")
       slot = XitDB::Core::Slot.parse(bytes)
@@ -133,7 +133,7 @@ class FormatTest < Minitest::Test
       assert_same true, slot.full?
       assert_equal bytes, slot.to_bytes
     end
-    [17, 127].each do |code|
+    [18, 127].each do |code|
       bytes = [code | 0x80, 7].pack("CQ>")
       slot = XitDB::Core::Slot.parse(bytes)
 

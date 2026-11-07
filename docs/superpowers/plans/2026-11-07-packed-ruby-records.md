@@ -64,12 +64,12 @@
 
 ### Task 3.1: Bounded records
 
-- [ ] Test `Core::Record.append(transaction, metadata:, fields:)` and `Core::Record.read(database, slot, bound:)`.
-- [ ] Limit records to 32 fields. Validate unsigned metadata, slot tags, counts, and captured bounds.
-- [ ] Add `:record` after existing Core tags. Preserve existing numeric tag assignments.
-- [ ] Teach compaction to reserve records before remapping fields, preserving cycles and sharing.
-- [ ] Test malformed counts, unknown child tags, truncated records, snapshots, and compaction.
-- [ ] Add RBS declarations. Run focused tests, style, typing, and the suite before committing.
+- [x] Test `Core::Record.append(transaction, metadata:, fields:)` and `Core::Record.read(database, slot, bound:)`.
+- [x] Limit records to 32 fields. Validate unsigned metadata, slot tags, counts, and captured bounds.
+- [x] Add `:record` after existing Core tags. Preserve existing numeric tag assignments.
+- [x] Teach compaction to reserve records before remapping fields, preserving cycles and sharing.
+- [x] Test malformed counts, unknown child tags, truncated records, snapshots, and compaction.
+- [x] Add RBS declarations. Run focused tests, style, typing, and the suite before committing.
 
 ### Task 3.2: Compact maps and sets
 
