@@ -86,7 +86,12 @@ module XitDB
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers, nil] bound adapter, or nil for a scalar
       def container(slot, context:, path:)
-        if slot.tag == :record || (slot.empty? && path.empty?)
+        if slot.tag == :record
+          record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
+          klass = [2, 3].include?(record.metadata) ? XitDB::Ruby::PackedArray : XitDB::Ruby::PackedMap
+          return klass.new(self, context.cursor(slot), context: context, path: path, record: record)
+        end
+        if slot.empty? && path.empty?
           return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path)
         end
         return nil unless slot.tag == :array_list
@@ -102,6 +107,10 @@ module XitDB
       # @return [XitDB::Ruby::Containers] new empty collection adapter
       def empty_container(kind, context:, path:)
         kind, key_kind = kind if kind.is_a?(::Array)
+        if kind == :array
+          return XitDB::Ruby::PackedArray.new(self, context.cursor(Core::Slot.new), context: context, path: path,
+                                                                                    kind: kind, defer: true)
+        end
         if %i[map set].include?(kind)
           return XitDB::Ruby::PackedMap.new(self, context.cursor(Core::Slot.new), context: context, path: path,
                                                                                   kind: kind, defer: true)

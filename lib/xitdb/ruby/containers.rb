@@ -71,7 +71,7 @@ module XitDB
       def size
         return 0 unless @envelope
 
-        ordered? ? @lookup.size : @collection.size
+        ordered? ? @lookup.size : collection!.size
       end
 
       # Checks whether the collection has any entries.
@@ -357,6 +357,14 @@ module XitDB
 
       private
 
+      # Requires backing storage for an indexed sequence or sorted collection.
+      def collection!
+        value = @collection
+        invalid! unless value
+
+        value
+      end
+
       # Requires an Integer selector before passing an index to core storage.
       #
       # @param selector [Object] candidate sequence position
@@ -474,7 +482,7 @@ module XitDB
         marker = Core::Slot.uint(MARKERS.fetch(kind))
         if sorted?
           @collection = Core::SortedMap.new(@context.cursor(Core::Slot.new))
-          @envelope = array([marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), @collection.cursor.slot])
+          @envelope = array([marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), collection!.cursor.slot])
         elsif ordered?
           @next_id = 0
           @lookup = Core::HashMap.new(@context.cursor(Core::Slot.new), counted: true)
@@ -483,7 +491,7 @@ module XitDB
         else
           klass = kind == :array ? Core::ArrayList : Core::LinkedArrayList
           @collection = klass.new(@context.cursor(Core::Slot.new))
-          @envelope = array([marker, @collection.cursor.slot])
+          @envelope = array([marker, collection!.cursor.slot])
         end
         cursor.replace(envelope!.cursor.slot)
       end
@@ -514,11 +522,11 @@ module XitDB
       def publish
         marker = Core::Slot.uint(MARKERS.fetch(kind))
         fields = if sorted?
-                   [marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), @collection.cursor.slot]
+                   [marker, Core::Slot.uint(KEY_KINDS.fetch(@key_kind)), collection!.cursor.slot]
                  elsif ordered?
                    [marker, Core::Slot.uint(@next_id), @lookup.cursor.slot, @order.cursor.slot]
                  else
-                   [marker, @collection.cursor.slot]
+                   [marker, collection!.cursor.slot]
                  end
         @envelope = array(fields)
         cursor.replace(envelope!.cursor.slot)

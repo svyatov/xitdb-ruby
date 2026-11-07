@@ -5,6 +5,7 @@ require_relative "ruby/scalars"
 require_relative "ruby/key_encoding"
 require_relative "ruby/containers"
 require_relative "ruby/packed_map"
+require_relative "ruby/packed_array"
 require_relative "profiles/ruby"
 
 module XitDB

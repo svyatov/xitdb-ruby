@@ -391,6 +391,19 @@ module XitDB
       def spill: () -> void
     end
 
+    class ArrayBuilder
+      @transaction: Transaction
+      @levels: Array[Array[Slot]]
+      @count: Integer
+      @slot: Slot?
+      def initialize: (Transaction) -> void
+      def append: (Slot) -> self
+      def slot: () -> Slot
+      private
+      def push: (Integer, Slot) -> void
+      def block: (Array[Slot]) -> Integer
+    end
+
     class ArrayList
       include Enumerable[Slot]
       HEADER_SIZE: Integer

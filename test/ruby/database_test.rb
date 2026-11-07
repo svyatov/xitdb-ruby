@@ -255,13 +255,15 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal 3, envelope.get(1).value
     assert_equal :counted_hash_map, envelope.get(2).tag
     assert_equal :sorted_map, envelope.get(3).tag
-    [[:array, 0x52420101, :array_list], [:linked, 0x52420102, :linked_array_list]].each do |key, marker, tag|
-      item = physical_envelope(snapshot[key])
+    array = XitDB::Core::Record.read(@db.core, snapshot[:array].slot, bound: snapshot.context.read_bound)
 
-      assert_equal 2, item.size
-      assert_equal marker, item.get(0).value
-      assert_equal tag, item.get(1).tag
-    end
+    assert_equal 2, array.metadata
+    assert_equal [XitDB::Core::Slot.int(1)], array.fields
+    linked = physical_envelope(snapshot[:linked])
+
+    assert_equal 2, linked.size
+    assert_equal 0x52420102, linked.get(0).value
+    assert_equal :linked_array_list, linked.get(1).tag
     set = physical_envelope(snapshot[:set])
 
     assert_equal 0x52420104, set.get(0).value
@@ -285,7 +287,7 @@ class RubyDatabaseTest < Minitest::Test
   # Checks malformed envelopes and conflicting indexes are rejected.
   def test_malformed_envelopes_and_conflicting_indexes_are_rejected
     @db.transaction do |root|
-      root[:array] = []
+      indexed_array(root, :array)
       indexed_collection(root, :map)[:key] = 1
       [[0, XitDB::Core::Slot.uint(0)], [1, XitDB::Core::Slot.int(1)]].each do |index, value|
         context = root.context
@@ -346,7 +348,7 @@ class RubyDatabaseTest < Minitest::Test
   # Marker validation precedes inspection of other envelope fields.
   def test_unknown_marker_is_rejected_before_malformed_child_fields
     @db.transaction do |root|
-      root[:array] = []
+      indexed_array(root, :array)
       root.context.mutate([:array]) do |cursor|
         transaction = root.context.writable_transaction!
         start = transaction.length
@@ -927,6 +929,16 @@ class RubyDatabaseTest < Minitest::Test
   end
 
   private
+
+  # Builds the indexed sequence envelope retained for explicit backend validation.
+  def indexed_array(root, key)
+    root[key] = []
+    root.context.mutate([key]) do |cursor|
+      adapter = XitDB::Ruby::Containers.new(@db.profile, root.context.cursor(XitDB::Core::Slot.new),
+                                            context: root.context, path: [key], kind: :array)
+      cursor.replace(adapter.slot)
+    end
+  end
 
   # Exercises the indexed backend after promotion, including its empty state.
   def indexed_collection(root, key, set: false)
