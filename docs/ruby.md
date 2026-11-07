@@ -8,6 +8,10 @@ Small maps and sets store up to sixteen original keys directly in insertion orde
 The Core record extension has tag `17`, an unsigned big-endian 32-bit metadata word, an unsigned big-endian 32-bit field count, and up to 32 consecutive nine-byte slots. Compaction follows all fields and preserves shared references. Pinned reference implementations do not support this extension. Portable containers retain their existing wire representation.
 
 Arrays with at most sixteen elements use record metadata `2` and consecutive element slots. Larger arrays use metadata `3` with one Core array-list slot. Bulk construction retains at most sixteen slots per tree level and appends completed blocks once. Selective updates use the existing Core copy-on-write path. Large values remain separate byte records referenced by their slots.
+
+Within one bulk encoding, maps with two to sixteen fields can share an ordered dictionary. Metadata `4` contains a dictionary record slot followed by value slots. The dictionary uses metadata `5` and original-key slots. Dictionaries preserve exact key representations, including String encodings. Value-only updates retain the dictionary; key changes can return to literal records.
+
+Each encoding operation shares at most 256 short String or Symbol values and 64 dictionaries. Scalar sharing includes exact type, encoding, and bytes, and accepts at most 64 source bytes. A separate identity cache recognizes at most 256 validated frozen String key objects. Read-only materialization caches at most 64 decoded dictionaries within that call. Transaction reads use no decoded dictionary cache. Materialization returns independent mutable String values.
 The [portable guide](portable.md) defines the shared transaction, snapshot, history, ownership, stream, and view contracts.
 
 ## Native values and keys

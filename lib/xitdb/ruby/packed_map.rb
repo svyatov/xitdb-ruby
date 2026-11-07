@@ -8,6 +8,8 @@ module XitDB
     class PackedMap < Containers
       MAP = 1
       SET = 6
+      SCHEMA_MAP = 4
+      DICTIONARY = 5
       MAX_MEMBERS = 16
       MAX_KEY_BYTES = 128
       MAX_KEY_PAYLOAD = 256
@@ -15,13 +17,16 @@ module XitDB
       # Opens a compact record or creates an unpublished empty collection.
       # Packed records initialize common adapter fields without reading an envelope.
       # rubocop:disable-next Lint/MissingSuper
-      def initialize(profile, cursor, context:, path:, kind: nil, defer: false, record: nil)
+      def initialize(profile, cursor, context:, path:, kind: nil, defer: false, record: nil, state: nil)
         @profile = profile
         @cursor = cursor
         @context = context
         @path = path
         @kind = kind == :set ? :set : :map
         @deferred = defer
+        @state = state
+        @schema_slot = nil
+        @schema_identity = nil
         @fallback = nil
         @keys = []
         @identities = []
@@ -120,7 +125,7 @@ module XitDB
       private
 
       def append_member(selector, identity, stored)
-        @key_slots << @profile.encode_scalar(selector, core: @context.database.core)
+        @key_slots << @profile.encode_scalar(selector, core: @context.database.core, state: @state)
         @keys << (selector.is_a?(String) ? String.new(selector).freeze : selector)
         @identities << identity
         @values << (kind == :set ? Core::Slot.null : stored)
@@ -136,13 +141,20 @@ module XitDB
       end
 
       def read_record(record)
+        return read_schema(record.fields) if record.metadata == SCHEMA_MAP
+
         @kind = case record.metadata
                 when MAP then :map
                 when SET then :set
                 else invalid!
                 end
         stride = kind == :set ? 1 : 2
-        fields = record.fields
+        read_members(record.fields, stride)
+      rescue ValueError
+        invalid!
+      end
+
+      def read_members(fields, stride)
         invalid! unless (fields.size % stride).zero? && fields.size / stride <= MAX_MEMBERS
         (fields.size / stride).times do |index|
           original = fields.fetch(index * stride)
@@ -155,8 +167,44 @@ module XitDB
           @identities << identity
           @values << (kind == :set ? Core::Slot.null : fields.fetch((index * stride) + 1))
         end
-      rescue ValueError
-        invalid!
+      end
+
+      def read_schema(fields)
+        invalid! unless (3..17).cover?(fields.size)
+        schema_slot = fields.fetch(0)
+        invalid! unless schema_slot.tag == :record && !schema_slot.full?
+
+        schema = @state&.decoded_schemas&.[](schema_slot.value)
+        schema ||= decode_schema(schema_slot)
+        invalid! unless schema[0].size == fields.size - 1
+
+        @key_slots = schema[0].dup
+        @keys = schema[1].dup
+        @identities = schema[2].dup
+        @values = fields.drop(1)
+        @schema_slot = schema_slot
+        @schema_identity = @key_slots.map(&:to_bytes).join.b
+      end
+
+      def decode_schema(slot)
+        record = Core::Record.read(@context.database.core, slot, bound: @context.read_bound)
+        invalid! unless record.metadata == DICTIONARY && (2..MAX_MEMBERS).cover?(record.fields.size)
+        keys = record.fields.map { |original| bounded_key(original) }
+        identities = keys.map { |key| @profile.key_bytes(key) }
+        invalid! if identities.any? { |identity| identity.bytesize > MAX_KEY_BYTES }
+        invalid! unless identities.uniq.size == identities.size
+
+        # @type var schema: decoded_schema
+        schema = [record.fields, keys.freeze, identities.freeze]
+        schema.freeze
+        @state&.store_decoded_schema(slot.value, schema)
+        schema
+      end
+
+      def key_bytes(selector)
+        @profile.key_bytes(selector, state: @state)
+      rescue ValueError => e
+        raise e.class.new(e.message, path: @path + [selector]), cause: e
       end
 
       def bounded_key(slot)
@@ -179,12 +227,28 @@ module XitDB
         stored = if (fallback = @fallback)
                    fallback.slot
                  else
-                   Core::Record.append(@context.writable_transaction!, metadata: kind == :set ? SET : MAP,
-                                                                       fields: record_fields)
+                   metadata, fields = storage_record
+                   Core::Record.append(@context.writable_transaction!, metadata: metadata, fields: fields)
                  end
         cursor.replace(stored)
         @deferred = false
         self
+      end
+
+      def storage_record
+        if kind == :map && size >= 2
+          identity = @key_slots.map(&:to_bytes).join.b
+          schema = @schema_slot if @schema_identity == identity
+          schema ||= @state&.schema(identity) do
+            Core::Record.append(@context.writable_transaction!, metadata: DICTIONARY, fields: @key_slots)
+          end
+          if schema
+            @schema_slot = schema
+            @schema_identity = identity
+            return [SCHEMA_MAP, [schema, *@values]]
+          end
+        end
+        [kind == :set ? SET : MAP, record_fields]
       end
 
       def record_fields

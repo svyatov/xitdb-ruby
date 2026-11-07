@@ -373,11 +373,11 @@ module XitDB
 
     def self.insert: (materialization_frame, top) -> void
 
-    def self.begin_encoding: (top, path, Context, ::Hash[Integer, bool], ::Array[encoding_frame]) -> Core::Slot?
+    def self.begin_encoding: (top, path, Context, ::Hash[Integer, bool], ::Array[encoding_frame], Ruby::PackingState?) -> Core::Slot?
 
     def self.encode_view: (Views::Base, Context, path) -> Core::Slot
 
-    def self.encode_scalar: (top, Context, path) -> Core::Slot
+    def self.encode_scalar: (top, Context, path, Ruby::PackingState?) -> Core::Slot
 
     def self.assign_encoding_parent: (::Array[encoding_frame], Core::Slot) -> void
 
@@ -385,7 +385,7 @@ module XitDB
 
     def self.next_input: (encoding_frame) -> [ selector, top ]?
 
-    def self.begin_materialization: (Core::Slot, path, (adapter | Views::Slice::Selection)?, Context, ::Hash[[ Symbol, Integer ], bool], ::Array[materialization_frame]) -> void
+    def self.begin_materialization: (Core::Slot, path, (adapter | Views::Slice::Selection)?, Context, ::Hash[[ Symbol, Integer ], bool], ::Array[materialization_frame], Ruby::PackingState?) -> void
 
     def self.next_stored_entry: (materialization_frame) -> entry?
 

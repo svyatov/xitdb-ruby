@@ -48,8 +48,20 @@ module XitDB
       # @param core [Core::Database] destination storage
       # @return [Core::Slot] stored scalar descriptor
       # @raise [ValueError] if the scalar cannot be represented
-      def encode_scalar(value, core:)
-        XitDB::Ruby::Scalars.encode(value, core: core, registry: @registry)
+      def encode_scalar(value, core:, state: nil)
+        InputGuard.check!(value) if state
+        identity = state&.scalar_identity(value)
+        cached = state.scalars[identity] if state && identity
+        return cached if cached
+
+        stored = XitDB::Ruby::Scalars.encode(value, core: core, registry: @registry)
+        state.store_scalar(identity, stored) if state && identity
+        stored
+      end
+
+      # Owns bounded tables for exactly one encoding or immutable traversal.
+      def packing_state(context:, reading:)
+        XitDB::Ruby::PackingState.new unless reading && context.transaction
       end
 
       # Returns a lazy view for collections and a decoded Ruby object for scalars.
@@ -74,7 +86,9 @@ module XitDB
       # @param value [nil, Boolean, Integer, Float, String, Symbol] supported exact key class
       # @return [String] frozen binary identity bytes
       # @raise [UnsupportedValueError] if the key type or value is unsupported
-      def key_bytes(value)
+      def key_bytes(value, state: nil)
+        return state.key_bytes(value) { XitDB::Ruby::KeyEncoding.dump(value) } if state
+
         XitDB::Ruby::KeyEncoding.dump(value)
       end
 
@@ -85,11 +99,16 @@ module XitDB
       # @param context [Context] owner of the read or write
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers, nil] bound adapter, or nil for a scalar
-      def container(slot, context:, path:)
+      def container(slot, context:, path:, state: nil)
         if slot.tag == :record
           record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
-          klass = [2, 3].include?(record.metadata) ? XitDB::Ruby::PackedArray : XitDB::Ruby::PackedMap
-          return klass.new(self, context.cursor(slot), context: context, path: path, record: record)
+          if [2, 3].include?(record.metadata)
+            return XitDB::Ruby::PackedArray.new(self, context.cursor(slot), context: context, path: path,
+                                                                            record: record)
+          end
+
+          return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path,
+                                                                        record: record, state: state)
         end
         if slot.empty? && path.empty?
           return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path)
@@ -105,7 +124,7 @@ module XitDB
       # @param context [Context] destination transaction context
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers] new empty collection adapter
-      def empty_container(kind, context:, path:)
+      def empty_container(kind, context:, path:, state: nil)
         kind, key_kind = kind if kind.is_a?(::Array)
         if kind == :array
           return XitDB::Ruby::PackedArray.new(self, context.cursor(Core::Slot.new), context: context, path: path,
@@ -113,7 +132,7 @@ module XitDB
         end
         if %i[map set].include?(kind)
           return XitDB::Ruby::PackedMap.new(self, context.cursor(Core::Slot.new), context: context, path: path,
-                                                                                  kind: kind, defer: true)
+                                                                                  kind: kind, defer: true, state: state)
         end
         XitDB::Ruby::Containers.new(self, context.cursor(Core::Slot.new), context: context, path: path,
                                                                           kind: kind, key_kind: key_kind, defer: true)
@@ -278,14 +297,14 @@ module XitDB
       # @param path [Array<Object>] logical parent location used in key errors
       # @return [Enumerator<Array(Object, Object)>] selector and child-value pairs
       # @raise [ValueError] during enumeration if a key cannot be represented
-      def input_entries(value, path:)
+      def input_entries(value, path:, state: nil)
         Enumerator.new do |output|
           case value
           when Hash, ::Set
             entries = value.is_a?(Hash) ? value.each_pair : value.each.lazy.map { |member| [member, nil] }
             entries.each do |key, child|
               begin
-                key_bytes(key)
+                key_bytes(key, state: state)
               rescue ValueError => e
                 raise e.class.new(e.message, path: path + [key]), cause: e
               end

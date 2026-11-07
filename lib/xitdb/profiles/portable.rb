@@ -12,6 +12,11 @@ module XitDB
     # Untagged strings decode as UTF-8 when valid and as binary otherwise.
     # Native maps use the configured hasher; sorted collections compare raw key bytes.
     class Portable
+      # Portable encoding does not share Ruby dictionaries or scalar records.
+      def packing_state(**)
+        nil
+      end
+
       # Maps native storage tags to the logical kinds used by public collection views.
       KINDS = {
         hash_map: :map, counted_hash_map: :map, sorted_map: :sorted_map,
@@ -43,7 +48,7 @@ module XitDB
       # @return [Core::Slot] stored scalar descriptor
       # @raise [UnsupportedValueError] if the scalar class or singleton behavior is unsupported
       # @raise [RangeError] if an integer exceeds the native 64-bit range
-      def encode_scalar(value, core:)
+      def encode_scalar(value, core:, **)
         InputGuard.check!(value)
         case value
         when nil then Core::Slot.null
@@ -133,7 +138,7 @@ module XitDB
       # @param context [Context] owner of the read or write
       # @param path [Array<Object>] logical collection location
       # @return [Adapter, nil] bound adapter, or nil for a scalar
-      def container(slot, context:, path:)
+      def container(slot, context:, path:, **)
         return nil unless KINDS.key?(slot.tag) || (slot.empty? && path.empty?)
 
         Adapter.new(self, context.cursor(slot), context: context, path: path)
@@ -145,7 +150,7 @@ module XitDB
       # @param context [Context] destination transaction context
       # @param path [Array<Object>] logical collection location
       # @return [Adapter] new empty collection adapter
-      def empty_container(kind, context:, path:)
+      def empty_container(kind, context:, path:, **)
         kind = kind.first if kind.is_a?(Array)
         Adapter.new(self, context.cursor(Core::Slot.new), context: context, path: path, tag: kind)
       end
@@ -256,7 +261,7 @@ module XitDB
       # @return [Enumerator<Array(Object, Object)>] selector and child-value pairs
       # @raise [ValueError] during enumeration if a key cannot be represented
       # @raise [KeyCollisionError] during enumeration if distinct input keys have identical portable bytes
-      def input_entries(value, path:)
+      def input_entries(value, path:, **)
         Enumerator.new do |output|
           # @type var seen: Hash[String, bool]
           seen = {}
