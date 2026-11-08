@@ -223,6 +223,14 @@ The [final provenance](benchmarks/native-records/packing-final-provenance.json) 
 
 Run the comparison from this checkout. Its library files match the frozen packed revision; the report records the current commit. Checking out `af53aeb` separately reproduces the recorded candidate commit with the same timing driver.
 
+After a squash merge, fetch the comparison commits from [PR #4](https://github.com/svyatov/xitdb-ruby/pull/4) before running the benchmark:
+
+```sh
+git fetch origin refs/pull/4/head
+```
+
+This fetch restores the optimized rb01 and frozen packed commits without changing the checkout.
+
 ```sh
 bundle exec ruby script/native_benchmark.rb --baseline fde9a5dda601643398289f5bd0ebfdbfa7f2089e --output pkg/native-packed-final.json
 ```
