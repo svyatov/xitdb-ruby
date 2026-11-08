@@ -54,6 +54,8 @@ module XitDB
                                                                       Core::Slot.uint(slot.count)])
         when PageCell
           context.profile.encode_scalar(slot.decoded, core: context.database.core)
+        when PageDraft
+          context.profile.encode(slot.decoded, context: context, path: [])
         else slot
         end
       end

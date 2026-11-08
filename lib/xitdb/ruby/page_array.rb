@@ -145,6 +145,8 @@ module XitDB
       end
 
       def flat_row(stored)
+        return stored.decoded if stored.is_a?(PageDraft)
+
         adapter = @profile.container(stored, context: @context, path: @path)
         return unless adapter && adapter.kind == :map && adapter.size <= 16
 

@@ -50,6 +50,8 @@ module XitDB
       end
 
       def assign(selector, stored)
+        return self if replace_numeric(selector, stored)
+
         promote.assign(selector, stored)
         publish
       end
@@ -65,6 +67,23 @@ module XitDB
       end
 
       private
+
+      # rubocop:disable-next Naming/PredicateMethod -- Changes the row and cursor on success.
+      def replace_numeric(selector, stored)
+        return false if @fallback || @path.empty? || stored.full? || !%i[none int uint float].include?(stored.tag)
+
+        identity = key_bytes(selector)
+        key = row.each_key.find { |candidate| @profile.stored_key_bytes(candidate) == identity }
+        return false unless key
+
+        value = @profile.decode(stored, context: @context, path: @path, immutable: false)
+        case value
+        when NilClass, Integer, Float then row[key] = value
+        else return false
+        end
+        cursor.replace(PageDraft.new(row))
+        true
+      end
 
       def row
         @row ||= PageCodec.decode_row(Pages.bytes(@reference.page, @context), @reference.index, @reference.count)

@@ -299,6 +299,11 @@ module XitDB
       def initialize: (PageCodec::cell) -> void
     end
 
+    class PageDraft < Core::Slot
+      attr_reader decoded: PageCodec::row
+      def initialize: (PageCodec::row) -> void
+    end
+
     module Pages
       MIN_ROWS: Integer
       ROW_LIMIT: Integer
@@ -319,6 +324,7 @@ module XitDB
       def materialize_flat: () -> PageCodec::row?
       private
       def row: () -> PageCodec::row
+      def replace_numeric: (XitDB::selector, Core::Slot) -> bool
       def promote: () -> PackedMap
     end
 

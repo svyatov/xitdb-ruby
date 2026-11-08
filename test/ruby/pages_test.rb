@@ -92,6 +92,86 @@ class RubyPagesTest < Minitest::Test
     end
   end
 
+  def test_numeric_update_avoids_storing_an_intermediate_map
+    XitDB::Ruby.memory do |database|
+      rows = fixture(32)
+      database.transaction { |root| root["rows"] = rows }
+      old = database.snapshot
+      before = database.core.root_cursor.bound
+      database.transaction { |root| root["rows"][16]["id"] = 123 }
+      expected = rows.map(&:dup)
+      expected[16]["id"] = 123
+      page_size = XitDB::Ruby::PageCodec.encode_page(expected).bytesize
+
+      assert_operator database.core.root_cursor.bound - before, :<=, page_size + 450
+      assert_equal expected, database.snapshot["rows"].to_ruby
+      assert_equal rows, old["rows"].to_ruby
+    end
+  end
+
+  def test_chained_numeric_edits_promote_and_rollback_without_losing_values
+    Dir.mktmpdir("xitdb-row-edits-") do |directory|
+      path = File.join(directory, "data")
+      rows = fixture(32)
+      expected = nil
+      XitDB::Ruby.open(path) do |database|
+        database.transaction { |root| root["rows"] = rows }
+        database.transaction do |root|
+          root["copy"] = root["rows"][0]
+          root["copy"]["id"] = 9
+          root["rows"][1].merge!({ "id" => 2**63, "score" => -0.0, "name" => "changed", "extra" => nil })
+          root["rows"][2].merge!({ "id" => nil, "score" => 3.5 })
+
+          assert_equal 9, root["copy"]["id"]
+          assert_equal rows[0], root["rows"][0].to_ruby
+          assert_equal rows[1].merge("id" => 2**63, "score" => -0.0, "name" => "changed", "extra" => nil),
+                       root["rows"][1].to_ruby
+          assert_equal rows[2].merge("id" => nil, "score" => 3.5), root["rows"][2].to_ruby
+        end
+        snapshot = database.snapshot
+        expected = snapshot.to_ruby
+        assert_raises(RuntimeError) do
+          database.transaction do |root|
+            root["rows"][3]["score"] = 123
+            root["copy"]["score"] = 321
+            raise "rollback"
+          end
+        end
+        assert_equal expected, database.snapshot.to_ruby
+        assert_equal expected, snapshot.to_ruby
+        compact = database.compact(to: File.join(directory, "compact"))
+        begin
+          assert_equal expected, compact.snapshot.to_ruby
+        ensure
+          compact.close
+        end
+      end
+
+      XitDB::Ruby.open(path) { |database| assert_equal expected, database.snapshot.to_ruby }
+    end
+  end
+
+  def test_numeric_update_of_a_persisted_row_reference_root
+    XitDB::Ruby.memory do |database|
+      rows = fixture(32)
+      database.transaction { |root| root["rows"] = rows }
+      reference = database.snapshot["rows"][0].slot
+      database.core.transaction do |cursor|
+        context = XitDB::Context.new(database: database, root: XitDB::Core::Slot.new, bound: cursor.bound,
+                                     transaction: cursor.transaction)
+        stored = XitDB::Ruby::Pages.persist(reference, context)
+        XitDB::Core::ArrayList.new(cursor).append(stored)
+      end
+      snapshot = database.snapshot
+
+      assert_equal rows[0], snapshot.to_ruby
+      database.transaction { |root| root["id"] = 123 }
+
+      assert_equal rows[0].merge("id" => 123), database.snapshot.to_ruby
+      assert_equal rows[0], snapshot.to_ruby
+    end
+  end
+
   def test_shape_changes_slices_concat_and_captured_row_assignment
     XitDB::Ruby.memory do |database|
       rows = fixture(33)
