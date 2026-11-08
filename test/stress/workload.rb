@@ -58,13 +58,16 @@ module BoundedWorkload
 
       high = driver.strip == "systemd" ? (limit_mib * MIB * 3 / 4).to_s : "max"
       reclaim = high == "max" ? [] : ["--annotation", "org.systemd.property.MemoryHigh=uint64 #{high}"]
+      build_runtime(directory)
+      work = File.join(directory, "work")
+      FileUtils.mkdir_p(work)
       command = ["docker", "run", "--pull=never", "--network=none", "--rm", "--name", name,
                  *reclaim,
                  "--memory", "#{limit_mib}m", "--memory-swap", "#{limit_mib}m", "--read-only",
-                 "--mount", "type=bind,src=#{File.expand_path("../..", __dir__)},dst=/repo,readonly",
-                 "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/repo",
+                 "--mount", "type=bind,src=#{directory}/runtime,dst=/repo,readonly",
+                 "--mount", "type=bind,src=#{work},dst=/work", "--workdir", "/repo",
                  "--env", "TMPDIR=/work", "--env", "XITDB_MEMORY_HIGH=#{high}",
-                 "ruby:4.0.9-slim", "ruby", "test/stress/workload.rb",
+                 "ruby:4.0.9", "ruby", "test/stress/workload.rb",
                  mode, "/work", (limit_mib * MIB).to_s, (data_mib || 1).to_s]
       begin
         stdout, stderr, result = Open3.capture3(*command)
@@ -77,6 +80,17 @@ module BoundedWorkload
         system("docker", "rm", "--force", name, out: File::NULL, err: File::NULL) unless result&.success?
       end
     end
+  end
+
+  # Compiles for the container's Ruby before measuring the workload cgroup.
+  def self.build_runtime(directory)
+    command = ["docker", "run", "--pull=never", "--network=none", "--rm", "--read-only",
+               "--user", "#{Process.uid}:#{Process.gid}",
+               "--mount", "type=bind,src=#{File.expand_path("../..", __dir__)},dst=/repo,readonly",
+               "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/work",
+               "--env", "TMPDIR=/work", "ruby:4.0.9", "ruby", "/repo/script/stress_build.rb", "/work/runtime"]
+    output, status = Open3.capture2e(*command)
+    raise "isolated native codec build failed (#{status.exitstatus}): #{output}" unless status.success?
   end
 
   # Verifies Linux cgroup memory and swap limits before fixture allocation.

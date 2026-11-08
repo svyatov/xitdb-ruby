@@ -1,7 +1,7 @@
 # xitdb for Ruby
 
 [`xitdb`](https://rubygems.org/gems/xitdb) provides transactional collections in one file, implemented in Ruby. It requires MRI 3.3 or later.
-It requires no compiler or database service. Runtime dependencies are `date` and `bigdecimal`.
+Installation requires a C compiler, make, and the development headers for the running Ruby to build the Ruby-profile page codec. Runtime dependencies are `date` and `bigdecimal`; no database service is needed.
 
 This is a Ruby implementation of [xitdb](https://github.com/xit-vcs/xitdb), a binary format for immutable database structures.
 The repository is named `xitdb-ruby`; the gem and require path are `xitdb`.
@@ -101,6 +101,11 @@ From a checkout, run them with `bundle exec ruby -Ilib examples/portable.rb`, su
 ## Verify a checkout
 
 Run `bundle install` to install the locked development dependencies.
+
+Run `bundle exec rake compile` before loading `xitdb/ruby` directly from the checkout. The test task builds the extension automatically. Rebuild after changing Ruby versions.
+
+The Linux memory gate uses the cached `ruby:4.0.9` image, which includes build tools. It builds an isolated runtime before starting the measured container, so compilation is outside the memory measurement. Both containers run without network access.
+
 Run `bundle exec ruby script/ci.rb` to check the checkout.
 It checks Ruby style, library types, and Change Risk Anti-Patterns (CRAP), then inspects the locally built package.
 The tests execute packaged examples from temporary storage and inspect package contents.

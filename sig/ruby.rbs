@@ -1,5 +1,14 @@
 module XitDB
   module Ruby
+    # Bounded flat-row wire codec; private implementation of Ruby-profile pages.
+    module PageCodec
+      type cell = nil | bool | Integer | Float | String
+      type row = Hash[String, cell]
+      def self.encode_page: (top) -> String?
+      def self.decode_page: (String, ?Integer?) -> Array[row]
+      def self.decode_row: (String, Integer, ?Integer?) -> row
+    end
+
     def self.open: (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) -> Database
                  | [A] (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) { (Database) -> A } -> A
 

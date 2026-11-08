@@ -21,7 +21,8 @@ class PackageTest < Minitest::Test
          sig/ruby.rbs sig/manifest.yaml].each do |path|
         assert_includes spec.files, path
       end
-      assert_empty spec.extensions
+      assert_equal ["ext/xitdb/page_codec/extconf.rb"], spec.extensions
+      assert_includes spec.files, "ext/xitdb/page_codec/page_codec.c"
       assert_equal %w[bigdecimal date], spec.runtime_dependencies.map(&:name).sort
       refute(spec.files.any? { |path| path.start_with?("test/", ".superpowers/", "pkg/", "docs/superpowers/") })
     end

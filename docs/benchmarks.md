@@ -2,7 +2,7 @@
 
 The stress command measures file databases inside an isolated Linux container with a hard memory budget.
 The benchmark command measures fixed workloads without timing pass thresholds.
-Both commands require Docker and the cached `ruby:4.0.9-slim` image.
+Both commands require Docker and the cached `ruby:4.0.9` image. The runner compiles the native codec in a separate container before starting the memory measurement.
 They use `--pull=never` and `--network=none` and fail when the required capability is unavailable.
 They install nothing.
 
