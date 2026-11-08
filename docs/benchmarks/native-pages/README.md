@@ -119,6 +119,8 @@ The extension experiment follows Ruby's [extension API documentation](https://do
 
 The follow-up [compiled rb02 experiment](../native-batch/README.md) measures batching without replacing the storage format. It separates implementation-language costs from page-layout costs.
 
+The [native adapter experiment](../native-adapters/README.md) measures typed pages through public Ruby-profile views, transactions, sharing, and compaction. It includes general-value fallback and bounded iterative traversal.
+
 Preserve rb02's bounded update path as a comparison point. Measure byte traffic and peak memory in addition to elapsed time and retained size.
 
 Only select a production representation after measuring it through public transactions and views. Require exact scalar fidelity, general-value fallback, corruption checks, and mutation semantics.
