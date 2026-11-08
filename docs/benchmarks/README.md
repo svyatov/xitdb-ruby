@@ -9,3 +9,5 @@ Those archives document historical experiments. Their measurements do not establ
 The C implementation and its build steps have been removed from the library. Replay scripts for historical studies are outside the current build and test workflow.
 
 Ruby-only measurements must use the current production code and repeat the six groups before the performance goal can be declared complete.
+
+The [Ruby-only page baseline](ruby-only-pages/README.md) measures commit `3085ce4` across all six groups. Correctness checks pass; the performance target remains unmet.
