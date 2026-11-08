@@ -5,7 +5,8 @@ module XitDB
     # Builds one bounded page without retaining caller-owned values.
     # @api private
     class PageEncoder
-      def initialize
+      def initialize(stored: false)
+        @stored = stored
         @bytes = +"XP01".b
         @keys = []
       end
@@ -45,7 +46,7 @@ module XitDB
       def exact?(value, klass)
         return false unless Object.instance_method(:instance_of?).bind_call(value, klass)
 
-        InputGuard.check!(value)
+        InputGuard.check!(value) unless @stored
         true
       rescue UnsupportedValueError
         false
@@ -54,6 +55,8 @@ module XitDB
       def valid_row?(row)
         return false unless exact?(row, Hash)
         # @type var row: Hash[String, top]
+        return row.size == @keys.size if @stored
+
         return false unless BasicObject.instance_method(:equal?).bind_call(row.default, nil)
         return false unless row.default_proc.nil? && !row.compare_by_identity?
 

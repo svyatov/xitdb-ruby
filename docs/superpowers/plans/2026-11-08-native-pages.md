@@ -12,6 +12,24 @@
 
 **User amendment, 2026-11-08:** "don't use C, it must be ruby only". This supersedes the C codec and installation choices below. Remove the compiled extension, retain the bounded page contract in Ruby, verify correctness and packaging, and remeasure all six cases. Earlier C measurements are historical evidence only.
 
+**Task 3 refinement:** Rewriting a typed page may use `PageCodec.encode_stored_page` for fresh built-in values created by `PageDecoder` and `PageArray.flat_row`. This writer omits caller-object reflection and Hash-default checks; it retains exact-class, schema, scalar, and byte limits. Ordinary input encoding continues through `encode_page` with full validation. Keep the mode local to a new encoder instance, with no context flag or decoded cache. The public allocation regression must fail before integration, then pass with the full gate and independent QA. Measure the production change before claiming a speed improvement.
+
+## Pause checkpoint, 2026-11-08
+
+The user requested a pause after saving current work. The performance goal remains unmet across all six size/store groups.
+
+Commit `3085ce4` removes the compiled codec and build. Commit `c315f90` archives the [Ruby-only baseline](../../benchmarks/ruby-only-pages/README.md). All thirty median CPU comparisons in that baseline lose to Core JSON.
+
+The latest increment avoids repeated caller-object checks when rewriting freshly decoded rows. Its allocation regression failed at 229,858 allocations before integration and passes below 100,000 afterward. Independent QA passes eight scenarios and twenty chained edits; focused source review reports no findings. The complete `bundle exec rake` gate passes 532 tests and 42,557 assertions, plus style, types, coverage, and complexity checks.
+
+One paired prototype measured 1,000-row memory updates at 1,475 ms versus 55 ms median CPU time. These are prototype results, not production acceptance measurements. Production timing for this increment is deferred until work resumes.
+
+1. Measure the committed update path against the baseline and Core JSON across all six groups.
+2. Investigate insertion validation costs and repeated page decoding during mixed-page reads.
+3. Run the complete balanced workload before claiming the performance target is met.
+
+Keep implementation Ruby-only and preserve input validation. The scratch `ObjectSpace.internal_class_of` experiment is excluded because upstream discourages application use.
+
 ## Global constraints
 
 - Keep exact Ruby values, Float bits, string encodings, key identity and insertion order.

@@ -8,14 +8,16 @@ module XitDB
       type cell = nil | bool | Integer | Float | String
       type row = Hash[String, cell]
       def self.encode_page: (top) -> String?
+      def self.encode_stored_page: (Array[row]) -> String?
       def self.decode_page: (String, ?Integer?) -> Array[row]
       def self.decode_row: (String, Integer, ?Integer?) -> row
     end
 
     class PageEncoder
+      @stored: bool
       @bytes: String
       @keys: Array[String]
-      def initialize: () -> void
+      def initialize: (?stored: bool) -> void
       def encode: (top) -> String?
       private
       def write_schema: (top, Integer) -> bool

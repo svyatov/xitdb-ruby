@@ -13,7 +13,7 @@ class PageCodecTest < Minitest::Test
   end
 
   def test_codec_entry_points_are_implemented_in_ruby
-    %i[encode_page decode_page decode_row].each do |name|
+    %i[encode_page encode_stored_page decode_page decode_row].each do |name|
       source = @codec.method(name).source_location
 
       refute_nil source

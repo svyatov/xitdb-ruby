@@ -133,7 +133,7 @@ module XitDB
         replacement = flat_row(stored)
         if replacement
           rows[row_index] = replacement
-          bytes = PageCodec.encode_page(rows)
+          bytes = PageCodec.encode_stored_page(rows)
           if bytes
             @pages.put(page_index, @context.database.core.bytes(bytes))
             return

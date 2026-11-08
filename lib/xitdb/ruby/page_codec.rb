@@ -17,6 +17,11 @@ module XitDB
         PageEncoder.new.encode(rows)
       end
 
+      # Rows must contain fresh built-in values decoded from stored slots.
+      def self.encode_stored_page(rows)
+        PageEncoder.new(stored: true).encode(rows)
+      end
+
       def self.decode_page(bytes, expected = nil)
         PageDecoder.new(bytes, expected).page
       end

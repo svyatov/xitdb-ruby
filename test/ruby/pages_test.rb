@@ -109,6 +109,21 @@ class RubyPagesTest < Minitest::Test
     end
   end
 
+  def test_numeric_page_update_has_bounded_allocation_cost
+    XitDB::Ruby.memory do |database|
+      database.transaction { |root| root["rows"] = fixture(1000) }
+      snapshot = database.snapshot
+      GC.start
+      before = GC.stat(:total_allocated_objects)
+      database.transaction { |root| root["rows"][500]["id"] = 123 }
+      allocated = GC.stat(:total_allocated_objects) - before
+
+      assert_operator allocated, :<, 100_000
+      assert_equal 123, database.snapshot["rows"][500]["id"]
+      assert_equal 500, snapshot["rows"][500]["id"]
+    end
+  end
+
   def test_chained_numeric_edits_promote_and_rollback_without_losing_values
     Dir.mktmpdir("xitdb-row-edits-") do |directory|
       path = File.join(directory, "data")
