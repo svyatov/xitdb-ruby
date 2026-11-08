@@ -10,8 +10,9 @@ require "rbconfig"
 require "tmpdir"
 require "zlib"
 
-options = { variant: "pages", count: "10000", store: "file", check: false }
+options = { study: "adapters", variant: "pages", count: "10000", store: "file", check: false }
 OptionParser.new do |parser|
+  parser.on("--study NAME") { |value| options[:study] = value }
   parser.on("--variant NAME") { |value| options[:variant] = value }
   parser.on("--count N") { |value| options[:count] = value }
   parser.on("--store NAME") { |value| options[:store] = value }
@@ -19,16 +20,18 @@ OptionParser.new do |parser|
   parser.on("--output PATH") { |value| options[:output] = value }
 end.parse!
 raise ArgumentError, "unexpected arguments: #{ARGV.join(" ")}" unless ARGV.empty?
-unless %w[pages json ruby guarded].include?(options[:variant])
-  raise ArgumentError, "variant must be pages, json, ruby, or guarded"
-end
+raise ArgumentError, "study must be adapters or decode" unless %w[adapters decode].include?(options[:study])
+
+variants = %w[pages json ruby guarded]
+variants << "core_json" if options[:study] == "decode"
+raise ArgumentError, "variant must be one of: #{variants.join(", ")}" unless variants.include?(options[:variant])
 raise ArgumentError, "store must be memory or file" unless %w[memory file].include?(options[:store])
 raise ArgumentError, "count must be a positive integer" unless /\A[1-9][0-9]*\z/.match?(options[:count])
 
 output = File.expand_path(options.fetch(:output))
 raise ArgumentError, "output already exists" if File.exist?(output) || File.symlink?(output)
 
-directory = File.expand_path("../docs/benchmarks/native-adapters", __dir__)
+directory = File.expand_path("../docs/benchmarks/native-#{options[:study]}", __dir__)
 manifest = JSON.parse(File.read(File.join(directory, "provenance.json")))
 source = File.join(directory, "sources.json.gz")
 digest = manifest.fetch("artifacts").fetch(File.basename(source))
@@ -56,6 +59,8 @@ Dir.mktmpdir("xitdb-adapter-replay") do |dir|
   end
   command = if options[:check]
               ["-I#{dir}/lib", File.join(dir, "contract_test.rb")]
+            elsif options[:variant] == "core_json"
+              [File.join(dir, "core_worker.rb"), options[:store], options[:count]]
             else
               [File.join(dir, "worker.rb"), options[:variant], options[:store], options[:count]]
             end

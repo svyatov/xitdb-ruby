@@ -132,4 +132,4 @@ The command verifies the source digest, extracts the archived library, and build
 - `deep-before.txt.gz`, `deep-after.txt.gz`, and `slice-before.txt.gz`: traversal regression evidence.
 - `provenance.json`: artifact digests and individual source digests.
 
-The next optimization must reduce whole-value decode cost without losing selective updates or bounded traversal. These measurements do not complete the performance goal.
+The [key-interning study](../native-decode/README.md) reduces whole-value decode and comparison costs. These measurements do not complete the performance goal.
