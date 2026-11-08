@@ -194,6 +194,8 @@ The original packing study considered inline typed cells and larger byte chunks 
 
 The follow-up [JSON performance experiments](benchmarks/native-pages/README.md) measure JSON pages, field dictionaries, column layouts, compressed pages, and typed binary pages. Those prototypes approach JSON bulk speed but do not implement the complete Ruby profile. Their update copying exceeds rb02's bounded record path.
 
+The [compiled rb02 experiment](benchmarks/native-batch/README.md) measures C batching through public native transactions and views. It preserves ordinary records and bounded updates, while separating interpreter overhead from storage layout costs.
+
 Repeated validation was a separate CPU cost. A source-hashed 1,000-record probe reduced input-guard calls from 30,048 to 7,010 during insert, from thirteen to three during a full read, and from fifty-two to fifteen during an update. Exact immediate scalar classes skip per-object singleton inspection. Profile-owned validated encoding removes duplicate checks. Stored built-in keys do not repeat application-object introspection.
 
 Unchanged reassignment still validates and encodes a complete new graph. There is no persistent whole-graph deduplication. A single-use dictionary can cost more than a literal map; the bounded dictionary table limits this extra cost. Large maps still have the earlier indexed representation's overhead. Full native reads still perform many small record and scalar decodes. Compaction uses a bounded offset cache and can spill mapping data to temporary storage.

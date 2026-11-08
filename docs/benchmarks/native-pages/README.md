@@ -117,7 +117,7 @@ The extension experiment follows Ruby's [extension API documentation](https://do
 
 ## Next experiment
 
-Test compiled batch encoding and decoding against the existing rb02 representation before selecting a replacement format. This separates implementation-language costs from page-layout costs.
+The follow-up [compiled rb02 experiment](../native-batch/README.md) measures batching without replacing the storage format. It separates implementation-language costs from page-layout costs.
 
 Preserve rb02's bounded update path as a comparison point. Measure byte traffic and peak memory in addition to elapsed time and retained size.
 
