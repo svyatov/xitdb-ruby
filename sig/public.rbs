@@ -239,6 +239,7 @@ module XitDB
       attr_reader kind: kind
       @location: Context::Location?
       @stored_slot: Core::Slot?
+      @stored_root: Core::Slot
       def initialize: (context: Context, path: path, kind: kind, ?slot: Core::Slot?) -> void
       def check!: () -> void
       def slot: () -> Core::Slot

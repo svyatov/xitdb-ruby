@@ -468,12 +468,17 @@ module XitDB
     # @yieldparam location [Location]
     # @return [void]
     def each_location(path)
-      key = path_key(path)
+      # @type var key: path?
+      key = nil
       retained = ObjectSpace::WeakMap.new
       @locations&.each_key do |location|
         next if location.expired
 
-        yield location if location.path.first(key.size).eql?(key)
+        if location.path.size >= path.size
+          matched_key = key || path_key(path)
+          key = matched_key
+          yield location if location.path.first(matched_key.size).eql?(matched_key)
+        end
         retained[location] = true unless location.expired
       end
       @locations = retained

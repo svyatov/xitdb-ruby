@@ -6,6 +6,76 @@ require "xitdb/ruby"
 # Retained snapshot views should read their leaf, independent of ancestor depth.
 # @api private
 class PublicSnapshotReferenceTest < Minitest::Test
+  # Freezing a live view does not prevent it from following later mutations.
+  def test_frozen_transaction_views_follow_updates
+    [XitDB, XitDB::Ruby].each do |factory|
+      factory.memory do |database|
+        database.transaction do |root|
+          root["items"] = [{ "value" => 1 }]
+          items = root["items"].freeze
+          row = items[0].freeze
+          slice = items[0, 1].freeze
+          root.freeze
+          root["items"][0]["value"] = 2
+
+          assert_equal 2, row["value"]
+          assert_equal [{ "value" => 2 }], items.to_ruby
+          assert_equal [{ "value" => 1 }], slice.to_ruby
+          assert_equal 2, root["items"][0]["value"]
+        end
+      end
+    end
+  end
+
+  # Stable transaction views read their own storage without retracing ancestors.
+  def test_retained_transaction_reads_do_not_repeat_ancestor_traversal
+    [XitDB, XitDB::Ruby].each do |factory|
+      factory.memory do |database|
+        data = [1, 2, 3]
+        40.times { data = { "child" => data } }
+        database.transaction do |root|
+          root["shallow"] = [1, 2, 3]
+          root["deep"] = data
+          shallow = root["shallow"]
+          deep = root["deep"]
+          40.times { deep = deep["child"] }
+
+          2.times do |iteration|
+            root["unrelated"] = iteration
+
+            assert_equal [1, 2, 3], shallow.to_ruby
+            assert_equal [1, 2, 3], deep.to_ruby
+            shallow_reads = storage_reads(database) { assert_equal [1, 2, 3], shallow.to_ruby }
+            deep_reads = storage_reads(database) { assert_equal [1, 2, 3], deep.to_ruby }
+
+            assert_operator deep_reads, :<=, shallow_reads + 2,
+                            "#{factory}: #{shallow_reads} shallow, #{deep_reads} deep"
+          end
+        end
+      end
+    end
+  end
+
+  # Location notification needs no stored keys when every observed view is shallower.
+  def test_unobserved_location_notification_does_not_read_storage
+    [XitDB, XitDB::Ruby].each do |factory|
+      factory.memory do |database|
+        database.transaction do |root|
+          root["items"] = [{ "value" => 1 }]
+          items = root["items"]
+          row = items[0]
+          reads = storage_reads(database) { root.context.replace_location(["items", 0, "value"]) }
+
+          assert_equal 0, reads
+          assert_equal 1, row["value"]
+          root.context.replace_location(["items", 0])
+          assert_raises(XitDB::ExpiredViewError) { row.to_ruby }
+          assert_equal 1, items.size
+        end
+      end
+    end
+  end
+
   # Reads of a captured leaf have the same storage cost at shallow and deep paths.
   def test_retained_snapshot_reads_do_not_repeat_ancestor_traversal
     [XitDB, XitDB::Ruby].each do |factory|
