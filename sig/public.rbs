@@ -168,6 +168,7 @@ module XitDB
   module InputGuard
     IMMEDIATE_TYPES: Array[Class]
     def self.check!: (top, ?path: path) -> void
+    def self.validate!: (top, path: path) -> void
   end
 
   class Context

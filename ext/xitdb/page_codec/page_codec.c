@@ -12,6 +12,12 @@ static int utf8_index, usascii_index, ascii8bit_index;
 static ID default_id, default_proc_id, identity_id;
 static VALUE invalid_value;
 
+/* A singleton class requires the Ruby guard's complete method checks. */
+static VALUE plain_object(VALUE self, VALUE value)
+{
+    return RTEST(rb_obj_is_kind_of(value, rb_cObject)) && CLASS_OF(value) == rb_obj_class(value) ? Qtrue : Qfalse;
+}
+
 struct buffer { VALUE string; size_t used; int failed; };
 
 static void append(struct buffer *output, const char *bytes, size_t length)
@@ -299,4 +305,5 @@ void Init_page_codec(void)
     rb_define_singleton_method(codec, "encode_page", encode_page, 1);
     rb_define_singleton_method(codec, "decode_page", decode_page, -1);
     rb_define_singleton_method(codec, "decode_row", decode_row, -1);
+    rb_define_singleton_method(codec, "plain_object?", plain_object, 1);
 }

@@ -28,6 +28,39 @@ class PageCodecTest < Minitest::Test
     assert_equal rows.size, decoded.size
   end
 
+  def test_plain_objects_are_checked_without_reflection_callbacks
+    [nil, false, true, 1, 2**100, 1.5, :symbol, +"text", "frozen", [], {}, Object.new].each do |value|
+      assert @codec.plain_object?(value)
+    end
+    klass = Class.new
+    klass.define_singleton_method(:equal?) { |*| raise "class identity hook ran" }
+    klass.define_method(:class) { raise "class hook ran" }
+    klass.define_method(:is_a?) { |*| raise "ancestry hook ran" }
+
+    assert @codec.plain_object?(klass.new)
+    refute @codec.plain_object?(BasicObject.new)
+    refute @codec.plain_object?(Class.new(BasicObject).new)
+  end
+
+  def test_singleton_classes_use_full_validation
+    empty = +"empty"
+    empty.singleton_class
+    removed = +"removed"
+    removed.singleton_class.undef_method(:reverse)
+    hidden = +"hidden"
+    hidden.define_singleton_method(:reverse) { raise "private override ran" }
+    hidden.singleton_class.send(:private, :reverse)
+    extended = +"extended"
+    extended.extend(Module.new { private def reverse = raise("extension ran") })
+
+    [empty, removed, hidden, extended].each { |value| refute @codec.plain_object?(value) }
+    XitDB::InputGuard.check!(empty)
+
+    [removed, hidden, extended].each do |value|
+      assert_raises(XitDB::UnsupportedValueError) { XitDB::InputGuard.check!(value) }
+    end
+  end
+
   def test_all_registered_string_encodings_and_invalid_bytes
     Encoding.list.each do |encoding|
       text = "\x00\x7f\x80\xff".b.force_encoding(encoding)
