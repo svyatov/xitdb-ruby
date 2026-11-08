@@ -6,7 +6,3 @@
 /.steep/
 /.yardoc/
 /doc/
-/tmp/native/
-/lib/xitdb/page_codec.so
-/lib/xitdb/page_codec.bundle
-/lib/xitdb/page_codec.dll

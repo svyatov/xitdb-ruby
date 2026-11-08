@@ -6,10 +6,48 @@ require "open3"
 require "rbconfig"
 require "bundler"
 
-# Exercises the bounded native page format independently of storage adapters.
+# Exercises the bounded page format independently of storage adapters.
 class PageCodecTest < Minitest::Test
   def setup
     @codec = XitDB::Ruby::PageCodec
+  end
+
+  def test_codec_entry_points_are_implemented_in_ruby
+    %i[encode_page decode_page decode_row].each do |name|
+      source = @codec.method(name).source_location
+
+      refute_nil source
+      assert_match(/\.rb\z/, source.first)
+    end
+  end
+
+  def test_decoder_ignores_input_reflection_and_string_hooks
+    bytes = @codec.encode_page([{ "a" => 1 }])
+    def bytes.is_a?(*) = raise("type hook ran")
+    def bytes.bytesize = raise("length hook ran")
+    def bytes.b = raise("copy hook ran")
+    def bytes.to_str = raise("conversion hook ran")
+
+    assert_equal [{ "a" => 1 }], @codec.decode_page(bytes)
+    assert_equal({ "a" => 1 }, @codec.decode_row(bytes, 0))
+    oversized = "x" * 65_537
+    def oversized.bytesize = 0
+
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_page(oversized) }
+  end
+
+  def test_decoder_rejects_spoofed_types_without_callbacks
+    object = Object.new
+    def object.is_a?(*) = true
+    def object.bytesize = 0
+    def object.to_str = raise("conversion hook ran")
+    def object.nil? = raise("nil hook ran")
+    def object.between?(*) = raise("range hook ran")
+    bytes = @codec.encode_page([{}])
+
+    assert_raises(TypeError) { @codec.decode_page(object) }
+    assert_raises(TypeError) { @codec.decode_row(bytes, object) }
+    assert_raises(TypeError) { @codec.decode_page(bytes, object) }
   end
 
   def test_exact_cells_and_selected_rows
@@ -28,18 +66,16 @@ class PageCodecTest < Minitest::Test
     assert_equal rows.size, decoded.size
   end
 
-  def test_plain_objects_are_checked_without_reflection_callbacks
-    [nil, false, true, 1, 2**100, 1.5, :symbol, +"text", "frozen", [], {}, Object.new].each do |value|
-      assert @codec.plain_object?(value)
-    end
+  def test_input_validation_does_not_invoke_reflection_callbacks
     klass = Class.new
     klass.define_singleton_method(:equal?) { |*| raise "class identity hook ran" }
     klass.define_method(:class) { raise "class hook ran" }
     klass.define_method(:is_a?) { |*| raise "ancestry hook ran" }
 
-    assert @codec.plain_object?(klass.new)
-    refute @codec.plain_object?(BasicObject.new)
-    refute @codec.plain_object?(Class.new(BasicObject).new)
+    XitDB::InputGuard.check!(klass.new)
+
+    assert_raises(XitDB::UnsupportedValueError) { XitDB::InputGuard.check!(BasicObject.new) }
+    assert_raises(XitDB::UnsupportedValueError) { XitDB::InputGuard.check!(Class.new(BasicObject).new) }
   end
 
   def test_singleton_classes_use_full_validation
@@ -53,7 +89,6 @@ class PageCodecTest < Minitest::Test
     extended = +"extended"
     extended.extend(Module.new { private def reverse = raise("extension ran") })
 
-    [empty, removed, hidden, extended].each { |value| refute @codec.plain_object?(value) }
     XitDB::InputGuard.check!(empty)
 
     [removed, hidden, extended].each do |value|
@@ -178,7 +213,7 @@ class PageCodecTest < Minitest::Test
     end
   end
 
-  def test_direct_checkout_entry_point_loads_its_compiled_extension
+  def test_direct_checkout_entry_point_loads_without_compilation
     output, status = Bundler.with_unbundled_env do
       Open3.capture2e(
         { "RUBYOPT" => nil, "RUBYLIB" => nil }, RbConfig.ruby, "-e",

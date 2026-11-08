@@ -2,6 +2,8 @@
 
 The header has hash size 32 and hash identifier `rb03`. Hash indexes use SHA-256 over canonical typed keys.
 
+The page encoder, decoder, and storage adapters are implemented in Ruby. The gem has no compiled extension or build step.
+
 Scalar encodings, key identity, indexed envelopes, and record metadata 1 through 6 retain the layouts specified in [version 2](ruby-profile-v2.md). Version 3 adds the page layouts below. Native handles reject `rb01` and `rb02` files without changing their contents. No migration or backward reader is provided.
 
 ## Page arrays
@@ -48,4 +50,4 @@ Decoding rejects unknown tags, invalid counts, duplicate keys, noncanonical inte
 
 A compatible replacement rewrites only its typed page and the required ancestor records. An incompatible replacement promotes that page to a packed array of persisted row references. Structural array changes promote the logical array to ordinary packed storage. Raw byte-stream writes preserve their untagged byte representation through promotion.
 
-Portable storage remains unchanged. Pinned reference implementations cannot maintain native graphs that use the Core record extension. Loading the portable entry point does not load the native page codec.
+Portable storage remains unchanged. Pinned reference implementations cannot maintain native graphs that use the Core record extension. Loading the portable entry point does not load the Ruby page codec.

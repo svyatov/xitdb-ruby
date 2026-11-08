@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../xitdb"
-require_relative "page_codec"
+require_relative "ruby/page_codec"
 require_relative "ruby/scalars"
 require_relative "ruby/key_encoding"
 require_relative "ruby/containers"

@@ -2,12 +2,55 @@ module XitDB
   module Ruby
     # Bounded flat-row wire codec; private implementation of Ruby-profile pages.
     module PageCodec
-      def self.plain_object?: (top) -> bool
+      PAGE_LIMIT: Integer
+      ROW_LIMIT: Integer
+      FIELD_LIMIT: Integer
       type cell = nil | bool | Integer | Float | String
       type row = Hash[String, cell]
       def self.encode_page: (top) -> String?
       def self.decode_page: (String, ?Integer?) -> Array[row]
       def self.decode_row: (String, Integer, ?Integer?) -> row
+    end
+
+    class PageEncoder
+      @bytes: String
+      @keys: Array[String]
+      def initialize: () -> void
+      def encode: (top) -> String?
+      private
+      def write_schema: (top, Integer) -> bool
+      def exact?: (top, Class) -> bool
+      def valid_row?: (top) -> bool
+      def encode_row: (Hash[String, top]) -> bool
+      def same_key?: (top, String?) -> bool
+      def append: (String?) -> bool
+      def cell: (top) -> String?
+      def integer: (Integer) -> String?
+      def text: (top) -> String?
+      def unsigned: (Integer) -> String
+    end
+
+    class PageDecoder
+      @bytes: String
+      @position: Integer
+      @count: Integer
+      @keys: Array[String]
+      def initialize: (String, Integer?) -> void
+      def page: () -> Array[PageCodec::row]
+      def row: (Integer) -> PageCodec::row
+      private
+      def validate_count!: (Integer, Integer, Integer?) -> void
+      def schema: (Integer) -> Array[String]
+      def read_row: () -> PageCodec::row
+      def cell: () -> PageCodec::cell
+      def skip_cell: () -> void
+      def string_encoding: (Integer) -> Encoding
+      def named_encoding: () -> Encoding
+      def unsigned: () -> Integer
+      def byte: () -> Integer
+      def take: (Integer) -> String
+      def advance!: (Integer) -> Integer
+      def finish!: () -> void
     end
 
     def self.open: (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) -> Database

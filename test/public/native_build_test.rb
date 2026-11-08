@@ -6,7 +6,7 @@ require "open3"
 require "rbconfig"
 require "tmpdir"
 
-# Checks the standalone build used before the Linux memory measurement.
+# Checks the standalone Ruby runtime used before the Linux memory measurement.
 class NativeBuildTest < Minitest::Test
   def test_stress_runtime_builds_without_development_gems_or_checkout_load_paths
     root = File.expand_path("../..", __dir__)
@@ -25,7 +25,8 @@ class NativeBuildTest < Minitest::Test
       assert_predicate status, :success?, output
       assert_equal "{}\n", output
       refute_path_exists File.join(runtime, "Gemfile")
-      assert File.file?(File.join(runtime, "lib/xitdb/page_codec.#{RbConfig::CONFIG.fetch("DLEXT")}"))
+      assert File.file?(File.join(runtime, "lib/xitdb/ruby/page_codec.rb"))
+      assert_empty Dir[File.join(runtime, "**/*.{c,so,bundle,dll}")]
       _output, status = Bundler.with_unbundled_env do
         Open3.capture2e(RbConfig.ruby, File.join(root, "script/stress_build.rb"), runtime)
       end

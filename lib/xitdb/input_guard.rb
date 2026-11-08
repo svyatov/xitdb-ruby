@@ -18,8 +18,6 @@ module XitDB
     # @return [void]
     # @raise [UnsupportedValueError] if singleton behavior or removed methods are detected
     def self.check!(value, path: [])
-      return if defined?(Ruby::PageCodec) && Ruby::PageCodec.plain_object?(value)
-
       validate!(value, path: path)
     end
 

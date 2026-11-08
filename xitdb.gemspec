@@ -9,15 +9,14 @@ Gem::Specification.new do |spec|
   spec.name = "xitdb"
   spec.version = XitDB::VERSION
   spec.authors = ["Leonid Svyatov"]
-  spec.summary = "Ruby implementation of xitdb with a native Ruby-value page codec"
+  spec.summary = "Pure Ruby implementation of xitdb"
   spec.description = "Transactional collections, portable xitdb storage, and an explicit Ruby value profile."
   spec.homepage = "https://github.com/svyatov/xitdb-ruby"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.3"
   spec.files = Dir["lib/**/*.rb", "sig/**/*.rbs", "sig/manifest.yaml", "examples/*.rb", "README.md", "CHANGELOG.md",
-                   "LICENSE", "docs/*.md", "ext/**/*.{rb,c}"]
+                   "LICENSE", "docs/*.md"]
   spec.require_paths = ["lib"]
-  spec.extensions = ["ext/xitdb/page_codec/extconf.rb"]
   spec.metadata["source_code_uri"] = spec.homepage
   spec.metadata["bug_tracker_uri"] = "#{spec.homepage}/issues"
   spec.metadata["changelog_uri"] = "#{spec.homepage}/blob/main/CHANGELOG.md"

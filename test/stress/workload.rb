@@ -82,7 +82,7 @@ module BoundedWorkload
     end
   end
 
-  # Compiles for the container's Ruby before measuring the workload cgroup.
+  # Copies Ruby sources before measuring the workload cgroup.
   def self.build_runtime(directory)
     command = ["docker", "run", "--pull=never", "--network=none", "--rm", "--read-only",
                "--user", "#{Process.uid}:#{Process.gid}",
@@ -90,7 +90,7 @@ module BoundedWorkload
                "--mount", "type=bind,src=#{directory},dst=/work", "--workdir", "/work",
                "--env", "TMPDIR=/work", "ruby:4.0.9", "ruby", "/repo/script/stress_build.rb", "/work/runtime"]
     output, status = Open3.capture2e(*command)
-    raise "isolated native codec build failed (#{status.exitstatus}): #{output}" unless status.success?
+    raise "isolated Ruby runtime preparation failed (#{status.exitstatus}): #{output}" unless status.success?
   end
 
   # Verifies Linux cgroup memory and swap limits before fixture allocation.

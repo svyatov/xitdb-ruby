@@ -10,6 +10,8 @@
 
 **Spec:** The user's ongoing performance goal and authorization to change representation, format, and API without migration support. The archived measured candidate is `docs/benchmarks/native-encode/sources.json.gz`. This plan records implementation choices, not additional user requirements.
 
+**User amendment, 2026-11-08:** "don't use C, it must be ruby only". This supersedes the C codec and installation choices below. Remove the compiled extension, retain the bounded page contract in Ruby, verify correctness and packaging, and remeasure all six cases. Earlier C measurements are historical evidence only.
+
 ## Global constraints
 
 - Keep exact Ruby values, Float bits, string encodings, key identity and insertion order.
