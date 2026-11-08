@@ -207,6 +207,7 @@ module XitDB
       def key_bytes: (XitDB::value, ?state: XitDB::Ruby::PackingState?) -> String
       def stored_key_bytes: (XitDB::value) -> String
       def container: (Core::Slot, context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers?
+      def record_container: (Core::Slot, context: Context, path: XitDB::path, state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
       def empty_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
       def conversion_kind: (XitDB::adapter) -> (Symbol | [ Symbol, Symbol? ])
       def conversion_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> XitDB::Ruby::Containers
@@ -283,6 +284,58 @@ module XitDB
       def store_decoded_schema: (Integer, decoded_schema) -> decoded_schema
       private
       def string_key_bytes: (String) { () -> String } -> String
+    end
+
+    class PageReference < Core::Slot
+      attr_reader page: Core::Slot
+      attr_reader index: Integer
+      attr_reader count: Integer
+      def initialize: (Core::Slot, Integer, Integer) -> void
+    end
+
+    class PageCell < Core::Slot
+      attr_reader decoded: PageCodec::cell
+      def initialize: (PageCodec::cell) -> void
+    end
+
+    module Pages
+      MIN_ROWS: Integer
+      ROW_LIMIT: Integer
+      BYTE_LIMIT: Integer
+      ARRAY: Integer
+      ROW: Integer
+      def self.encode: (top, context: Context, path: XitDB::path) -> Core::Slot?
+      def self.persist: (Core::Slot, Context) -> Core::Slot
+      def self.bytes: (Core::Slot, Context) -> String
+      def self.reference: (Core::Record) -> PageReference
+    end
+
+    class PageRow < Containers
+      @reference: PageReference
+      @row: PageCodec::row?
+      @fallback: PackedMap?
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, reference: PageReference) -> void
+      def materialize_flat: () -> PageCodec::row?
+      private
+      def row: () -> PageCodec::row
+      def promote: () -> PackedMap
+    end
+
+    class PageArray < Containers
+      @count: Integer
+      @pages: Core::ArrayList
+      @fallback: PackedArray?
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, record: Core::Record) -> void
+      def materialize_flat: () -> Array[PageCodec::row]?
+      private
+      def page_size: (Integer) -> Integer
+      def page_slot!: (Integer) -> Core::Slot
+      def generic_page: (Core::Slot, Integer) -> PackedArray
+      def replace_row: (Integer, Core::Slot) -> void
+      def flat_row: (Core::Slot) -> PageCodec::row?
+      def page_cell?: (Core::Slot) -> bool
+      def promote_page: (Core::Slot, Integer) -> PackedArray
+      def promote: () -> PackedArray
     end
 
     class PackedArray < Containers

@@ -21,7 +21,7 @@ module XitDB
     # @raise [ProfileMismatchError] if the hasher uses a reserved Ruby profile identifier
     def self.hasher(value)
       if value.is_a?(Core::Hasher)
-        raise ProfileMismatchError, "#{value.id} is reserved for XitDB::Ruby" if %w[rb01 rb02].include?(value.id)
+        raise ProfileMismatchError, "#{value.id} is reserved for XitDB::Ruby" if %w[rb01 rb02 rb03].include?(value.id)
 
         return value
       end
@@ -59,7 +59,7 @@ module XitDB
       store, created = open_store(path, readonly: readonly)
       begin
         core = Core::Database.new(store: store, initialize_empty: created, lock_timeout: lock_timeout, **options)
-        if %w[rb01 rb02].include?(core.header.hash_id)
+        if %w[rb01 rb02 rb03].include?(core.header.hash_id)
           raise ProfileMismatchError, "Ruby profile file requires XitDB::Ruby.open"
         end
 

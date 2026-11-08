@@ -60,6 +60,7 @@ module XitDB
       end
 
       def assign(selector, stored)
+        stored = Pages.persist(stored, @context)
         if (fallback = @fallback)
           fallback.assign(selector, stored)
         else

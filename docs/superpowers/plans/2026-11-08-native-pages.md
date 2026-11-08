@@ -33,10 +33,10 @@
 
 **Interfaces:** Produces private `XitDB::Ruby::PageCodec.encode_page(input) -> String?`, `decode_page(bytes, expected_rows = nil) -> Array[Hash]`, `decode_row(bytes, index, expected_rows = nil) -> Hash`. Encoding returns nil for unsupported shape, does not swallow application exceptions, and does not mutate input. Decoding raises InvalidValueError for malformed data, IndexError for invalid row selection. Input types are checked without conversion callbacks. Wire magic XP01 is internal and versioned.
 
-- [ ] Write tests for exact scalar/encoding round trips, bounds, fallback, callbacks, malformed bytes, selected-row validation and expected counts. Run `bundle exec ruby -Ilib:test test/ruby/page_codec_test.rb`. Expected: missing native codec failure.
-- [ ] Adapt measured codec, replacing normal fallback exceptions with nil and validating all decoding paths. Add mkmf build and gem packaging, RBS declarations and documentation of compiler requirement.
-- [ ] Run `bundle exec rake` and independent native-code checks. Expected: all checks pass and installed examples load both profiles.
-- [ ] Commit codec and packaging as one independently testable increment. The storage format remains rb02 until Task 2.
+- [x] Write tests for exact scalar/encoding round trips, bounds, fallback, callbacks, malformed bytes, selected-row validation and expected counts. Run `bundle exec ruby -Ilib:test test/ruby/page_codec_test.rb`. Expected: missing native codec failure.
+- [x] Adapt measured codec, replacing normal fallback exceptions with nil and validating all decoding paths. Add mkmf build and gem packaging, RBS declarations and documentation of compiler requirement.
+- [x] Run `bundle exec rake` and independent native-code checks. Expected: all checks pass and installed examples load both profiles.
+- [x] Commit codec and packaging as one independently testable increment. The storage format remains rb02 until Task 2.
 
 ### Task 2: Page storage and references
 
@@ -50,10 +50,10 @@
 
 `PageRow` decodes lazily on the first value operation, so creating a view does not decode the same row twice. Its private row memo belongs to one adapter, not a retained view or context. Mutation promotes that row to a PackedMap; the PageArray ancestor can then rewrite a compatible typed page. `PageArray#materialize_flat` returns nil for mixed pages, which sends the entire collection through the existing iterative walker. `PageRow#materialize_flat` returns fresh mutable values and frozen keys; no source object escapes.
 
-- [ ] Write public tests for 32/1,024/1,025/2,050-row insertion, selected and full reads, scalar and row updates, promotion after key addition/nested replacement, slices/concat, copy/conversion, compaction, rollback after partial encode, snapshot/view lifetime, malformed descriptors, deep and oversized inputs. Verify byte growth for one compatible update remains within one page plus tree/record overhead. Run focused tests. Expected: pages not enabled or new format absent.
-- [ ] Integrate without prepend patches. Page arrays validate page counts and page lengths when accessed. Generic promoted pages must be array records with bounded counts, never recursive page arrays. Flat updates rewrite one page; shape-changing edits promote only the affected page where possible.
-- [ ] Run focused tests and `bundle exec rake`. Expected: all checks pass, including package examples and static type coverage.
-- [ ] Commit production integration and format documentation.
+- [x] Write public tests for 32/1,024/1,025/2,050-row insertion, selected and full reads, scalar and row updates, promotion after key addition/nested replacement, slices/concat, copy/conversion, compaction, rollback after partial encode, snapshot/view lifetime, malformed descriptors, deep and oversized inputs. Verify byte growth for one compatible update remains within one page plus tree/record overhead. Run focused tests. Expected: pages not enabled or new format absent.
+- [x] Integrate without prepend patches. Page arrays validate page counts and page lengths when accessed. Generic promoted pages must be array records with bounded counts, never recursive page arrays. Flat updates rewrite one page; shape-changing edits promote only the affected page where possible.
+- [x] Run focused tests and `bundle exec rake`. Expected: all checks pass, including package examples and static type coverage.
+- [x] Commit production integration and format documentation.
 
 ### Task 3: Independent verification and performance decision
 
@@ -61,6 +61,6 @@
 
 **Interfaces:** Consumes installed production profile and existing Core JSON benchmark baseline. Reports CPU, elapsed time, bytes, correctness, and runtime/platform limits separately.
 
-- [ ] Run independent QA through the public API and a fresh source review; fix important findings with reproducing tests.
+- [x] Run independent QA through the public API and a fresh source review; fix important findings with reproducing tests.
 - [ ] Run fresh balanced comparisons for file and memory stores at small, medium and large sizes, including insert, read, indexed read, update and compaction. Check every output and store size.
 - [ ] Record remaining misses against Core JSON. Continue performance work if the user's target remains unmet; do not mark the overall goal complete merely because integration passed.

@@ -6,7 +6,7 @@ module XitDB
   module Profiles
     # Connects Ruby values to scalar encoders and collection adapters.
     # Maps and sets preserve insertion order; typed sorted collections preserve their declared key order.
-    # SHA-256 hashes canonical key bytes under the "rb02" header identifier.
+    # SHA-256 hashes canonical key bytes under the "rb03" header identifier.
     # Application codecs belong to this profile instance and are not written as executable code.
     class Ruby
       attr_reader :hasher, :codecs
@@ -27,7 +27,7 @@ module XitDB
       def initialize(codecs: [])
         @registry = XitDB::Ruby::CodecRegistry.new(codecs)
         @codecs = @registry.codecs
-        @hasher = Core::Hasher.new(id: "rb02", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
+        @hasher = Core::Hasher.new(id: "rb03", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end
 
@@ -73,6 +73,12 @@ module XitDB
       # @return [Object] collection view or scalar
       # @raise [ValueError] if stored data cannot be decoded by this profile
       def decode(slot, context:, path:, immutable: true)
+        if slot.is_a?(XitDB::Ruby::PageCell)
+          value = slot.decoded
+          return value unless value.is_a?(String)
+
+          return immutable ? value.dup.freeze : value.dup
+        end
         if (adapter = container(slot, context: context, path: path))
           context.view(slot, path: path, kind: adapter.kind)
         else
@@ -105,16 +111,11 @@ module XitDB
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers, nil] bound adapter, or nil for a scalar
       def container(slot, context:, path:, state: nil)
-        if slot.tag == :record
-          record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
-          if [2, 3].include?(record.metadata)
-            return XitDB::Ruby::PackedArray.new(self, context.cursor(slot), context: context, path: path,
-                                                                            record: record)
-          end
-
-          return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path,
-                                                                        record: record, state: state)
+        return nil if slot.is_a?(XitDB::Ruby::PageCell)
+        if slot.is_a?(XitDB::Ruby::PageReference)
+          return XitDB::Ruby::PageRow.new(self, context.cursor(slot), context: context, path: path, reference: slot)
         end
+        return record_container(slot, context: context, path: path, state: state) if slot.tag == :record
         if slot.empty? && path.empty?
           return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path)
         end
@@ -122,6 +123,26 @@ module XitDB
 
         XitDB::Ruby::Containers.new(self, context.cursor(slot), context: context, path: path)
       end
+
+      # Dispatches bounded native records after validating their common header.
+      def record_container(slot, context:, path:, state:)
+        raise InvalidValueError, "invalid Ruby record flag" if slot.full?
+
+        record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
+        case record.metadata
+        when XitDB::Ruby::Pages::ARRAY
+          XitDB::Ruby::PageArray.new(self, context.cursor(slot), context: context, path: path, record: record)
+        when XitDB::Ruby::Pages::ROW
+          reference = XitDB::Ruby::Pages.reference(record)
+          XitDB::Ruby::PageRow.new(self, context.cursor(slot), context: context, path: path, reference: reference)
+        when 2, 3
+          XitDB::Ruby::PackedArray.new(self, context.cursor(slot), context: context, path: path, record: record)
+        else
+          XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path, record: record,
+                                                                 state: state)
+        end
+      end
+      private :record_container
 
       # Creates an adapter for a new empty collection at a logical location.
       #

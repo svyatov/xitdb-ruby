@@ -8,6 +8,11 @@ require_relative "ruby/containers"
 require_relative "ruby/packed_map"
 require_relative "ruby/packed_array"
 require_relative "ruby/packing_state"
+require_relative "ruby/page_reference"
+require_relative "ruby/page_cell"
+require_relative "ruby/pages"
+require_relative "ruby/page_row"
+require_relative "ruby/page_array"
 require_relative "profiles/ruby"
 
 module XitDB
@@ -41,7 +46,7 @@ module XitDB
       # @type var database: Database
       begin
         core = Core::Database.new(store: store, initialize_empty: created, lock_timeout: lock_timeout,
-                                  hash_id: "rb02", hash_size: 32)
+                                  hash_id: "rb03", hash_size: 32)
         database = Database.new(core: core, profile: profile, readonly: readonly)
         opened = true
       ensure
@@ -67,7 +72,7 @@ module XitDB
     # @raise [CodecConfigurationError] if codec registrations are invalid
     def self.memory(codecs: [])
       profile = Profiles::Ruby.new(codecs: codecs)
-      database = Database.new(core: Core::Database.memory(hash_id: "rb02", hash_size: 32), profile: profile)
+      database = Database.new(core: Core::Database.memory(hash_id: "rb03", hash_size: 32), profile: profile)
       return database unless block_given?
 
       begin

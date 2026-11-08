@@ -11,9 +11,9 @@ require "xitdb/ruby/scalars"
 # Provides a raw Ruby-profile database and reusable scalar fixtures.
 # @api private
 class RubyProfileTest < Minitest::Test
-  # Creates a raw memory database with the rb02 hash identifier and 32-byte hashes.
+  # Creates a raw memory database with the rb03 hash identifier and 32-byte hashes.
   def setup
-    @core = XitDB::Core::Database.memory(hash_id: "rb02", hash_size: 32)
+    @core = XitDB::Core::Database.memory(hash_id: "rb03", hash_size: 32)
   end
 
   # Closes the raw Ruby-profile fixture database.

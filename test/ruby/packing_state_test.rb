@@ -6,7 +6,8 @@ require "xitdb/ruby"
 class RubyPackingStateTest < Minitest::Test
   def test_repeated_fields_share_dictionaries_and_short_values_without_ruby_aliases
     XitDB::Ruby.memory do |database|
-      values = Array.new(58) do |index|
+      # Stay below the page threshold to exercise dictionary storage.
+      values = Array.new(31) do |index|
         { "name" => "method_#{index}", "namespace" => "Example", "path" => "lib/example.rb",
           "complexity" => index, "coverage" => nil, "crap" => nil }
       end

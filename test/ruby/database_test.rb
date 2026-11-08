@@ -39,7 +39,7 @@ class RubyDatabaseTest < Minitest::Test
       path = File.join(directory, "native.xit")
       XitDB::Ruby.open(path) { |db| db.transaction { |root| root[:name] = "native" } }
       assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path) }
-      assert_equal "rb02", File.binread(path, 4, 8)
+      assert_equal "rb03", File.binread(path, 4, 8)
       assert_equal 32, File.binread(path, 2, 6).unpack1("n")
       portable = File.join(directory, "portable.xit")
       XitDB.open(portable, &:close)
