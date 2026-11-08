@@ -284,7 +284,7 @@ module XitDB
       def transaction: () { (Cursor) -> top } -> Cursor
       def handle_transaction_error: (Exception, Exception?, bool?, :not_committed | :committed | :unknown) -> bot
       def finish_transaction: (Transaction, Integer, :not_committed | :committed | :unknown, bool, Exception?) -> void
-      def bytes: (String, ?format_tag: String?) -> Slot
+      def bytes: (String, ?format_tag: String?, ?prefix: String) -> Slot
       def read_bytes: (Slot, ?bound: Integer?) -> ByteValue
       def read_at: (Integer, Integer, bound: Integer) -> String
       def close_unreturned: () -> void
@@ -391,13 +391,27 @@ module XitDB
       def spill: () -> void
     end
 
+    class ArrayBuilder
+      @transaction: Transaction
+      @levels: Array[Array[Slot]]
+      @count: Integer
+      @slot: Slot?
+      def initialize: (Transaction) -> void
+      def append: (Slot) -> self
+      def slot: () -> Slot
+      private
+      def push: (Integer, Slot) -> void
+      def block: (Array[Slot]) -> Integer
+    end
+
     class ArrayList
       include Enumerable[Slot]
       HEADER_SIZE: Integer
       BLOCK_SIZE: Integer
       EMPTY_BLOCK: String
       attr_reader cursor: Cursor
-      def initialize: (Cursor) -> void
+      def initialize: (Cursor, ?fields: Array[Slot]) -> void
+      def validate_initial_fields!: (Array[Slot]) -> void
       def size: () -> Integer
       def get: (Integer) -> Slot?
       def cursor_at: (Integer, ?create: bool) -> Cursor?
@@ -619,6 +633,16 @@ module XitDB
       def initialize: (Cursor) -> void
     end
 
+    class Record
+      MAX_FIELDS: Integer
+      HEADER_SIZE: Integer
+      attr_reader metadata: Integer
+      attr_reader fields: Array[Slot]
+      def initialize: (metadata: Integer, fields: Array[Slot]) -> void
+      def self.append: (Transaction, metadata: Integer, fields: Array[Slot]) -> Slot
+      def self.read: (Database, Slot, bound: Integer) -> Record
+    end
+
     class Compaction
       INLINE_TAGS: Array[Symbol]
       BLOCK_SIZE: Integer
@@ -633,6 +657,8 @@ module XitDB
       def parse: (String) -> Slot
       def remap: (Slot) -> Slot
       def remap_pointer: (Slot) -> Integer
+      def copy_record: (Slot) -> Integer
+      def copy_pair: (Slot) -> Integer
       def reserve: (Integer, Integer, ?cache: bool) { (Integer, Integer) -> void } -> Integer
       def reserve_slots: (Integer, Integer, Integer, Integer) -> Integer
       def copy_bytes: (Slot) -> Integer

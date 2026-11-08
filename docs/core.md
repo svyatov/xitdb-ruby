@@ -119,5 +119,12 @@ Graph traversal uses an explicit stack. Write buffers are bounded at 2 MiB, byte
 Scalar materialization, streams, conversion, and compaction use that implementation. Profiles retain payload interpretation and encoding rules.
 Compaction preserves external byte records, including short payloads and unknown format tags.
 
+The private `:record` extension uses tag code 17, after the upstream tags.
+A record contains unsigned 32-bit metadata, an unsigned 32-bit field count, and consecutive nine-byte slots, all in big-endian order.
+The field count cannot exceed 32. Readers check the count and captured boundary before loading fields.
+Compaction reserves each record before remapping its fields, preserving sharing and cycles.
+The enclosing logical mutation owns rollback and publication. Record construction appends complete bytes without publishing a root.
+Portable writers do not emit this extension. Upstream implementations require extension support before maintaining graphs that contain it.
+
 The port preserves the package's [MIT license notice](../LICENSE).
 Reference revisions and source hashes are recorded in `test/interop/manifest.json` in the source checkout.

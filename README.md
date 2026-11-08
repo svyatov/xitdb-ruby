@@ -58,7 +58,7 @@ end
 | Entry point | Values and keys | File identifier |
 | --- | --- | --- |
 | `XitDB.open`, `XitDB.memory` | Portable integers, floats, bytes, collections, and String keys | `sha1` by default; `hash: :sha256` selects `sha2` |
-| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb01` |
+| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb02` |
 | `XitDB::Core::Database` | Raw slots, every upstream collection, and arbitrary roots | Explicit storage configuration |
 
 Opening never converts a profile. Public entry points reject a mismatched profile and pre-existing zero-byte files.
@@ -86,8 +86,8 @@ Start with [Learn xitdb](docs/learning.md) for a beginner's explanation of value
 Ruby source includes YARD API comments. With YARD available, run `yard doc` and open `doc/index.html`.
 
 Read the [portable guide](docs/portable.md), [Ruby guide](docs/ruby.md), and [core guide](docs/core.md).
-The [Ruby wire contract](docs/ruby-profile-v1.md) defines cross-language interpretation of `rb01`.
-Other languages can preserve Ruby-profile bytes without decoding their logical values.
+The [Ruby wire contract](docs/ruby-profile-v2.md) defines compact native containers and exact scalar payloads.
+Pinned references preserve opaque Ruby scalar bytes inside portable containers. Native `rb02` containers require the Core record extension.
 
 ## Run the workflows
 

@@ -39,7 +39,7 @@ class RubyDatabaseTest < Minitest::Test
       path = File.join(directory, "native.xit")
       XitDB::Ruby.open(path) { |db| db.transaction { |root| root[:name] = "native" } }
       assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path) }
-      assert_equal "rb01", File.binread(path, 4, 8)
+      assert_equal "rb02", File.binread(path, 4, 8)
       assert_equal 32, File.binread(path, 2, 6).unpack1("n")
       portable = File.join(directory, "portable.xit")
       XitDB.open(portable, &:close)
@@ -214,8 +214,8 @@ class RubyDatabaseTest < Minitest::Test
   def test_insertion_overflow_preserves_updates_and_clear_resets_empty_indexes
     [false, true].each do |set|
       @db.transaction do |root|
-        root[:items] = set ? Set[:first] : { first: 1 }
-        items = root[:items]
+        items = indexed_collection(root, :items, set: set)
+        set ? items.add(:first) : items[:first] = 1
         context = items.context
         context.mutate(items.path) do |cursor|
           envelope = XitDB::Core::ArrayList.new(cursor)
@@ -241,9 +241,11 @@ class RubyDatabaseTest < Minitest::Test
   # Checks raw Ruby collection envelopes and their index records against the expected layout.
   def test_exact_envelopes_and_index_records
     @db.transaction do |root|
+      17.times { |index| root[index] = index }
+      root.clear
       root[:array] = [1]
       root[:linked] = XitDB.linked_array
-      root[:set] = Set[:member]
+      indexed_collection(root, :set, set: true).add(:member)
     end
     snapshot = @db.snapshot
     envelope = physical_envelope(snapshot)
@@ -253,13 +255,15 @@ class RubyDatabaseTest < Minitest::Test
     assert_equal 3, envelope.get(1).value
     assert_equal :counted_hash_map, envelope.get(2).tag
     assert_equal :sorted_map, envelope.get(3).tag
-    [[:array, 0x52420101, :array_list], [:linked, 0x52420102, :linked_array_list]].each do |key, marker, tag|
-      item = physical_envelope(snapshot[key])
+    array = XitDB::Core::Record.read(@db.core, snapshot[:array].slot, bound: snapshot.context.read_bound)
 
-      assert_equal 2, item.size
-      assert_equal marker, item.get(0).value
-      assert_equal tag, item.get(1).tag
-    end
+    assert_equal 2, array.metadata
+    assert_equal [XitDB::Core::Slot.int(1)], array.fields
+    linked = physical_envelope(snapshot[:linked])
+
+    assert_equal 2, linked.size
+    assert_equal 0x52420102, linked.get(0).value
+    assert_equal :linked_array_list, linked.get(1).tag
     set = physical_envelope(snapshot[:set])
 
     assert_equal 0x52420104, set.get(0).value
@@ -283,8 +287,8 @@ class RubyDatabaseTest < Minitest::Test
   # Checks malformed envelopes and conflicting indexes are rejected.
   def test_malformed_envelopes_and_conflicting_indexes_are_rejected
     @db.transaction do |root|
-      root[:array] = []
-      root[:map] = { key: 1 }
+      indexed_array(root, :array)
+      indexed_collection(root, :map)[:key] = 1
       [[0, XitDB::Core::Slot.uint(0)], [1, XitDB::Core::Slot.int(1)]].each do |index, value|
         context = root.context
         assert_raises(XitDB::InvalidValueError) do
@@ -307,6 +311,54 @@ class RubyDatabaseTest < Minitest::Test
       end
       assert_equal({ key: 1 }, root[:map].to_ruby)
     end
+  end
+
+  # A malformed order leaf must not let two records claim the same insertion identifier.
+  def test_duplicate_insertion_identifiers_are_rejected
+    @db.transaction do |root|
+      map = indexed_collection(root, :map)
+      map[:a] = 1
+      map[:b] = 2
+      context = root.context
+      context.mutate([:map]) do |cursor|
+        transaction = context.writable_transaction!
+        envelope = XitDB::Core::ArrayList.new(cursor)
+        lookup_cursor = context.cursor(envelope.get(2))
+        lookup = XitDB::Core::HashMap.new(lookup_cursor, counted: true)
+        digest = @db.profile.hasher.digest(@db.profile.key_bytes(:b))
+        record_cursor = context.cursor(lookup.get(digest))
+        XitDB::Core::ArrayList.new(record_cursor).put(2, XitDB::Core::Slot.uint(0))
+        lookup.put(digest, key: lookup.key(digest), value: record_cursor.slot)
+        envelope.put(2, lookup_cursor.slot)
+        order = envelope.get(3)
+        _count, pointer = transaction.read_at(order.value, 16).unpack("Q>Q>")
+        leaf = transaction.read_at(pointer, XitDB::Core::BTree::LEAF_SIZE).dup
+        first = XitDB::Core::Slot.parse(leaf.byteslice(2, 9))
+        second = XitDB::Core::Slot.parse(leaf.byteslice(11, 9))
+        duplicate = transaction.append(transaction.read_at(first.value, 9) + transaction.read_at(second.value + 9, 9))
+        leaf[11, 9] = XitDB::Core::Slot.new(tag: :sorted_kv_pair, value: duplicate).to_bytes
+        header = transaction.append([2, transaction.append(leaf)].pack("Q>Q>"))
+        envelope.put(3, XitDB::Core::Slot.new(tag: :sorted_map, value: header))
+      end
+    end
+
+    assert_raises(XitDB::InvalidValueError) { @db.snapshot[:map].to_ruby }
+  end
+
+  # Marker validation precedes inspection of other envelope fields.
+  def test_unknown_marker_is_rejected_before_malformed_child_fields
+    @db.transaction do |root|
+      indexed_array(root, :array)
+      root.context.mutate([:array]) do |cursor|
+        transaction = root.context.writable_transaction!
+        start = transaction.length
+        block = (XitDB::Core::Slot.uint(0).to_bytes + XitDB::Core::Slot.new(tag: 127).to_bytes).ljust(144, "\0")
+        transaction.append([2, start + 16].pack("Q>Q>") + block)
+        cursor.replace(XitDB::Core::Slot.new(tag: :array_list, value: start))
+      end
+    end
+
+    assert_raises(XitDB::InvalidValueError) { @db.snapshot[:array].to_ruby }
   end
 
   # Checks handle configuration is owned and rejected before file creation.
@@ -427,7 +479,7 @@ class RubyDatabaseTest < Minitest::Test
       items.clear
       assert_raises(XitDB::ExpiredViewError) { child.size }
       assert_raises(XitDB::ConcurrentModificationError) { iterator.next }
-      assert_equal 0, physical_envelope(items).get(1).value
+      assert_empty items
       root.write_bytes(:stream) do |writer|
         assert_raises(XitDB::ConcurrentModificationError) { root.clear }
         writer.write("kept")
@@ -558,8 +610,8 @@ class RubyDatabaseTest < Minitest::Test
   # Checks failed lookup index write restores order and identifier.
   def test_failed_lookup_index_write_restores_order_and_identifier
     @db.transaction do |root|
-      root[:items] = { first: 1 }
-      items = root[:items]
+      items = indexed_collection(root, :items)
+      items[:first] = 1
       transaction = root.context.transaction
       original = transaction.method(:append)
       fail_record = true
@@ -585,8 +637,9 @@ class RubyDatabaseTest < Minitest::Test
   # Checks failed lookup removal restores both indexes.
   def test_failed_lookup_removal_restores_both_indexes
     @db.transaction do |root|
-      root[:items] = { first: 1, second: 2 }
-      items = root[:items]
+      items = indexed_collection(root, :items)
+      items[:first] = 1
+      items[:second] = 2
       transaction = root.context.transaction
       original = transaction.method(:write_at)
       fail_count = true
@@ -876,6 +929,24 @@ class RubyDatabaseTest < Minitest::Test
   end
 
   private
+
+  # Builds the indexed sequence envelope retained for explicit backend validation.
+  def indexed_array(root, key)
+    root[key] = []
+    root.context.mutate([key]) do |cursor|
+      adapter = XitDB::Ruby::Containers.new(@db.profile, root.context.cursor(XitDB::Core::Slot.new),
+                                            context: root.context, path: [key], kind: :array)
+      cursor.replace(adapter.slot)
+    end
+  end
+
+  # Exercises the indexed backend after promotion, including its empty state.
+  def indexed_collection(root, key, set: false)
+    entries = (0...17).to_h { |index| [index, index] }
+    root[key] = set ? Set.new(entries.keys) : entries
+    root[key].clear
+    root[key]
+  end
 
   # Exposes a Ruby collection envelope as a raw array for layout assertions.
   # @param view [Object] Ruby collection view

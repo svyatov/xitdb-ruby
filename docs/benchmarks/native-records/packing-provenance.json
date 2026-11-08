@@ -1,0 +1,44 @@
+{
+  "status": "single-sample representation experiments, not final latency estimates",
+  "baseline_revision": "89f714d8de855cb9fdd31eb3f9e5e8d666cd8bef",
+  "optimized_revision": "fde9a5dda601643398289f5bd0ebfdbfa7f2089e",
+  "experiments": {
+    "packing-prototype-samples.json.gz": {
+      "samples": 36,
+      "started_at": "2026-11-07T09:23:32Z",
+      "completed_at": "2026-11-07T09:52:11Z"
+    },
+    "packing-schema-samples.json.gz": {
+      "samples": 12,
+      "started_at": "2026-11-07T09:56:20Z",
+      "completed_at": "2026-11-07T10:02:16Z"
+    },
+    "packing-validation-samples.json.gz": {
+      "samples": 18,
+      "started_at": "2026-11-07T10:02:20Z",
+      "completed_at": "2026-11-07T10:07:07Z"
+    },
+    "packing-frozen-samples.json.gz": {
+      "samples": 12,
+      "started_at": "2026-11-07T10:08:36Z",
+      "completed_at": "2026-11-07T10:10:52Z"
+    },
+    "packing-selected-samples.json.gz": {
+      "samples": 12,
+      "started_at": "2026-11-07T10:13:51Z",
+      "completed_at": "2026-11-07T10:15:28Z"
+    }
+  },
+  "artifacts": {
+    "packing-byte-account.json.gz": "7eff9caed87b8a67f3a1eb75f5b4ae71bda3761ec576a3a53d7a17d46d3db1a6",
+    "packing-frozen-profile.json.gz": "a585fa3cc01b02e799b05ad46a25a92ba735d689dd3048a2b610052103a83ae6",
+    "packing-frozen-samples.json.gz": "f66fc774cbb42d9df0cc96dfc6d62369ee597cef592a2e876a0e6e05536f4a66",
+    "packing-profiles.json.gz": "b179796a15b3cf9b9b5dcd7eec1475428bd9e769c2c86975e74cf93d76165716",
+    "packing-prototype-samples.json.gz": "f210def0b224bdb776d4950d8dc9e5e1dedae3aae33a830415fb632a1f34371d",
+    "packing-prototype-sources.json.gz": "8c5bba7e4ad7343400fd83cb3c97e0e77f3fa67883496c9179abaeacd1b029e5",
+    "packing-schema-samples.json.gz": "6297fbfc79dba9cce4787224677a7ccb6554a40330d8826a957305d288d19e34",
+    "packing-selected-profile.json.gz": "2d9c90db378cb6267deb394b66b8e87df74c6433fbadcab14af47d65820c25e2",
+    "packing-selected-samples.json.gz": "2ecd1e54b571dee199b42a4e789bcb472259f38d6c54ea9c15f5d14dcac67ba8",
+    "packing-validation-samples.json.gz": "08c1d40c108d42131a95d7bfa926400a241c90b7bd53c5bff99802756169da18"
+  }
+}

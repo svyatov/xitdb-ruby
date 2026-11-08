@@ -261,12 +261,14 @@ class PublicDatabaseTest < Minitest::Test
 
   # Checks reserved ruby profile identifier is rejected before creation.
   def test_reserved_ruby_profile_identifier_is_rejected_before_creation
-    hasher = XitDB::Core::Hasher.new(id: "rb01", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
-    assert_raises(XitDB::ProfileMismatchError) { XitDB.memory(hash: hasher) }
-    Dir.mktmpdir do |dir|
-      path = File.join(dir, "reserved.xit")
-      assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path, hash: hasher) }
-      refute_path_exists path
+    %w[rb01 rb02].each do |identifier|
+      hasher = XitDB::Core::Hasher.new(id: identifier, size: 32) { |bytes| Digest::SHA256.digest(bytes) }
+      assert_raises(XitDB::ProfileMismatchError) { XitDB.memory(hash: hasher) }
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "reserved.xit")
+        assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path, hash: hasher) }
+        refute_path_exists path
+      end
     end
   end
 

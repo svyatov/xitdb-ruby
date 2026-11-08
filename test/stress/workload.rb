@@ -449,6 +449,9 @@ if $PROGRAM_NAME == __FILE__
   mode, directory, limit, data_mib = ARGV
   report = BoundedWorkload.hard_budget(Integer(limit))
   case mode
+  when "native-string", "native-rows"
+    require_relative "native_workload"
+    report["native"] = NativeWorkload.run(mode.delete_prefix("native-"), directory)
   when "stress" then report["profiles"] = BoundedWorkload.stress(directory, Integer(data_mib) * BoundedWorkload::MIB)
   when "benchmark"
     report["os_cache_control"] = "unavailable"

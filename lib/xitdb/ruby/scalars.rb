@@ -32,9 +32,16 @@ module XitDB
       # @raise [CodecError] if application serialization fails
       def self.encode(value, core:, registry: nil)
         InputGuard.check!(value)
+        encode_validated(value, core: core, registry: registry)
+      end
+
+      # Stores an input already checked by the owning profile traversal.
+      # @api private
+      def self.encode_validated(value, core:, registry: nil)
         if (codec = registry&.for_value(value))
-          payload = "\x01\x0a".b + Wire.t(codec.id) + Wire.b(codec.dump(value))
-          return core.bytes(payload, format_tag: "rb")
+          payload = codec.dump(value)
+          prefix = "\x01\x0a".b + Wire.t(codec.id) + Wire.u(payload.bytesize)
+          return core.bytes(payload, prefix: prefix, format_tag: "rb")
         end
         unless builtin_type?(Object.instance_method(:class).bind_call(value))
           raise UnsupportedValueError, "unsupported Ruby scalar class"
@@ -91,9 +98,17 @@ module XitDB
 
           core.bytes("\x01\x04".b + Wire.z(value), format_tag: "rb")
         when Float then Core::Slot.float(value)
+        when String then text_slot(value, 1, core)
+        when Symbol then text_slot(value.to_s, 2, core)
         when EncodedValue, Core::ByteValue then core.bytes(value.bytes, format_tag: value.format_tag)
         else core.bytes("\x01".b + builtin_payload(value), format_tag: "rb")
         end
+      end
+
+      # Appends text fields in bounded chunks without joining the original bytes.
+      def self.text_slot(value, type, core)
+        prefix = [1, type].pack("CC") + Wire.t(value.encoding.name) + Wire.u(value.bytesize)
+        core.bytes(value, prefix: prefix, format_tag: "rb")
       end
 
       # Encodes a built-in type marker and its fields, without the version byte.
@@ -103,10 +118,6 @@ module XitDB
       # @raise [UnsupportedValueError] if the value has no supported payload type
       def self.builtin_payload(value)
         case value
-        when String then "\x01".b + Wire.t(value.encoding.name) + Wire.b(value)
-        when Symbol
-          name = value.to_s
-          "\x02".b + Wire.t(name.encoding.name) + Wire.b(name)
         when false then "\x03\x00".b
         when true then "\x03\x01".b
         when Time then time_bytes(value)
@@ -420,7 +431,7 @@ module XitDB
                            :checked_builtin!, :decimal_payload,
                            :checked_object_builtin!, :decode_type, :decode_extended_type, :read_symbol,
                            :read_boolean,
-                           :read_codec, :read_finite_decimal, :build_decimal
+                           :read_codec, :read_finite_decimal, :build_decimal, :text_slot
     end
   end
 end

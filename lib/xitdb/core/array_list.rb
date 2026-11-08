@@ -28,18 +28,22 @@ module XitDB
 
       # Opens an indexed list, initializing an empty writable cursor when needed.
       # @param cursor [Cursor] view locating this collection or value
+      # @param fields [Array<Slot>] up to sixteen initial slots for a new writable list
       # @return [ArrayList]
       # @raise [InvalidValueError] if the cursor holds an incompatible collection tag
-      def initialize(cursor)
+      def initialize(cursor, fields: [])
         @cursor = cursor
         unless %i[none array_list].include?(cursor.slot.tag)
           raise InvalidValueError, "slot does not contain an array list"
         end
 
+        validate_initial_fields!(fields) unless fields.empty?
         return unless cursor.slot.tag == :none && cursor.transaction
 
         mutate do |transaction|
-          _count, _pointer, start = writable_header(transaction)
+          start = transaction.length
+          block = fields.empty? ? EMPTY_BLOCK : fields.map(&:to_bytes).join.b.ljust(BLOCK_SIZE, "\0")
+          transaction.append([fields.size, start + HEADER_SIZE].pack("Q>Q>") + block)
           cursor.update_collection(Slot.new(tag: :array_list, value: start))
         end
       end
@@ -207,6 +211,16 @@ module XitDB
       end
 
       private
+
+      # Checks the bounded initial record before allocating any storage.
+      def validate_initial_fields!(fields)
+        unless cursor.slot.empty? && cursor.transaction
+          raise ArgumentError, "initial fields require an empty writable cursor"
+        end
+        raise ArgumentError, "initial fields exceed one array block" if fields.size > 16
+
+        fields.each { |field| validate_slot!(field) }
+      end
 
       # Builds reverse traversal frames for the visible branches of one block.
       def branches(block, shift, base, count)

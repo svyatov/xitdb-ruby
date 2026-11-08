@@ -20,7 +20,7 @@ module XitDB
       SIZE = 9
       # Known symbolic tags, ordered by their seven-bit numeric storage code.
       TAGS = %i[none index array_list linked_array_list hash_map kv_pair bytes short_bytes uint int float
-                hash_set counted_hash_map counted_hash_set sorted_map sorted_set sorted_kv_pair].freeze
+                hash_set counted_hash_map counted_hash_set sorted_map sorted_set sorted_kv_pair record].freeze
 
       # @!attribute [r] tag
       #   Type tag that determines how to interpret value.

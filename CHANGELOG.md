@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Breaking: Native files use `rb02` with compact ordered records, shared field dictionaries, and bounded array construction. The `rb01` format has no backward reader or migration.
+- Native String, Symbol, and codec payloads append in bounded chunks without joining complete encoded payloads. Scalar wire bytes remain unchanged.
+- Pinned references retain portable graphs and opaque Ruby scalar maintenance. Native containers require the Core record extension and are incompatible with those references.
+
 - Core boolean readers are now `Slot#full?` and `Cursor#valid?`; the old names were removed.
 - Validation and assertion helpers now use `!`, including `Core::Format.integer!` and `Core::Format.ensure_width!`.
 - Substantial classes have dedicated files. Existing require entry points and on-disk encodings remain unchanged.

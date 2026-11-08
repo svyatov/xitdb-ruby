@@ -1,7 +1,17 @@
 # Ruby profile
 
 `require "xitdb/ruby"` provides `XitDB::Ruby.open(path, readonly: false, lock_timeout: 5.0, codecs: [])` and `XitDB::Ruby.memory(codecs: [])`.
-Configuration belongs to each handle. The file identifier `rb01` selects SHA-256 over canonical typed keys and version-one container envelopes.
+Configuration belongs to each handle. The file identifier `rb02` selects SHA-256 over canonical typed keys and compact native containers. Existing `rb01` files are incompatible; this pre-1.0 format has no migration or backward reader.
+
+Small maps and sets store up to sixteen original keys directly in insertion order in a Core record. Map metadata is `1`, followed by alternating original-key and value slots; set metadata is `6`, followed by original-key slots. Keys must have distinct canonical identities, at most 128 canonical bytes and at most 256 encoded scalar bytes. Larger collections and oversized keys use the indexed envelope representation. Promotion preserves order and the first original key representation, and clearing an indexed collection retains that representation.
+
+The Core record extension has tag `17`, an unsigned big-endian 32-bit metadata word, an unsigned big-endian 32-bit field count, and up to 32 consecutive nine-byte slots. Compaction follows all fields and preserves shared references. Pinned reference implementations do not support this extension. Portable containers retain their existing wire representation.
+
+Arrays with at most sixteen elements use record metadata `2` and consecutive element slots. Larger arrays use metadata `3` with one Core array-list slot. Bulk construction retains at most sixteen slots per tree level and appends completed blocks once. Selective updates use the existing Core copy-on-write path. Large values remain separate byte records referenced by their slots.
+
+Within one bulk encoding, maps with two to sixteen fields can share an ordered dictionary. Metadata `4` contains a dictionary record slot followed by value slots. The dictionary uses metadata `5` and original-key slots. Dictionaries preserve exact key representations, including String encodings. Value-only updates retain the dictionary; key changes can return to literal records.
+
+Each encoding operation shares at most 256 short String or Symbol values and 64 dictionaries. Scalar sharing includes exact type, encoding, and bytes, and accepts at most 64 source bytes. A separate identity cache recognizes at most 256 validated frozen String key objects. Read-only materialization caches at most 64 decoded dictionaries within that call. Transaction reads use no decoded dictionary cache. Materialization returns independent mutable String values.
 The [portable guide](portable.md) defines the shared transaction, snapshot, history, ownership, stream, and view contracts.
 
 ## Native values and keys
@@ -58,4 +68,4 @@ Callbacks can read transaction views. Coercion, dump, load, and conversion callb
 The guard applies across Context instances; nested writes raise `TransactionStateError` before changing state.
 Callback failure aborts the affected assignment. Byte-stream callbacks retain their separate non-overlapping sibling-write behavior.
 
-See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v1.md).
+See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v2.md).

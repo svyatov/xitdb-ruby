@@ -13,6 +13,36 @@ require_relative "workload"
 class MemoryStressTest < Minitest::Test
   ROOT = File.expand_path("../..", __dir__)
 
+  # Checks native records and caller-owned large Strings below dataset size.
+  def test_native_packing_and_large_values_under_a_hard_limit
+    stdout, error, status = Open3.capture3("ruby", "script/native_stress.rb", chdir: ROOT)
+
+    assert_predicate status, :success?, error
+    FileUtils.mkdir_p(File.join(ROOT, "pkg"))
+    File.write(File.join(ROOT, "pkg/native-stress.json"), stdout)
+    reports = JSON.parse(stdout).fetch("cases")
+
+    assert_equal(%w[string rows], reports.map { |report| report.fetch("native").fetch("mode") })
+    reports.each do |report|
+      assert_equal "cgroup_v2", report.fetch("hard_limit_mechanism")
+      assert_equal 268_435_456, report.fetch("memory_limit_bytes")
+      assert_equal 0, report.fetch("swap_limit_bytes")
+      assert_operator report.fetch("memory_peak_bytes"), :<=, report.fetch("memory_limit_bytes")
+      assert_equal 0, report.fetch("memory_events").fetch("oom")
+      assert_equal 0, report.fetch("memory_events").fetch("oom_kill")
+      native = report.fetch("native")
+
+      assert_equal "passed", native.fetch("status")
+      assert_operator native.fetch("offset_cache_peak_entries"), :<=, XitDB::Core::OffsetMap::CACHE_LIMIT
+      assert_operator native.fetch("compacted_bytes"), :>, report.fetch("memory_limit_bytes") / 4
+    end
+    rows = reports.last.fetch("native")
+
+    assert_equal 12_500, rows.fetch("rows")
+    assert_operator rows.fetch("file_bytes"), :>, 768 * 1024 * 1024
+    assert_operator rows.fetch("update_growth_bytes"), :<, 8192
+  end
+
   # Checks fixture uses profile specific sorted keys.
   def test_fixture_uses_profile_specific_sorted_keys
     %w[portable ruby].each do |profile|

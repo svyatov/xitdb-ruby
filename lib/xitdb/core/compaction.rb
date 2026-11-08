@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "offset_map"
+require_relative "record"
 
 module XitDB
   module Core
@@ -72,11 +73,24 @@ module XitDB
         when :sorted_map, :sorted_set then reserve(slot.value, 16) do |source, target|
           tree_header(source, target, true)
         end
-        when :kv_pair then reserve_slots(slot.value, @source.header.hash_size + 18,
-                                         @source.header.hash_size, 2)
-        when :sorted_kv_pair then reserve_slots(slot.value, 18, 0, 2)
+        when :kv_pair, :sorted_kv_pair then copy_pair(slot)
+        when :record then copy_record(slot)
         else raise CorruptionError, "unknown compaction slot tag"
         end
+      end
+
+      # Both pair layouts hold two slots after an optional hash prefix.
+      def copy_pair(slot)
+        start = slot.tag == :kv_pair ? @source.header.hash_size : 0
+        reserve_slots(slot.value, start + 18, start, 2)
+      end
+
+      # Checks a bounded record header before reserving and remapping its fields.
+      def copy_record(slot)
+        _metadata, count = Format.pair(read(slot.value, Record::HEADER_SIZE), "NN")
+        raise CorruptionError, "record exceeds field limit" if count > Record::MAX_FIELDS
+
+        reserve_slots(slot.value, Record::HEADER_SIZE + (count * Slot::SIZE), Record::HEADER_SIZE, count)
       end
 
       # Reserves a copied record and schedules child slots for rewriting.

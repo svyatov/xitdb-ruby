@@ -22,6 +22,13 @@ module XitDB
       # @raise [UnsupportedValueError] if the key has an unsupported class, singleton behavior, or a NaN value
       def self.dump(value)
         InputGuard.check!(value)
+        dump_stored(value)
+      end
+
+      # Canonicalizes a key produced by the built-in scalar decoder.
+      # Exact type and NaN validation still apply.
+      # @api private
+      def self.dump_stored(value)
         unless TYPES.include?(Object.instance_method(:class).bind_call(value))
           raise UnsupportedValueError, "unsupported Ruby key class"
         end

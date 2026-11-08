@@ -20,6 +20,7 @@ module XitDB
     # @return [Core::Slot]
     # @raise [CyclicValueError] if an input contains itself through its descendants
     def self.encode(value, context:, path:)
+      state = context.profile.packing_state(context: context, reading: false)
       # @type var active: ::Hash[Integer, bool]
       active = {}
       # @type var stack: ::Array[encoding_frame]
@@ -30,7 +31,7 @@ module XitDB
       result = nil
       while true # rubocop:disable Style/InfiniteLoop -- Codec StopIteration must propagate.
         if current
-          result = begin_encoding(current[0], current[1], context, active, stack)
+          result = begin_encoding(current[0], current[1], context, active, stack, state)
           current = nil
         end
         if result
@@ -61,6 +62,7 @@ module XitDB
     def self.materialize(view)
       view.check!
       context = view.context
+      state = context.profile.packing_state(context: context, reading: true)
       # @type var active: ::Hash[[Symbol, Integer], bool]
       active = {}
       # @type var stack: ::Array[materialization_frame]
@@ -73,7 +75,7 @@ module XitDB
       materialized = nil
       while true # rubocop:disable Style/InfiniteLoop -- Codec StopIteration must propagate.
         if current
-          begin_materialization(current[0], current[1], selected, context, active, stack)
+          begin_materialization(current[0], current[1], selected, context, active, stack, state)
           current = nil
           selected = nil
         end
@@ -91,21 +93,22 @@ module XitDB
 
     # Validate input and encode a scalar or push a container traversal frame.
     # @return [Core::Slot, nil]
-    def self.begin_encoding(input, location, context, active, stack)
-      InputGuard.check!(input, path: location)
+    def self.begin_encoding(input, location, context, active, stack, state)
       case input
-      when Views::Base then encode_view(input, context, location)
+      when Views::Base
+        InputGuard.check!(input, path: location)
+        encode_view(input, context, location)
       else
         profile = context.profile
         kind = profile.input_kind(input, path: location)
-        return encode_scalar(input, context, location) unless kind
+        return encode_scalar(input, context, location, state) unless kind
 
         identity = BasicObject.instance_method(:__id__).bind_call(input)
         raise CyclicValueError.new("cyclic value at #{location.inspect}", path: location) if active[identity]
 
         active[identity] = true
-        adapter = profile.empty_container(kind, context: context, path: location)
-        stack << [input, location, adapter, profile.input_entries(input, path: location), nil]
+        adapter = profile.empty_container(kind, context: context, path: location, state: state)
+        stack << [input, location, adapter, profile.input_entries(input, path: location, state: state), nil]
         nil
       end
     end
@@ -126,8 +129,8 @@ module XitDB
 
     # Encode a scalar and attach its logical path to value errors.
     # @return [Core::Slot]
-    def self.encode_scalar(input, context, location)
-      context.profile.encode_scalar(input, core: context.database.core)
+    def self.encode_scalar(input, context, location, state)
+      context.profile.encode_scalar(input, core: context.database.core, state: state, validated: true)
     rescue ValueError => e
       raise e.class.new("#{e.message} at #{location.inspect}", path: location), cause: e
     end
@@ -159,8 +162,8 @@ module XitDB
 
     # Decode a scalar into its parent or push a fresh Ruby container frame.
     # @return [void]
-    def self.begin_materialization(slot, path, selected, context, active, stack)
-      adapter = selected || context.profile.container(slot, context: context, path: path)
+    def self.begin_materialization(slot, path, selected, context, active, stack, state)
+      adapter = selected || context.profile.container(slot, context: context, path: path, state: state)
       unless adapter
         result = context.profile.decode(slot, context: context, path: path, immutable: false)
         frame = stack.last || raise(CorruptionError, "missing materialization frame")
