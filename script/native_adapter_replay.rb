@@ -20,10 +20,12 @@ OptionParser.new do |parser|
   parser.on("--output PATH") { |value| options[:output] = value }
 end.parse!
 raise ArgumentError, "unexpected arguments: #{ARGV.join(" ")}" unless ARGV.empty?
-raise ArgumentError, "study must be adapters or decode" unless %w[adapters decode].include?(options[:study])
+unless %w[adapters decode encode].include?(options[:study])
+  raise ArgumentError, "study must be adapters, decode, or encode"
+end
 
 variants = %w[pages json ruby guarded]
-variants << "core_json" if options[:study] == "decode"
+variants << "core_json" if %w[decode encode].include?(options[:study])
 raise ArgumentError, "variant must be one of: #{variants.join(", ")}" unless variants.include?(options[:variant])
 raise ArgumentError, "store must be memory or file" unless %w[memory file].include?(options[:store])
 raise ArgumentError, "count must be a positive integer" unless /\A[1-9][0-9]*\z/.match?(options[:count])
