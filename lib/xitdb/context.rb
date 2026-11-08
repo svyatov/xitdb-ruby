@@ -155,15 +155,15 @@ module XitDB
       slot
     end
 
-    # Choose a public view class that resolves its value by location.
-    # @param _slot [Core::Slot] accepted for the profile protocol; location determines the value
+    # Bind a public view to a snapshot reference or live transaction location.
+    # @param slot [Core::Slot] resolved value; snapshot views retain this immutable reference
     # @param path [Array<Object>]
     # @param kind [Symbol] logical collection kind
     # @return [Views::Base]
-    def view(_slot, path:, kind:)
+    def view(slot, path:, kind:)
       klass = { map: Views::Map, sorted_map: Views::SortedMap, array: Views::Array,
                 linked_array: Views::LinkedArray, set: Views::Set, sorted_set: Views::SortedSet }.fetch(kind)
-      klass.new(context: self, path: path, kind: kind)
+      klass.new(context: self, path: path, kind: kind, slot: slot)
     end
 
     # Report whether a successful mutation published a different logical root.

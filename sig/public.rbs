@@ -237,7 +237,8 @@ module XitDB
       attr_reader path: path
       attr_reader kind: kind
       @location: Context::Location?
-      def initialize: (context: Context, path: path, kind: kind) -> void
+      @stored_slot: Core::Slot?
+      def initialize: (context: Context, path: path, kind: kind, ?slot: Core::Slot?) -> void
       def check!: () -> void
       def slot: () -> Core::Slot
       def adapter: () -> adapter
@@ -316,7 +317,7 @@ module XitDB
     class Slice < Array
       @offset: Integer
       @count: Integer
-      def initialize: (offset: Integer, count: Integer, context: Context, path: path, kind: kind) -> void
+      def initialize: (offset: Integer, count: Integer, context: Context, path: path, kind: kind, ?slot: Core::Slot?) -> void
       def adapter: () -> Selection
       def slot_for_assignment: (context: Context, path: path) -> Core::Slot
       def slice_offset: () -> Integer
