@@ -70,9 +70,9 @@ Keep checks separate from timing. Treat Core JSON as a comparison control.
 
 **Files:** `docs/benchmarks/final-ruby-storage/`, current Ruby guide, final wire contract, and this plan.
 
-- [ ] Run independent public API QA covering every review-focus item and bounded resource evidence.
-- [ ] Measure the final integrated implementation against the same controls and apply every G4 criterion again.
-- [ ] Run final independent source review. Fix important findings with observed failing regressions and rerun required checks.
-- [ ] Archive exact sources, fixtures, raw samples, acceptance output, quality-gate evidence, QA, source hashes, and compatibility policy.
-- [ ] Extract the archive into a fresh temporary directory; rerun contracts and regenerate identical summaries and acceptance decisions.
-- [ ] Commit locally, verify the clean checkout and full G1-G5 requirement audit, remove owned scratch scripts, and mark the goal complete.
+- [x] Run independent public API QA covering every review-focus item and bounded resource evidence.
+- [x] Measure the final integrated implementation against the same controls and apply every G4 criterion again. Original 442/444 and unchanged-source pooled confirmation 444/444 are both retained.
+- [x] Run final independent source review. Fix important findings with observed failing regressions and rerun required checks. No findings required fixes.
+- [x] Archive exact sources, fixtures, raw samples, acceptance output, quality-gate evidence, QA, source hashes, and compatibility policy.
+- [x] Extract the archive into a fresh temporary directory; rerun contracts and regenerate identical summaries and acceptance decisions.
+- [x] Commit locally, verify the clean checkout and full G1-G5 requirement audit, remove owned scratch scripts, and mark the goal complete.
