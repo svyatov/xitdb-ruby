@@ -6,7 +6,7 @@ module XitDB
   module Profiles
     # Connects Ruby values to scalar encoders and collection adapters.
     # Maps and sets preserve insertion order; typed sorted collections preserve their declared key order.
-    # SHA-256 hashes canonical key bytes under the "rb03" header identifier.
+    # SHA-256 hashes canonical key bytes under the "rb04" header identifier.
     # Application codecs belong to this profile instance and are not written as executable code.
     class Ruby
       attr_reader :hasher, :codecs
@@ -27,7 +27,7 @@ module XitDB
       def initialize(codecs: [])
         @registry = XitDB::Ruby::CodecRegistry.new(codecs)
         @codecs = @registry.codecs
-        @hasher = Core::Hasher.new(id: "rb03", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
+        @hasher = Core::Hasher.new(id: "rb04", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end
 

@@ -56,7 +56,7 @@ class PageCodecTest < Minitest::Test
     rows = values.map { |value| { "key" => value } }
     bytes = @codec.encode_page(rows)
 
-    assert_equal "XP01", bytes.byteslice(0, 4)
+    assert_equal "XR01", bytes.byteslice(0, 4)
     assert_equal Encoding::BINARY, bytes.encoding
     decoded = @codec.decode_page(bytes, rows.size)
     rows.each_with_index do |row, index|

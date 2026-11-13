@@ -15,7 +15,7 @@ class RubyPagesTest < Minitest::Test
         database.transaction { |root| root["rows"] = rows }
         array = database.snapshot["rows"]
 
-        assert_equal "rb03", database.core.header.hash_id
+        assert_equal "rb04", database.core.header.hash_id
         assert_equal 7, metadata(array)
         assert_equal count, array.size
         assert_equal rows, array.to_ruby

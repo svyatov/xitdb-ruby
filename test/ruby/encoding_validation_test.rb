@@ -22,7 +22,7 @@ class RubyEncodingValidationTest < Minitest::Test
 
   def test_bulk_encoding_keeps_scalar_dispatch_owned_by_the_profile
     profile = ObservedProfile.new
-    database = XitDB::Database.new(core: XitDB::Core::Database.memory(hash_id: "rb03", hash_size: 32), profile: profile)
+    database = XitDB::Database.new(core: XitDB::Core::Database.memory(hash_id: "rb04", hash_size: 32), profile: profile)
     database.transaction { |root| root[:rows] = [{ "field" => "value", "number" => 1 }] }
 
     assert_equal [{ "field" => "value", "number" => 1 }], database.snapshot[:rows].to_ruby

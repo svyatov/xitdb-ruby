@@ -1,7 +1,9 @@
 # Ruby profile
 
 `require "xitdb/ruby"` provides `XitDB::Ruby.open(path, readonly: false, lock_timeout: 5.0, codecs: [])` and `XitDB::Ruby.memory(codecs: [])`.
-Configuration belongs to each handle. The file identifier `rb03` selects SHA-256 over canonical typed keys, compact native containers, and bounded row pages. Existing `rb01` and `rb02` files are incompatible; this pre-1.0 format has no migration or backward reader.
+Configuration belongs to each handle. The file identifier `rb04` selects SHA-256 over canonical typed keys, compact native containers, and indexed row pages.
+Files using `rb01`, `rb02`, or `rb03` are incompatible and reject without modification.
+This pre-1.0 format has no migration or backward reader.
 
 Small maps and sets store up to sixteen original keys directly in insertion order in a Core record. Map metadata is `1`, followed by alternating original-key and value slots; set metadata is `6`, followed by original-key slots. Keys must have distinct canonical identities, at most 128 canonical bytes and at most 256 encoded scalar bytes. Larger collections and oversized keys use the indexed envelope representation. Promotion preserves order and the first original key representation, and clearing an indexed collection retains that representation.
 
@@ -13,7 +15,12 @@ Within one bulk encoding, maps with two to sixteen fields can share an ordered d
 
 Arrays with at least 32 compatible flat Hash rows use typed pages. Each page holds at most 1,024 rows, sixteen String keys, and 65,536 encoded bytes. Keys retain their order, bytes, and encodings. Cells support nil, booleans, small Integers, Floats, and Strings. Other values use the general collection layouts.
 
-A compatible row update rewrites one page. An incompatible update replaces that page with a packed array of row references. Structural array edits use the general array layout. Selected reads validate one bounded page and allocate only the selected row. Full reads produce independent mutable values. Retained views never cache decoded rows.
+A compatible row update rewrites one page. An incompatible update replaces that page with a packed array of row references. Structural array edits use the general array layout.
+Indexed pages retain compact scalar cells and add 16-bit row offsets and a SHA-256 checksum.
+Selected reads verify bounded page integrity, then decode the schema and requested row.
+Full reads validate all cells and produce independent mutable values. Retained views never cache decoded rows.
+Pages that exceed the indexed layout's byte budget can use the compact sequential layout, whose selected reads validate every cell.
+Rechecksummed malformed cells in an unselected indexed row can remain undetected until access or full decoding.
 
 Each encoding operation shares at most 256 short String or Symbol values and 64 dictionaries. Scalar sharing includes exact type, encoding, and bytes, and accepts at most 64 source bytes. A separate identity cache recognizes at most 256 validated frozen String key objects. Read-only materialization caches at most 64 decoded dictionaries within that call. Transaction reads use no decoded dictionary cache. Materialization returns independent mutable String values.
 The [portable guide](portable.md) defines the shared transaction, snapshot, history, ownership, stream, and view contracts.
@@ -74,4 +81,4 @@ Callbacks can read transaction views. Coercion, dump, load, and conversion callb
 The guard applies across Context instances; nested writes raise `TransactionStateError` before changing state.
 Callback failure aborts the affected assignment. Byte-stream callbacks retain their separate non-overlapping sibling-write behavior.
 
-See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v3.md).
+See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v4.md).

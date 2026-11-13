@@ -77,13 +77,13 @@ class RubyPackedMapTest < Minitest::Test
 
   def test_native_handles_use_a_distinct_profile_identifier
     XitDB::Ruby.memory do |database|
-      assert_equal "rb03", database.core.header.hash_id
+      assert_equal "rb04", database.core.header.hash_id
     end
   end
 
   def test_native_handles_reject_previous_profile_files_without_changes
     Dir.mktmpdir do |directory|
-      %w[rb01 rb02].each do |identifier|
+      %w[rb01 rb02 rb03].each do |identifier|
         path = File.join(directory, "#{identifier}.xit")
         XitDB::Core::Database.open(path, hash_id: identifier, hash_size: 32).close
         original = File.binread(path)
