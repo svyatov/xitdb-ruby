@@ -13,8 +13,13 @@ module XitDB
 
       def encode(rows)
         return unless exact?(rows, ::Array)
+
         # @type var rows: ::Array[top]
-        return unless rows.size.between?(1, PageCodec::ROW_LIMIT)
+        # @type var count: Integer
+        count = ::Array.instance_method(:size).bind_call(rows)
+        return unless count.between?(1, PageCodec::ROW_LIMIT)
+
+        rows = ::Array.instance_method(:map).bind_call(rows) { |row| row }
 
         count = rows.size
         return unless write_schema(rows.fetch(0), count)
@@ -35,9 +40,11 @@ module XitDB
         return false unless exact?(first, Hash)
 
         # @type var first: Hash[String, top]
-        return false if first.size > PageCodec::FIELD_LIMIT
+        # @type var width: Integer
+        width = Hash.instance_method(:size).bind_call(first)
+        return false if width > PageCodec::FIELD_LIMIT
 
-        @keys = first.keys
+        @keys = Hash.instance_method(:keys).bind_call(first)
         @bytes << unsigned(count) << unsigned(@keys.size)
         @keys.all? { |key| exact?(key, String) && append(cell(key)) }
       end
@@ -46,27 +53,25 @@ module XitDB
       def exact?(value, klass)
         return false unless Object.instance_method(:instance_of?).bind_call(value, klass)
 
-        InputGuard.check!(value) unless @stored
         true
-      rescue UnsupportedValueError
-        false
       end
 
       def valid_row?(row)
         return false unless exact?(row, Hash)
+
         # @type var row: Hash[String, top]
-        return row.size == @keys.size if @stored
+        # @type var width: Integer
+        width = Hash.instance_method(:size).bind_call(row)
+        return false unless width == @keys.size
+        return true if @stored
 
-        return false unless BasicObject.instance_method(:equal?).bind_call(row.default, nil)
-        return false unless row.default_proc.nil? && !row.compare_by_identity?
-
-        exact?(row, Hash) && row.size == @keys.size
+        !Input.hash_defaults?(row)
       end
 
       # rubocop:disable-next Naming/PredicateMethod -- Appends a row on success.
       def encode_row(row)
         index = 0
-        row.each_pair do |key, value|
+        Hash.instance_method(:each_pair).bind_call(row) do |key, value|
           expected = @keys[index]
           return false unless same_key?(key, expected) && append(cell(value))
 
@@ -80,7 +85,10 @@ module XitDB
         return false unless expected && exact?(key, String)
 
         # @type var key: String
-        key.encoding == expected.encoding && key == expected
+        # @type var encoding: Encoding
+        encoding = String.instance_method(:encoding).bind_call(key)
+        encoding == String.instance_method(:encoding).bind_call(expected) &&
+          String.instance_method(:==).bind_call(key, expected)
       end
 
       # rubocop:disable-next Naming/PredicateMethod -- Appends bytes on success.
@@ -112,7 +120,11 @@ module XitDB
         return unless exact?(value, String)
 
         # @type var value: String
-        return if value.bytesize > PageCodec::PAGE_LIMIT
+        # @type var length: Integer
+        length = String.instance_method(:bytesize).bind_call(value)
+        return if length > PageCodec::PAGE_LIMIT
+
+        value = Input.string(value)
 
         encoding = value.encoding
         prefix = case encoding

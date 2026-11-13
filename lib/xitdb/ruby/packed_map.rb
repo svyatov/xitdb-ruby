@@ -127,7 +127,10 @@ module XitDB
 
       def append_member(selector, identity, stored)
         @key_slots << @profile.encode_scalar(selector, core: @context.database.core, state: @state, validated: true)
-        @keys << (selector.is_a?(String) ? String.new(selector).freeze : selector)
+        @keys << case selector
+                 when String then Input.string(selector).freeze
+                 else selector
+                 end
         @identities << identity
         @values << (kind == :set ? Core::Slot.null : stored)
       end

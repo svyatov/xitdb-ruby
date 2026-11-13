@@ -81,7 +81,7 @@ class RubyPackingStateTest < Minitest::Test
     end
   end
 
-  def test_equal_cached_content_does_not_bypass_object_validation
+  def test_equal_cached_string_contents_ignore_object_overrides
     state = XitDB::Ruby::PackingState.new
     profile = XitDB::Profiles::Ruby.new
     valid = "field"
@@ -91,13 +91,12 @@ class RubyPackingStateTest < Minitest::Test
     invalid.define_singleton_method(:to_s) { "field" }
     invalid.freeze
 
-    assert_raises(XitDB::UnsupportedValueError) { profile.key_bytes(invalid, state: state) }
+    assert_equal profile.key_bytes(valid), profile.key_bytes(invalid, state: state)
     XitDB::Ruby.memory do |database|
       database.transaction do |_root|
-        profile.encode_scalar(valid, core: database.core, state: state)
-        assert_raises(XitDB::UnsupportedValueError) do
-          profile.encode_scalar(invalid, core: database.core, state: state)
-        end
+        first = profile.encode_scalar(valid, core: database.core, state: state)
+
+        assert_equal first, profile.encode_scalar(invalid, core: database.core, state: state)
       end
     end
   end
@@ -112,8 +111,9 @@ class RubyPackingStateTest < Minitest::Test
     invalid.freeze
     XitDB::Ruby.memory do |database|
       database.transaction do |root|
-        assert_raises(XitDB::UnsupportedValueError) { root[:bad] = [{ invalid => 1 }] }
-        assert_nil root[:bad]
+        root[:value] = [{ invalid => 1 }]
+
+        assert_equal [{ "field" => 1 }], root[:value].to_ruby
       end
     end
 

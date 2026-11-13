@@ -103,14 +103,17 @@ module XitDB
       else
         profile = context.profile
         if defined?(Ruby::Pages) && profile.is_a?(Profiles::Ruby)
-          stored = Ruby::Pages.encode(input, context: context, path: location)
+          stored = Ruby::Pages.encode(input, context: context)
           return stored if stored
         end
         kind = profile.input_kind(input, path: location)
         return encode_scalar(input, context, location, state) unless kind
 
         identity = BasicObject.instance_method(:__id__).bind_call(input)
-        raise CyclicValueError.new("cyclic value at #{location.inspect}", path: location) if active[identity]
+        if active[identity]
+          error = CyclicValueError.new("cyclic value", path: location)
+          raise error, "cyclic value at #{error.path.inspect}"
+        end
 
         active[identity] = true
         adapter = profile.empty_container(kind, context: context, path: location, state: state)
@@ -141,7 +144,8 @@ module XitDB
     def self.encode_scalar(input, context, location, state)
       context.profile.encode_scalar(input, core: context.database.core, state: state, validated: true)
     rescue ValueError => e
-      raise e.class.new("#{e.message} at #{location.inspect}", path: location), cause: e
+      error = e.class.new(e.message, path: location)
+      raise error, "#{error.message} at #{error.path.inspect}", cause: e
     end
 
     # Attach an encoded child at the parent frame's pending selector.

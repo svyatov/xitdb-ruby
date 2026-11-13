@@ -75,7 +75,7 @@ class RubySortedTest < RubyProfileTest
     end
     assert_raises(XitDB::UnsupportedValueError) { ordered(klass.new("a"), :string) }
     assert_empty calls
-    singleton_inputs.each { |input| assert_raises(XitDB::UnsupportedValueError) { ordered(input, :string) } }
+    singleton_inputs.each { |input| assert_equal ordered("text", :string), ordered(input, :string) }
   end
 
   # Checks typed sorted declarations and their rejection by the portable profile.
@@ -288,7 +288,7 @@ class RubySortedTest < RubyProfileTest
         map["kept"] = XitDB.bytes("value")
         map.open_bytes("kept") do |reader|
           assert_raises(TypeError) { map.merge!(bad_hash) }
-          assert_raises(XitDB::UnsupportedValueError) { map.merge!(singleton) }
+          assert_same map, map.merge!(singleton)
           assert_raises(XitDB::UnsupportedValueError) { map.merge!(bad_key => 1) }
           assert_raises(XitDB::UnsupportedValueError) { map[bad_key] = 1 }
           assert_raises(XitDB::UnsupportedValueError) { map.write_bytes(bad_key) { |writer| writer.write("bad") } }

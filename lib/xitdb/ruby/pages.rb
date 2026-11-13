@@ -11,13 +11,13 @@ module XitDB
       ARRAY = 7
       ROW = 8
 
-      def self.encode(input, context:, path:)
+      def self.encode(input, context:)
         klass = Object.instance_method(:class).bind_call(input)
         return unless BasicObject.instance_method(:equal?).bind_call(klass, ::Array)
 
         # @type var input: ::Array[top]
-        InputGuard.check!(input, path: path)
-        count = input.size
+        # @type var count: Integer
+        count = ::Array.instance_method(:size).bind_call(input)
         return if count < MIN_ROWS
 
         transaction = context.writable_transaction!
@@ -27,7 +27,8 @@ module XitDB
           builder = Core::ArrayBuilder.new(transaction)
           (0...count).step(ROW_LIMIT) do |index|
             length = [ROW_LIMIT, count - index].min
-            rows = input.slice(index, length)
+            # @type var rows: ::Array[top]?
+            rows = ::Array.instance_method(:slice).bind_call(input, index, length)
             return nil unless rows && rows.size == length
 
             bytes = PageCodec.encode_page(rows)
@@ -35,7 +36,7 @@ module XitDB
 
             builder.append(context.database.core.bytes(bytes))
           end
-          return nil unless input.size == count
+          return nil unless count == ::Array.instance_method(:size).bind_call(input)
 
           stored = Core::Record.append(transaction, metadata: ARRAY,
                                                     fields: [Core::Slot.uint(count), builder.slot])

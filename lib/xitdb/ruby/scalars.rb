@@ -28,10 +28,11 @@ module XitDB
       # @param core [Core::Database] destination storage
       # @param registry [CodecRegistry, nil] custom serializers available for this write
       # @return [Core::Slot] stored value descriptor
-      # @raise [UnsupportedValueError] if the exact class or singleton behavior is unsupported
+      # @raise [UnsupportedValueError] if the exact class or an extended scalar's behavior is unsupported
       # @raise [CodecError] if application serialization fails
       def self.encode(value, core:, registry: nil)
-        InputGuard.check!(value)
+        Input.check!(value)
+        value = Input.string(value) if Object.instance_method(:instance_of?).bind_call(value, String)
         encode_validated(value, core: core, registry: registry)
       end
 

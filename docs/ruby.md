@@ -35,7 +35,9 @@ Ordinary keys never use custom codecs. Containers, temporal values, and custom o
 
 Maps and sets preserve insertion order. Updating retains position; deleting and reinserting moves an entry to the end.
 Native containers select the ordinary Ruby-profile representation. Counts are available without scanning members.
-Hash defaults, default procs, identity comparison, singleton behavior, executable objects, and cyclic inputs are unsupported.
+Exact Arrays, Hashes, and Strings are read through their built-in contents. Per-object overrides, extensions, and removed methods are ignored without invoking their hooks. Strings are copied before encoding or retaining a selector.
+
+Hash defaults, default procs, identity comparison, executable objects, and cyclic inputs are unsupported. Extended scalars, application values, and codec registrations retain strict singleton-behavior validation.
 Scalar and container subclasses need an explicit value codec. Unregistered subclasses reject before overridden methods execute.
 
 ## Sorted collections

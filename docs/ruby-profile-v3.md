@@ -12,7 +12,7 @@ A Core record with metadata `7` has two fields: `[row_count:uint, pages:array_li
 
 Each page contains 1,024 rows, except the final page, whose length is the remaining count. A typed page uses an untagged `bytes` or `short_bytes` slot. A promoted page uses a packed array record with metadata `2` or `3` and the expected length. Page arrays cannot contain other page arrays as physical pages.
 
-The encoder attempts this layout for exact Arrays with at least 32 rows. Every row must be an exact Hash with identical ordered String key representations. Hash defaults, identity comparison, singleton behavior, unsupported cells, and oversized pages cause general encoding to resume. Application callback exceptions propagate. Partial page writes are rolled back before fallback.
+The encoder attempts this layout for exact Arrays with at least 32 rows. Every row must be an exact Hash with identical ordered String key representations. Bound built-in methods read input contents without invoking per-object overrides. Hash defaults, identity comparison, unsupported cells, and oversized pages cause general encoding to resume. Application callback exceptions propagate. Partial page writes are rolled back before fallback.
 
 ## Row references
 

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../input_guard"
+require_relative "input"
 
 module XitDB
   module Ruby
@@ -17,10 +18,11 @@ module XitDB
       # @param value [String, Integer, Float, Time] exact instance of the declared key class
       # @param kind [Symbol] :string, :integer, :float, or :time
       # @return [String] frozen binary bytes with the declared ordering
-      # @raise [UnsupportedValueError] if the key has the wrong class, singleton behavior, or a NaN value
+      # @raise [UnsupportedValueError] if the key has the wrong class, an altered Time, or a NaN value
       # @raise [UnsupportedEncodingError] if a string cannot become valid UTF-8
       def self.dump(value, kind:)
-        InputGuard.check!(value)
+        Input.check!(value)
+        value = Input.string(value) if Object.instance_method(:is_a?).bind_call(value, String)
         unless TYPES[kind].equal?(Object.instance_method(:class).bind_call(value))
           raise UnsupportedValueError, "sorted key must match its declared key kind"
         end

@@ -33,21 +33,21 @@ class RubyEncodingValidationTest < Minitest::Test
     database&.close
   end
 
-  def test_a_codec_cannot_make_a_later_cached_value_bypass_validation
+  def test_a_codec_cannot_make_a_later_string_reuse_stale_cached_contents
     later = +"shared"
     codec = XitDB::Ruby::Codec.new(id: "validation/trigger", type: Trigger,
                                    dump: lambda { |_value|
-                                     later.define_singleton_method(:hidden) { :changed }
+                                     later.replace("changed")
+                                     later.define_singleton_method(:hidden) { raise "private hook ran" }
                                      later.singleton_class.send(:private, :hidden)
                                      "payload"
                                    }, load: ->(bytes) { Trigger.new(bytes) })
     XitDB::Ruby.memory(codecs: [codec]) do |database|
       database.transaction do |root|
         root[:kept] = [1]
-        bound = root.context.read_bound
-        assert_raises(XitDB::UnsupportedValueError) { root[:bad] = [later, Trigger.new, later] }
-        assert_equal bound, root.context.read_bound
-        assert_nil root[:bad]
+        root[:values] = [later, Trigger.new, later]
+
+        assert_equal ["shared", Trigger.new("payload"), "changed"], root[:values].to_ruby
         assert_equal [1], root[:kept].to_ruby
         root[:good] = "shared"
 

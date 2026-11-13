@@ -544,9 +544,7 @@ class ConversionTest < Minitest::Test
     source = track(XitDB.memory)
     source.transaction { |root| root["list"] = [1] }
     destination = track(XitDB::Ruby.memory)
-    key = +"bad"
-    # Adds singleton behavior that value or key validation must reject.
-    def key.special = :singleton_behavior
+    key = Object.new
     calls = 0
     transform = lambda { |value:, **|
       calls += 1

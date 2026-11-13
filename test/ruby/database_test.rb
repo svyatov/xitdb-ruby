@@ -103,8 +103,6 @@ class RubyDatabaseTest < Minitest::Test
   # Checks rejected input is atomic and does not execute hooks.
   def test_rejected_input_is_atomic_and_does_not_execute_hooks
     calls = []
-    singleton = []
-    singleton.define_singleton_method(:each) { calls << :each }
     subclass = Class.new(Array) { define_method(:each) { raise "hook ran" } }.new
     default = Hash.new { calls << :default }
     identity = {}.compare_by_identity
@@ -113,7 +111,7 @@ class RubyDatabaseTest < Minitest::Test
     cycle << cycle
     @db.transaction do |root|
       root[:kept] = 1
-      [singleton, subclass, default, Hash.new(0), identity, identity_set, Set[[1]], Set[Time.now]].each do |value|
+      [subclass, default, Hash.new(0), identity, identity_set, Set[[1]], Set[Time.now]].each do |value|
         assert_raises(XitDB::UnsupportedValueError) { root[:bad] = value }
         refute root.key?(:bad)
       end

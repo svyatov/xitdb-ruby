@@ -57,7 +57,8 @@ class RubyKeyEncodingTest < RubyProfileTest
     value = +"name"
     # Adds singleton behavior that value or key validation must reject.
     def value.special = :singleton_behavior
-    assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
+
+    assert_equal key_bytes("name"), key_bytes(value)
   end
 
   # Checks that fresh processes produce literal canonical bytes.
@@ -79,10 +80,10 @@ class RubyKeyEncodingTest < RubyProfileTest
     end
   end
 
-  # Checks rejects all singleton behavior without calling input reflection.
-  def test_rejects_all_singleton_behavior_without_calling_input_reflection
+  # Checks singleton methods do not affect built-in string contents.
+  def test_ignores_singleton_behavior_without_calling_input_reflection
     singleton_inputs.each do |value|
-      assert_raises(XitDB::UnsupportedValueError) { key_bytes(value) }
+      assert_equal key_bytes("text"), key_bytes(value)
     end
   end
 
@@ -91,24 +92,26 @@ class RubyKeyEncodingTest < RubyProfileTest
     assert_raises(XitDB::UnsupportedValueError) { key_bytes(BasicObject.new) }
   end
 
-  # Checks rejects extensions without calling their identity hooks.
-  def test_rejects_extensions_without_calling_their_identity_hooks
+  # Checks extension identity hooks are not called.
+  def test_ignores_extensions_without_calling_their_identity_hooks
     each_identity_hook_input do |value, calls, behavior|
-      assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { key_bytes(value) }
+      assert_equal key_bytes("text"), key_bytes(value), behavior.to_s
       assert_empty calls
       assert_equal "text", value
     end
     assert_equal "05000474657874", key_bytes("text").unpack1("H*")
   end
 
-  # Checks rejects removed encoding unrelated and private inherited methods.
-  def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
+  # Checks removed encoding and private methods do not affect key bytes.
+  def test_ignores_removed_encoding_unrelated_and_private_inherited_methods
     %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
       value = +"text"
       value.singleton_class.undef_method(method)
-      assert_raises(XitDB::UnsupportedValueError, method.to_s) { key_bytes(value) }
+
+      assert_equal key_bytes("text"), key_bytes(value), method.to_s
       value.freeze
-      assert_raises(XitDB::UnsupportedValueError, "frozen #{method}") { key_bytes(value) }
+
+      assert_equal key_bytes("text"), key_bytes(value), "frozen #{method}"
     end
   end
 end

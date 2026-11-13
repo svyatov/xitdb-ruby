@@ -161,8 +161,16 @@ class PageCodecTest < Minitest::Test
       def value.to_str = raise("untrusted string hook")
 
       assert_nil @codec.encode_page(value)
-      assert_nil @codec.encode_page([value])
-      assert_nil @codec.encode_page([{ "key" => value }])
+      if Object.instance_method(:instance_of?).bind_call(value, Hash)
+        assert_equal [{}], @codec.decode_page(@codec.encode_page([value]))
+      else
+        assert_nil @codec.encode_page([value])
+      end
+      if Object.instance_method(:instance_of?).bind_call(value, String)
+        assert_equal [{ "key" => String.new(value) }], @codec.decode_page(@codec.encode_page([{ "key" => value }]))
+      else
+        assert_nil @codec.encode_page([{ "key" => value }])
+      end
     end
   end
 

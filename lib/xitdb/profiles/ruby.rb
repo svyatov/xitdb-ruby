@@ -49,7 +49,8 @@ module XitDB
       # @return [Core::Slot] stored scalar descriptor
       # @raise [ValueError] if the scalar cannot be represented
       def encode_scalar(value, core:, state: nil, validated: false)
-        InputGuard.check!(value) unless validated
+        XitDB::Ruby::Input.check!(value) unless validated
+        value = XitDB::Ruby::Input.string(value) if Object.instance_method(:instance_of?).bind_call(value, String)
         identity = state&.scalar_identity(value)
         cached = state.scalars[identity] if state && identity
         return cached if cached
@@ -249,7 +250,7 @@ module XitDB
       # @return [Symbol, Array(Symbol, Symbol), nil] recognized kind and optional key kind
       # @raise [UnsupportedValueError] if collection behavior cannot be preserved
       def input_kind(value, path:)
-        InputGuard.check!(value, path: path)
+        XitDB::Ruby::Input.check!(value, path: path)
         return nil if @registry.for_value(value)
 
         klass = Object.instance_method(:class).bind_call(value)
@@ -267,8 +268,7 @@ module XitDB
       # @param value [Hash] input hash
       # @return [Boolean] whether a default value, default procedure, or identity comparison is configured
       def hash_defaults?(value)
-        default = !BasicObject.instance_method(:equal?).bind_call(value.default, nil)
-        !value.default_proc.nil? || default || value.compare_by_identity?
+        XitDB::Ruby::Input.hash_defaults?(value)
       end
 
       # Rejects collection subclasses and comparison or default behavior that cannot be stored.
@@ -282,12 +282,17 @@ module XitDB
         unless [Hash, ::Array, ::Set].include?(klass)
           raise UnsupportedValueError.new("container subclasses are unsupported", path: path)
         end
-        if value.is_a?(Hash) && hash_defaults?(value)
-          raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
-        end
-        return unless value.is_a?(::Set) && value.compare_by_identity?
 
-        raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+        case value
+        when Hash
+          if hash_defaults?(value)
+            raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
+          end
+        when ::Set
+          if value.compare_by_identity?
+            raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+          end
+        end
       end
 
       # Maps an explicit collection declaration to its Ruby-profile kind.
@@ -327,8 +332,12 @@ module XitDB
         Enumerator.new do |output|
           case value
           when Hash, ::Set
-            entries = value.is_a?(Hash) ? value.each_pair : value.each.lazy.map { |member| [member, nil] }
-            entries.each do |key, child|
+            entries = case value
+                      when Hash then XitDB::Ruby::Input.entries(value)
+                      else value.each.lazy.map { |member| [member, nil] }
+                      end
+            entries.each do |entry|
+              key, child = entry
               begin
                 key_bytes(key, state: state)
               rescue ValueError => e
@@ -337,7 +346,7 @@ module XitDB
               output << [key, child]
             end
           when ::Array
-            value.each_with_index { |child, index| output << [index, child] }
+            XitDB::Ruby::Input.entries(value).each { |entry| output << entry }
           end
         end
       end

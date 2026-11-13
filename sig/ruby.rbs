@@ -1,5 +1,13 @@
 module XitDB
   module Ruby
+    module Input
+      CONTENT_TYPES: Array[Class]
+      def self.check!: (top, ?path: XitDB::path) -> void
+      def self.string: (top) -> String
+      def self.hash_defaults?: (Hash[top, top]) -> bool
+      def self.entries: (Array[top] | Hash[top, top]) -> Enumerator[[top, top], void]
+    end
+
     # Bounded flat-row wire codec; private implementation of Ruby-profile pages.
     module PageCodec
       PAGE_LIMIT: Integer
@@ -101,10 +109,10 @@ module XitDB
     module KeyEncoding
       TYPES: Array[Class]
 
-      def self.dump: (XitDB::value) -> String
-      def self.dump_stored: (XitDB::value) -> String
+      def self.dump: (top) -> String
+      def self.dump_stored: (top) -> String
 
-      def self.scalar_bytes: (XitDB::value) -> String
+      def self.scalar_bytes: (top) -> String
 
       def self.float_bytes: (Float) -> String
 
@@ -250,7 +258,7 @@ module XitDB
       def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?, ?validated: bool) -> Core::Slot
       def packing_state: (context: Context, reading: bool) -> XitDB::Ruby::PackingState?
       def decode: (Core::Slot, context: Context, path: XitDB::path, ?immutable: bool) -> top
-      def key_bytes: (XitDB::value, ?state: XitDB::Ruby::PackingState?) -> String
+      def key_bytes: (top, ?state: XitDB::Ruby::PackingState?) -> String
       def stored_key_bytes: (XitDB::value) -> String
       def container: (Core::Slot, context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers?
       def record_container: (Core::Slot, context: Context, path: XitDB::path, state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
@@ -355,7 +363,7 @@ module XitDB
       BYTE_LIMIT: Integer
       ARRAY: Integer
       ROW: Integer
-      def self.encode: (top, context: Context, path: XitDB::path) -> Core::Slot?
+      def self.encode: (top, context: Context) -> Core::Slot?
       def self.persist: (Core::Slot, Context) -> Core::Slot
       def self.bytes: (Core::Slot, Context) -> String
       def self.reference: (Core::Record) -> PageReference

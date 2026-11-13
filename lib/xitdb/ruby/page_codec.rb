@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../input_guard"
+require_relative "input"
 require_relative "page_encoder"
 require_relative "page_decoder"
 
