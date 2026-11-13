@@ -33,7 +33,7 @@ Keep checks separate from timing. Treat Core JSON as a comparison control.
 - [x] Complete builder check and record engineering decisions without reopening authorized implementation scope.
 - [x] Capture the crap4ruby snapshot and strictly parse its documented writer grammar. Reject unmatched fields or rows.
 - [x] Generate deterministic sizes 58/1,000/10,000, preserving captured scalar types. Derive nested and numeric variants explicitly.
-- [ ] Verify fixture determinism, ownership, JSON equivalence, source checksum, and original record count. Commit contract and plan locally.
+- [x] Verify fixture determinism, ownership, JSON equivalence, source checksum, and original record count. Commit contract and plan locally.
 
 ### Task 2: Compact row prototype and controls
 

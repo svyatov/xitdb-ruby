@@ -76,6 +76,7 @@ Evaluate the candidate against simultaneously measured O1 observations on the sa
 - Each stored-byte measure must be within the larger of 6% or `3 * rows + 128 * pages` additional bytes over O1.
 
 The absolute storage allowance accounts for mandatory row offsets and page integrity metadata on compact numeric records.
+In that allowance, `pages` means `ceil(rows / 1024)`, a deterministic budget rather than an observed physical page count.
 Nested fallback has no selected-read speedup requirement, but retains every regression limit.
 Core JSON is a comparison, not an automatic parity gate for different database access capabilities.
 Investigate noisy or contradictory groups with a fresh balanced confirmation run before selecting a winner.
