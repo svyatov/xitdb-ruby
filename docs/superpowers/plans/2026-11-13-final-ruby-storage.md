@@ -40,31 +40,31 @@ Keep checks separate from timing. Treat Core JSON as a comparison control.
 **Files:** Scratch `compact_page_encoder.rb`, `compact_page_decoder.rb`, `adapter.rb`, `contract_test.rb`; extracted archived column harness and an exported O1 library.
 **Interfaces:** Existing `PageCodec.encode_page(rows)`, `encode_stored_page(rows)`, `decode_page(bytes, expected=nil)`, and `decode_row(bytes,index,expected=nil)` stay unchanged.
 
-- [ ] Write failing exact-value, offset, checksum, corruption, limit, and fallback tests against the proposed compact row format.
-- [ ] Implement shared-schema compact cells, 16-bit row boundaries, and integrity validation with bounded capture and no caller hooks.
-- [ ] Verify selected traversal touches only the requested row; verify full decoding checks every row. Test recomputed-checksum malformed rows explicitly.
-- [ ] Run focused public API QA before timing. Preserve unsupported shapes and all general-value semantics.
+- [x] Write failing exact-value, offset, checksum, corruption, limit, and fallback tests against the proposed compact row format.
+- [x] Implement shared-schema compact cells, 16-bit row boundaries, and integrity validation with bounded capture and no caller hooks.
+- [x] Verify selected traversal touches only the requested row; verify full decoding checks every row. Test recomputed-checksum malformed rows explicitly.
+- [x] Run focused public API QA before timing. Preserve unsupported shapes and all general-value semantics.
 
 ### Task 3: Balanced selection measurements
 
 **Files:** Scratch `worker.rb`, `benchmark.rb`, `summarize.rb`, `acceptance.rb`; reproducible archive in `docs/benchmarks/final-ruby-storage/`.
 **Interfaces:** Worker emits dataset/variant/store/count, exact correctness results, timing/allocation metrics, and three stored-byte measures. Summarizer rejects incomplete or drifting sources and applies every G4 limit per group.
 
-- [ ] Compare compact prototype, O1, archived columns, and direct Core JSON for every G3 dataset/size/store group.
-- [ ] Use two warmups and twelve measured observations, balanced four-variant execution orders, fresh processes, and stable source hashes.
-- [ ] Require every operation and resource criterion; do not average a failed group into a passing result.
-- [ ] Investigate failures through profiles or bounded experiments. Revise the candidate without changing predeclared limits, then rerun affected comparisons.
-- [ ] Record the selected format and evidence. Keep raw failed candidates with their source versions.
+- [x] Compare compact prototype, O1, archived columns, and direct Core JSON for every G3 dataset/size/store group.
+- [x] Use two warmups and twelve measured observations, balanced four-variant execution orders, fresh processes, and stable source hashes.
+- [x] Require every operation and resource criterion; do not average a failed group into a passing result.
+- [x] Investigate failures through profiles or bounded experiments. Revise the candidate without changing predeclared limits, then rerun affected comparisons. No criterion failed in the complete selection run.
+- [x] Record the selected format and evidence. Keep raw failed candidates with their source versions. Selection passed all 444 checks.
 
 ### Task 4: Production integration and compatibility
 
 **Files:** `lib/xitdb/ruby/page_encoder.rb`, `page_decoder.rb`, `page_codec.rb`, profile/entry-point configuration, `sig/ruby.rbs`, focused Ruby/public tests, and wire documentation.
 **Interfaces:** Retain public methods and value semantics. A changed physical format uses a distinct profile identifier, provisionally `rb04`, with explicit rejection of older profiles.
 
-- [ ] Write failing public and codec regressions for the selected layout, exact values, snapshots, rollback, hooks, resource boundaries, and compatibility rejection.
-- [ ] Integrate the measured algorithm with signatures and minimum cohesive implementation changes.
-- [ ] Update format-aware tests and documentation, preserving historical contracts and archives.
-- [ ] Run focused tests and `bundle exec rake`; require all tests, 100% typed calls, and CRAP <= 10. Commit a verified increment.
+- [x] Write failing public and codec regressions for the selected layout, exact values, snapshots, rollback, hooks, resource boundaries, and compatibility rejection.
+- [x] Integrate the measured algorithm with signatures and minimum cohesive implementation changes.
+- [x] Update format-aware tests and documentation, preserving historical contracts and archives.
+- [x] Run focused tests and `bundle exec rake`; require all tests, 100% typed calls, and CRAP <= 10. Commit a verified increment.
 
 ### Task 5: Final evidence and audit
 

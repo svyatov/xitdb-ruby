@@ -1,0 +1,11 @@
+{
+  "baseline_commit": "6d26b1d",
+  "contract_commit": "40546af",
+  "artifacts": {
+    "selection-run.json.gz": "fe9a465eae1ec2e43b9d524ba866873724f74a0681bb3a6314959921a6741bc5",
+    "selection-summary.json.gz": "be9ef73f10267f3c4da45b94590472affcc92a59d6c0f880ab903fd537dba584",
+    "selection-acceptance.json.gz": "b9962c52e4fc1aee0d0b25c9a5f22c3d0f7f0680aa462a99185e516377ee4c3f",
+    "selection-harness.json.gz": "fe476dfec26725eb5a1f52f4619f04838fbabc20f46cab3d9fc99ab4c0d8495e",
+    "selection-qa.json.gz": "0f3b095ecbeca84b99b9f2e3e1aa94eef0fff299bf16b50480088e59a5191c2f"
+  }
+}
