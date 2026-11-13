@@ -1,5 +1,92 @@
 module XitDB
   module Ruby
+    module Input
+      CONTENT_TYPES: Array[Class]
+      def self.check!: (top, ?path: XitDB::path) -> void
+      def self.string: (top) -> String
+      def self.hash_defaults?: (Hash[top, top]) -> bool
+      def self.entries: (Array[top] | Hash[top, top]) -> Enumerator[[top, top], void]
+    end
+
+    # Bounded flat-row wire codec; private implementation of Ruby-profile pages.
+    module PageCodec
+      PAGE_LIMIT: Integer
+      ROW_LIMIT: Integer
+      FIELD_LIMIT: Integer
+      type cell = nil | bool | Integer | Float | String
+      type row = Hash[String, cell]
+      def self.encode_page: (top) -> String?
+      def self.encode_stored_page: (Array[row]) -> String?
+      def self.decode_page: (String, ?Integer?) -> Array[row]
+      def self.decode_row: (String, Integer, ?Integer?) -> row
+      def self.decoder: (String, Integer?) -> PageDecoder
+    end
+
+    class PageEncoder
+      @stored: bool
+      @bytes: String
+      @keys: Array[String]
+      def initialize: (?stored: bool) -> void
+      def encode: (top) -> String?
+      private
+      def write_schema: (top, Integer) -> bool
+      def exact?: (top, Class) -> bool
+      def valid_row?: (top) -> bool
+      def encode_row: (Hash[String, top]) -> bool
+      def same_key?: (top, String?) -> bool
+      def append: (String?) -> bool
+      def cell: (top) -> String?
+      def integer: (Integer) -> String?
+      def text: (top) -> String?
+      def unsigned: (Integer) -> String
+    end
+
+    class PageDecoder
+      @bytes: String
+      @position: Integer
+      @count: Integer
+      @keys: Array[String]
+      def initialize: (String, Integer?) -> void
+      def page: () -> Array[PageCodec::row]
+      def row: (Integer) -> PageCodec::row
+      private
+      def validate_count!: (Integer, Integer, Integer?) -> void
+      def schema: (Integer) -> Array[String]
+      def read_row: () -> PageCodec::row
+      def cell: () -> PageCodec::cell
+      def skip_cell: () -> void
+      def string_encoding: (Integer) -> Encoding
+      def named_encoding: () -> Encoding
+      def unsigned: () -> Integer
+      def byte: () -> Integer
+      def take: (Integer) -> String
+      def advance!: (Integer) -> Integer
+      def finish!: () -> void
+    end
+
+    class IndexedPageEncoder < PageEncoder
+      @offsets: Array[Integer]
+      @directory: Integer
+      @payload: Integer
+      def initialize: (?stored: bool) -> void
+      def encode: (top) -> String?
+      private
+      def write_schema: (top, Integer) -> bool
+      def encode_row: (Hash[String, top]) -> bool
+      def append: (String?) -> bool
+    end
+
+    class IndexedPageDecoder < PageDecoder
+      @directory: Integer
+      @payload: Integer
+      @length: Integer
+      def initialize: (String, Integer?) -> void
+      def row: (Integer) -> PageCodec::row
+      def page: () -> Array[PageCodec::row]
+      private
+      def offset: (Integer) -> Integer
+    end
+
     def self.open: (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) -> Database
                  | [A] (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) { (Database) -> A } -> A
 
@@ -46,10 +133,10 @@ module XitDB
     module KeyEncoding
       TYPES: Array[Class]
 
-      def self.dump: (XitDB::value) -> String
-      def self.dump_stored: (XitDB::value) -> String
+      def self.dump: (top) -> String
+      def self.dump_stored: (top) -> String
 
-      def self.scalar_bytes: (XitDB::value) -> String
+      def self.scalar_bytes: (top) -> String
 
       def self.float_bytes: (Float) -> String
 
@@ -195,9 +282,10 @@ module XitDB
       def encode_scalar: (top, core: Core::Database, ?state: XitDB::Ruby::PackingState?, ?validated: bool) -> Core::Slot
       def packing_state: (context: Context, reading: bool) -> XitDB::Ruby::PackingState?
       def decode: (Core::Slot, context: Context, path: XitDB::path, ?immutable: bool) -> top
-      def key_bytes: (XitDB::value, ?state: XitDB::Ruby::PackingState?) -> String
+      def key_bytes: (top, ?state: XitDB::Ruby::PackingState?) -> String
       def stored_key_bytes: (XitDB::value) -> String
       def container: (Core::Slot, context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers?
+      def record_container: (Core::Slot, context: Context, path: XitDB::path, state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
       def empty_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path, ?state: XitDB::Ruby::PackingState?) -> XitDB::Ruby::Containers
       def conversion_kind: (XitDB::adapter) -> (Symbol | [ Symbol, Symbol? ])
       def conversion_container: (Symbol | [ Symbol, Symbol? ], context: Context, path: XitDB::path) -> XitDB::Ruby::Containers
@@ -274,6 +362,64 @@ module XitDB
       def store_decoded_schema: (Integer, decoded_schema) -> decoded_schema
       private
       def string_key_bytes: (String) { () -> String } -> String
+    end
+
+    class PageReference < Core::Slot
+      attr_reader page: Core::Slot
+      attr_reader index: Integer
+      attr_reader count: Integer
+      def initialize: (Core::Slot, Integer, Integer) -> void
+    end
+
+    class PageCell < Core::Slot
+      attr_reader decoded: PageCodec::cell
+      def initialize: (PageCodec::cell) -> void
+    end
+
+    class PageDraft < Core::Slot
+      attr_reader decoded: PageCodec::row
+      def initialize: (PageCodec::row) -> void
+    end
+
+    module Pages
+      MIN_ROWS: Integer
+      ROW_LIMIT: Integer
+      BYTE_LIMIT: Integer
+      ARRAY: Integer
+      ROW: Integer
+      def self.encode: (top, context: Context) -> Core::Slot?
+      def self.persist: (Core::Slot, Context) -> Core::Slot
+      def self.bytes: (Core::Slot, Context) -> String
+      def self.reference: (Core::Record) -> PageReference
+    end
+
+    class PageRow < Containers
+      @reference: PageReference
+      @row: PageCodec::row?
+      @fallback: PackedMap?
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, reference: PageReference) -> void
+      def materialize_flat: () -> PageCodec::row?
+      private
+      def row: () -> PageCodec::row
+      def replace_numeric: (XitDB::selector, Core::Slot) -> bool
+      def promote: () -> PackedMap
+    end
+
+    class PageArray < Containers
+      @count: Integer
+      @pages: Core::ArrayList
+      @fallback: PackedArray?
+      def initialize: (Profiles::Ruby, Core::Cursor, context: Context, path: XitDB::path, record: Core::Record) -> void
+      def materialize_flat: () -> Array[PageCodec::row]?
+      private
+      def page_size: (Integer) -> Integer
+      def page_slot!: (Integer) -> Core::Slot
+      def generic_page: (Core::Slot, Integer) -> PackedArray
+      def replace_row: (Integer, Core::Slot) -> void
+      def flat_row: (Core::Slot) -> PageCodec::row?
+      def page_cell?: (Core::Slot) -> bool
+      def promote_page: (Core::Slot, Integer) -> PackedArray
+      def promote: () -> PackedArray
     end
 
     class PackedArray < Containers
@@ -358,7 +504,6 @@ module XitDB
       def clear_needed?: () -> bool
       def clear: () -> self
       def selector_identity: (XitDB::selector) -> XitDB::selector
-      attr_reader collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList | nil
       def linked_collection!: () -> Core::LinkedArrayList
       private
       def index_selector!: (XitDB::selector) -> Integer

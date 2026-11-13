@@ -44,6 +44,9 @@ module XitDB
         else return default
         end
 
+        case key
+        when String then key = String.new(key)
+        end
         raise KeyError, "key not found: #{key.inspect}"
       end
 

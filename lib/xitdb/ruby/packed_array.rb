@@ -47,6 +47,7 @@ module XitDB
       end
 
       def assign(selector, stored)
+        stored = Pages.persist(stored, @context)
         index = index_selector!(selector)
         if (builder = @builder)
           raise IndexError, "unpublished array construction must append" unless index == size
@@ -63,6 +64,7 @@ module XitDB
       end
 
       def insert(index, stored)
+        stored = Pages.persist(stored, @context)
         finish_builder
         return super if @collection
 

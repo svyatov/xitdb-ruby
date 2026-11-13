@@ -140,13 +140,14 @@ class RubyScalarsTest < RubyProfileTest
     value = +"text"
     # Adds singleton behavior that value or key validation must reject.
     def value.special = :singleton_behavior
-    assert_raises(XitDB::UnsupportedValueError) { store(value) }
+
+    assert_equal "text", round_trip(value)
   end
 
-  # Checks rejects all singleton behavior without calling input reflection.
-  def test_rejects_all_singleton_behavior_without_calling_input_reflection
+  # Checks singleton methods do not affect built-in string contents.
+  def test_ignores_singleton_behavior_without_calling_input_reflection
     singleton_inputs.each do |value|
-      assert_raises(XitDB::UnsupportedValueError) { store(value) }
+      assert_equal "text", round_trip(value)
     end
   end
 
@@ -155,24 +156,26 @@ class RubyScalarsTest < RubyProfileTest
     assert_raises(XitDB::UnsupportedValueError) { store(BasicObject.new) }
   end
 
-  # Checks rejects extensions without calling their identity hooks.
-  def test_rejects_extensions_without_calling_their_identity_hooks
+  # Checks extension identity hooks are not called.
+  def test_ignores_extensions_without_calling_their_identity_hooks
     each_identity_hook_input do |value, calls, behavior|
-      assert_raises(XitDB::UnsupportedValueError, behavior.to_s) { store(value) }
+      assert_equal "text", round_trip(value), behavior.to_s
       assert_empty calls
       assert_equal "text", value
     end
     assert_equal "text", round_trip("text")
   end
 
-  # Checks rejects removed encoding unrelated and private inherited methods.
-  def test_rejects_removed_encoding_unrelated_and_private_inherited_methods
+  # Checks removed encoding and private methods do not affect stored contents.
+  def test_ignores_removed_encoding_unrelated_and_private_inherited_methods
     %i[bytesize upcase display puts initialize_copy is_a?].each do |method|
       value = +"text"
       value.singleton_class.undef_method(method)
-      assert_raises(XitDB::UnsupportedValueError, method.to_s) { store(value) }
+
+      assert_equal "text", round_trip(value), method.to_s
       value.freeze
-      assert_raises(XitDB::UnsupportedValueError, "frozen #{method}") { store(value) }
+
+      assert_equal "text", round_trip(value), "frozen #{method}"
     end
   end
 
@@ -199,8 +202,8 @@ class RubyScalarsTest < RubyProfileTest
     assert_empty errors
   end
 
-  # Checks rejects private overrides of existing methods without calling them.
-  def test_rejects_private_overrides_of_existing_methods_without_calling_them
+  # Checks private overrides of existing methods are not called.
+  def test_ignores_private_overrides_of_existing_methods_without_calling_them
     prepend_modes = [false, true]
     %i[initialize_copy puts].each do |name|
       prepend_modes.each do |prepend|
@@ -209,9 +212,11 @@ class RubyScalarsTest < RubyProfileTest
           define_method(name) { |*| raise "private override ran" }
         end
         prepend ? value.singleton_class.prepend(behavior) : value.extend(behavior)
-        assert_raises(XitDB::UnsupportedValueError) { store(value) }
+
+        assert_equal "text", round_trip(value)
         value.freeze
-        assert_raises(XitDB::UnsupportedValueError) { store(value) }
+
+        assert_equal "text", round_trip(value)
       end
     end
   end

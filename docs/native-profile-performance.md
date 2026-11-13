@@ -190,7 +190,11 @@ Compaction's temporary offset map remains a bottleneck after its 16,384-entry ca
 
 Ninety short serial prototype probes compared the previous indexed implementation, packed maps with incremental arrays, completed-block array construction, shared key payloads, field dictionaries, and validation changes. Each probe was a working implementation. The archive retains their sources and exact input.
 
-Inline typed cells and larger byte chunks were considered but not implemented or measured. They might remove slot padding and scalar headers. They also require another parser and relocation rules, and can enlarge small update copies. The selected record design has direct measured evidence and preserves useful selective operations. It is not a demonstrated storage lower bound.
+The original packing study considered inline typed cells and larger byte chunks without implementing them. They might remove slot padding and scalar headers. They also require another parser and relocation rules, and can enlarge small update copies. The selected record design has direct measured evidence and preserves useful selective operations. It is not a demonstrated storage lower bound.
+
+The follow-up [JSON performance experiments](benchmarks/native-pages/README.md) measure JSON pages, field dictionaries, column layouts, compressed pages, and typed binary pages. Those prototypes approach JSON bulk speed but do not implement the complete Ruby profile. Their update copying exceeds rb02's bounded record path.
+
+The [compiled rb02 experiment](benchmarks/native-batch/README.md) measures C batching through public native transactions and views. It preserves ordinary records and bounded updates, while separating interpreter overhead from storage layout costs.
 
 Repeated validation was a separate CPU cost. A source-hashed 1,000-record probe reduced input-guard calls from 30,048 to 7,010 during insert, from thirteen to three during a full read, and from fifty-two to fifteen during an update. Exact immediate scalar classes skip per-object singleton inspection. Profile-owned validated encoding removes duplicate checks. Stored built-in keys do not repeat application-object introspection.
 

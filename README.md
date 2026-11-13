@@ -58,7 +58,7 @@ end
 | Entry point | Values and keys | File identifier |
 | --- | --- | --- |
 | `XitDB.open`, `XitDB.memory` | Portable integers, floats, bytes, collections, and String keys | `sha1` by default; `hash: :sha256` selects `sha2` |
-| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb02` |
+| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb04` |
 | `XitDB::Core::Database` | Raw slots, every upstream collection, and arbitrary roots | Explicit storage configuration |
 
 Opening never converts a profile. Public entry points reject a mismatched profile and pre-existing zero-byte files.
@@ -86,8 +86,8 @@ Start with [Learn xitdb](docs/learning.md) for a beginner's explanation of value
 Ruby source includes YARD API comments. With YARD available, run `yard doc` and open `doc/index.html`.
 
 Read the [portable guide](docs/portable.md), [Ruby guide](docs/ruby.md), and [core guide](docs/core.md).
-The [Ruby wire contract](docs/ruby-profile-v2.md) defines compact native containers and exact scalar payloads.
-Pinned references preserve opaque Ruby scalar bytes inside portable containers. Native `rb02` containers require the Core record extension.
+The [Ruby wire contract](docs/ruby-profile-v4.md) defines compact native containers, indexed row pages, and exact scalar payloads.
+Pinned references preserve opaque Ruby scalar bytes inside portable containers. Native `rb04` containers require the Core record extension.
 
 ## Run the workflows
 
@@ -101,6 +101,11 @@ From a checkout, run them with `bundle exec ruby -Ilib examples/portable.rb`, su
 ## Verify a checkout
 
 Run `bundle install` to install the locked development dependencies.
+
+Load `xitdb/ruby` directly from the checkout with `ruby -Ilib`. Run `bundle exec rake` for the complete quality gate.
+
+The Linux memory gate uses the cached `ruby:4.0.9` image. It copies the Ruby sources into an isolated runtime before starting the measured container. Both containers run without network access.
+
 Run `bundle exec ruby script/ci.rb` to check the checkout.
 It checks Ruby style, library types, and Change Risk Anti-Patterns (CRAP), then inspects the locally built package.
 The tests execute packaged examples from temporary storage and inspect package contents.

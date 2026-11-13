@@ -1,7 +1,9 @@
 # Ruby profile
 
 `require "xitdb/ruby"` provides `XitDB::Ruby.open(path, readonly: false, lock_timeout: 5.0, codecs: [])` and `XitDB::Ruby.memory(codecs: [])`.
-Configuration belongs to each handle. The file identifier `rb02` selects SHA-256 over canonical typed keys and compact native containers. Existing `rb01` files are incompatible; this pre-1.0 format has no migration or backward reader.
+Configuration belongs to each handle. The file identifier `rb04` selects SHA-256 over canonical typed keys, compact native containers, and indexed row pages.
+Files using `rb01`, `rb02`, or `rb03` are incompatible and reject without modification.
+This pre-1.0 format has no migration or backward reader.
 
 Small maps and sets store up to sixteen original keys directly in insertion order in a Core record. Map metadata is `1`, followed by alternating original-key and value slots; set metadata is `6`, followed by original-key slots. Keys must have distinct canonical identities, at most 128 canonical bytes and at most 256 encoded scalar bytes. Larger collections and oversized keys use the indexed envelope representation. Promotion preserves order and the first original key representation, and clearing an indexed collection retains that representation.
 
@@ -10,6 +12,15 @@ The Core record extension has tag `17`, an unsigned big-endian 32-bit metadata w
 Arrays with at most sixteen elements use record metadata `2` and consecutive element slots. Larger arrays use metadata `3` with one Core array-list slot. Bulk construction retains at most sixteen slots per tree level and appends completed blocks once. Selective updates use the existing Core copy-on-write path. Large values remain separate byte records referenced by their slots.
 
 Within one bulk encoding, maps with two to sixteen fields can share an ordered dictionary. Metadata `4` contains a dictionary record slot followed by value slots. The dictionary uses metadata `5` and original-key slots. Dictionaries preserve exact key representations, including String encodings. Value-only updates retain the dictionary; key changes can return to literal records.
+
+Arrays with at least 32 compatible flat Hash rows use typed pages. Each page holds at most 1,024 rows, sixteen String keys, and 65,536 encoded bytes. Keys retain their order, bytes, and encodings. Cells support nil, booleans, small Integers, Floats, and Strings. Other values use the general collection layouts.
+
+A compatible row update rewrites one page. An incompatible update replaces that page with a packed array of row references. Structural array edits use the general array layout.
+Indexed pages retain compact scalar cells and add 16-bit row offsets and a SHA-256 checksum.
+Selected reads verify bounded page integrity, then decode the schema and requested row.
+Full reads validate all cells and produce independent mutable values. Retained views never cache decoded rows.
+Pages that exceed the indexed layout's byte budget can use the compact sequential layout, whose selected reads validate every cell.
+Rechecksummed malformed cells in an unselected indexed row can remain undetected until access or full decoding.
 
 Each encoding operation shares at most 256 short String or Symbol values and 64 dictionaries. Scalar sharing includes exact type, encoding, and bytes, and accepts at most 64 source bytes. A separate identity cache recognizes at most 256 validated frozen String key objects. Read-only materialization caches at most 64 decoded dictionaries within that call. Transaction reads use no decoded dictionary cache. Materialization returns independent mutable String values.
 The [portable guide](portable.md) defines the shared transaction, snapshot, history, ownership, stream, and view contracts.
@@ -31,7 +42,9 @@ Ordinary keys never use custom codecs. Containers, temporal values, and custom o
 
 Maps and sets preserve insertion order. Updating retains position; deleting and reinserting moves an entry to the end.
 Native containers select the ordinary Ruby-profile representation. Counts are available without scanning members.
-Hash defaults, default procs, identity comparison, singleton behavior, executable objects, and cyclic inputs are unsupported.
+Exact Arrays, Hashes, and Strings are read through their built-in contents. Per-object overrides, extensions, and removed methods are ignored without invoking their hooks. Strings are copied before encoding or retaining a selector.
+
+Hash defaults, default procs, identity comparison, executable objects, and cyclic inputs are unsupported. Extended scalars, application values, and codec registrations retain strict singleton-behavior validation.
 Scalar and container subclasses need an explicit value codec. Unregistered subclasses reject before overridden methods execute.
 
 ## Sorted collections
@@ -68,4 +81,4 @@ Callbacks can read transaction views. Coercion, dump, load, and conversion callb
 The guard applies across Context instances; nested writes raise `TransactionStateError` before changing state.
 Callback failure aborts the affected assignment. Byte-stream callbacks retain their separate non-overlapping sibling-write behavior.
 
-See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v2.md).
+See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v4.md).
