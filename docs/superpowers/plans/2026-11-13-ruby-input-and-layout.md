@@ -37,8 +37,8 @@
 - [x] Implement bound capture and update former rejection tests to assert stored contents and zero callbacks. Keep unsupported-type rejection tests.
 - [x] Run focused tests, then `bundle exec rake`; expect all quality gates to pass.
 - [x] Run independent public API QA, then source review. Fix important findings with failing regressions.
-- [ ] Measure production CPU, elapsed time, allocations, and bytes across all six benchmark groups. Record provenance and limitations.
-- [ ] Commit the verified input change and reproducible measurements.
+- [x] Measure production CPU, elapsed time, allocations, and bytes across all six benchmark groups. Record provenance and limitations.
+- [x] Commit the verified input change and reproducible measurements.
 
 ### Task 2: Joint bulk and indexed page experiment
 
