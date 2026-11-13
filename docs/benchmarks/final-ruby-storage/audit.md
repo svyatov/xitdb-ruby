@@ -1,6 +1,8 @@
 # G1-G5 completion evidence
 
-The implementation is commit `a94e160`; later commits add evidence and documentation without changing library, signature, or production test sources.
+The measured implementation is commit `a94e160`.
+Its library, signature, and production test sources remain unchanged through commit `af154ea`.
+Later cleanup is excluded from the timing evidence.
 The control implementation is `6d26b1d`.
 The [design](../../superpowers/specs/2026-11-13-ruby-storage-design.md) preserves the supplied goal and declares acceptance limits before candidate timing.
 

@@ -1,7 +1,7 @@
 # xitdb for Ruby
 
 [`xitdb`](https://rubygems.org/gems/xitdb) provides transactional collections in one file, implemented in Ruby. It requires MRI 3.3 or later.
-The gem is implemented in Ruby. Runtime dependencies are `date` and `bigdecimal`; no database service is needed.
+It requires no compiler or database service. Runtime dependencies are `date` and `bigdecimal`.
 
 This is a Ruby implementation of [xitdb](https://github.com/xit-vcs/xitdb), a binary format for immutable database structures.
 The repository is named `xitdb-ruby`; the gem and require path are `xitdb`.
