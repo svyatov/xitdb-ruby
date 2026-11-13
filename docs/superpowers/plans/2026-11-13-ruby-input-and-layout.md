@@ -46,7 +46,7 @@
 
 **Interfaces:** Prototype exact flat-row page encode, full decode, selected-row decode, and numeric update. Use shared schemas, bulk `pack`/`unpack`, fixed-width offsets, and bounded row framing. Keep a generic fallback for unsupported shapes. These are experiments, not production format changes.
 
-- [ ] Build a Ruby-only prototype with correctness checks for exact values, boundaries, malformed offsets, and independently validated selected rows.
-- [ ] Compare against the committed O1 page implementation and Core JSON with balanced samples at 58, 1,000, and 10,000 rows.
-- [ ] Record gains, losses, storage growth, corruption-detection trade-offs, and whether production integration is justified.
-- [ ] Commit the reproducible experiment and decision. Do not claim the original parity target without a complete production comparison.
+- [x] Build a Ruby-only prototype with correctness checks for exact values, boundaries, malformed offsets, and independently validated selected rows.
+- [x] Compare against the committed O1 page implementation and Core JSON with balanced samples at 58, 1,000, and 10,000 rows.
+- [x] Record gains, losses, storage growth, corruption-detection trade-offs, and whether production integration is justified.
+- [x] Commit the reproducible experiment and decision. Do not claim the original parity target without a complete production comparison.
