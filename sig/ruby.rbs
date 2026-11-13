@@ -504,7 +504,6 @@ module XitDB
       def clear_needed?: () -> bool
       def clear: () -> self
       def selector_identity: (XitDB::selector) -> XitDB::selector
-      attr_reader collection: Core::SortedMap | Core::ArrayList | Core::LinkedArrayList | nil
       def linked_collection!: () -> Core::LinkedArrayList
       private
       def index_selector!: (XitDB::selector) -> Integer

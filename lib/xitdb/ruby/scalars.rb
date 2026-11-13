@@ -3,7 +3,7 @@
 require "date"
 require "bigdecimal"
 require_relative "../core"
-require_relative "../input_guard"
+require_relative "input"
 require_relative "wire"
 require_relative "key_encoding"
 

@@ -340,12 +340,6 @@ module XitDB
 
       protected
 
-      # Underlying sorted or sequence storage; maps and sets use separate indexes.
-      #
-      # @return [Core::SortedMap, Core::ArrayList, Core::LinkedArrayList, nil]
-      #   underlying sorted or sequence storage, or nil for a map or set
-      attr_reader :collection
-
       # Checks the active layout before using its collection-specific operations.
       #
       # @return [Core::LinkedArrayList] typed underlying collection

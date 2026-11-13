@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require_relative "../input_guard"
 require_relative "input"
 
 module XitDB

@@ -135,12 +135,14 @@ Global built-in monkeypatches and concurrent caller mutation remain outside the 
 `production-evidence.json.gz` contains quality-gate, QA, source-review, resource, and confirmation-runner evidence.
 `production-provenance.json` binds artifact checksums and production source hashes.
 
-From the matching source checkout, verify both archives without repeating timings:
+Commit `af154ea` contains the measured library and replay tools.
+Use that revision to verify both archives without repeating timings:
 
 ```sh
 bundle exec ruby docs/benchmarks/final-ruby-storage/reproduce.rb
 ```
 
+The verifier rejects later library changes, including cleanup, because the recorded timings belong to the measured source hashes.
 The verifier extracts sources into fresh temporary directories and reruns fixture, codec, and acceptance contracts.
 It regenerates the selection decisions, original integrated failures, pooled summary, and final decisions from raw observations.
 It also runs the portable confirmation regression tests in `analysis_test.rb`.
