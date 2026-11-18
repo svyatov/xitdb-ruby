@@ -19,6 +19,7 @@ module XitDB
       def self.encode_stored_page: (Array[row]) -> String?
       def self.decode_page: (String, ?Integer?) -> Array[row]
       def self.decode_row: (String, Integer, ?Integer?) -> row
+      def self.verify!: (String, Integer) { (Integer?, Integer?, Integer) -> void } -> void
       def self.decoder: (String, Integer?) -> PageDecoder
     end
 
@@ -52,9 +53,11 @@ module XitDB
       @count: Integer
       @keys: Array[String]
       def initialize: (String, Integer?) -> void
+      def verify!: () { (Integer?, Integer?, Integer) -> void } -> void
       def page: () -> Array[PageCodec::row]
       def row: (Integer) -> PageCodec::row
       private
+      def verify_frame!: (Integer) -> void
       def validate_count!: (Integer, Integer, Integer?) -> void
       def schema: (Integer) -> Array[String]
       def read_row: () -> PageCodec::row
@@ -95,6 +98,7 @@ module XitDB
       private
       def offset: (Integer) -> Integer
       def read_layout: (bool) -> void
+      def finish_frame!: (Integer) -> void
       def framed_row: (Integer) -> PageCodec::row
     end
 
@@ -198,6 +202,7 @@ module XitDB
       def self.decode: (Core::Slot, core: Core::Database, ?bound: Integer?, ?registry: nil, ?immutable: bool) -> XitDB::value
                      | (Core::Slot, core: Core::Database, registry: CodecRegistry, ?bound: Integer?, ?immutable: bool) -> top
 
+      def self.verify_builtin!: (String) -> nil
       def self.decode_key_payload: (String, ?time: bool) -> XitDB::value
 
       def self.decode_payload: (String, ?registry: nil) -> XitDB::value

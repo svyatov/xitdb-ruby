@@ -35,6 +35,10 @@ module XitDB
         decoder(bytes, expected).row(index)
       end
 
+      def self.verify!(bytes, expected, &)
+        decoder(bytes, expected).verify!(&)
+      end
+
       def self.decoder(bytes, expected)
         # @type var prefix: String
         prefix = String.instance_method(:byteslice).bind_call(bytes, 0, 4)

@@ -212,6 +212,15 @@ module XitDB
         raise InvalidValueError, e.message
       end
 
+      # Checks the builtin payload selected by the verifier, using the same
+      # field and representability rules as ordinary reads.
+      def self.verify_builtin!(bytes)
+        raise InvalidValueError, "expected builtin payload" if bytes.getbyte(1) == 10
+
+        decode_payload(bytes)
+        nil
+      end
+
       # Reads only built-in scalar types allowed in ordinary or typed sorted keys.
       def self.decode_key_payload(bytes, time: false)
         type = bytes.getbyte(1)

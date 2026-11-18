@@ -25,6 +25,7 @@ module XitDB
         super(body, expected)
         @padded = magic == "XA01"
         read_layout(magic != "XR01")
+        @position = @payload
       end
 
       def row(index)
@@ -62,16 +63,23 @@ module XitDB
 
       private
 
+      def verify_frame!(index)
+        finish_frame!(@payload + offset(index + 1))
+      end
+
       def framed_row(bound)
         result = read_row
+        finish_frame!(bound)
+        result
+      end
+
+      def finish_frame!(bound)
         if @padded
           while @position < bound
             raise InvalidValueError, "invalid row padding" unless byte.zero?
           end
         end
         raise InvalidValueError, "compact row framing" unless @position == bound
-
-        result
       end
 
       def read_layout(fixed)

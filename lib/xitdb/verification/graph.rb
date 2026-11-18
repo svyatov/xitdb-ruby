@@ -36,7 +36,8 @@ module XitDB
         return unless role == :ruby_root
 
         require_relative "ruby_collections"
-        collections = RubyCollections.new(@scan, self, values: values)
+        require_relative "ruby_values"
+        collections = RubyCollections.new(@scan, self, values: values || RubyValues.new(@scan))
         walk { collections.visit(root, @scan.root_offset, role: :root) }
       end
 

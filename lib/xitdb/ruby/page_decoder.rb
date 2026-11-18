@@ -43,7 +43,34 @@ module XitDB
         result || raise(IndexError, "row outside Ruby page")
       end
 
+      # Walks every frame without retaining decoded rows. On a parser failure the
+      # callback receives the known row, field and byte position of that check.
+      def verify!
+        row = field = nil
+        position = @position
+        @count.times do |index|
+          row = index
+          @keys.size.times do |column|
+            field = column
+            position = @position
+            skip_cell
+          end
+          field = nil
+          position = @position
+          verify_frame!(index)
+        end
+        row = nil
+        position = @position
+        finish!
+      rescue InvalidValueError
+        yield row, field, position || @position
+        raise
+      end
+
       private
+
+      # Sequential rows end after their last cell.
+      def verify_frame!(_index); end
 
       def validate_count!(count, width, expected)
         unless count.between?(1, PageCodec::ROW_LIMIT) && width <= PageCodec::FIELD_LIMIT

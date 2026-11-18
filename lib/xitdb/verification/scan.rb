@@ -24,6 +24,7 @@ module XitDB
       def initialize(store, budget)
         @store = store
         @budget = budget
+        @codec_ids = {}
         @header = checked(:header, 0) { Core::Header.parse(store.read_at(0, Core::Header::SIZE)) }
         @profile = select_profile
         @bound = checked(:committed_size, header.committed_size_offset) { Core::Replication.committed_size(store, header) }
@@ -46,6 +47,18 @@ module XitDB
         raise VerificationLimitError, :read_bytes if length > CHUNK_SIZE
 
         checked(:extent, offset) { @store.read_at(offset, length) }
+      end
+
+      def codec_ids
+        @codec_ids.keys.freeze
+      end
+
+      def register_codec!(id)
+        return if @codec_ids.key?(id)
+
+        # Include space for the retained string, hash entry and result array slot.
+        budget.reserve!(:codec_bytes, id.bytesize + 96)
+        @codec_ids[id.freeze] = true
       end
 
       private
