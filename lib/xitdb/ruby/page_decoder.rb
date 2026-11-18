@@ -85,10 +85,12 @@ module XitDB
         when 1 then false
         when 2 then true
         when 3
-          value = unsigned
+          value = integer_payload
           (value >> 1) ^ -(value & 1)
         when 4 then take(8).unpack1("G")
         else
+          return tag - 128 if tag.between?(64, 191)
+
           encoding = string_encoding(tag)
           take(unsigned).force_encoding(encoding)
         end
@@ -98,9 +100,11 @@ module XitDB
         tag = byte
         case tag
         when 0, 1, 2 then nil
-        when 3 then unsigned
+        when 3 then integer_payload
         when 4 then advance!(8)
         else
+          return if tag.between?(64, 191)
+
           string_encoding(tag)
           advance!(unsigned)
         end
@@ -129,6 +133,13 @@ module XitDB
         encoding
       rescue ArgumentError
         raise InvalidValueError, "invalid Ruby page encoding"
+      end
+
+      def integer_payload
+        value = unsigned
+        raise InvalidValueError, "noncanonical Ruby page integer" if value < 128
+
+        value
       end
 
       def unsigned

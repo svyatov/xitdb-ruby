@@ -11,29 +11,48 @@ module XitDB
         super
         @bytes[0, 4] = "XR01"
         @offsets = [0]
-        @directory = 0
         @payload = 0
+        @max_width = 0
       end
 
       def encode(rows)
         bytes = super
         return unless bytes
 
-        bytes[@directory, @offsets.size * 2] = @offsets.pack("S<*")
+        padding = (@max_width * (@offsets.size - 1)) - @offsets.fetch(-1)
+        if padding.zero?
+          bytes[0, 4] = "XF01"
+        elsif padding < @offsets.size * 2
+          return if bytes.bytesize + padding + 32 > PageCodec::PAGE_LIMIT
+
+          bytes = padded_rows(bytes)
+        else
+          return if bytes.bytesize + (@offsets.size * 2) + 32 > PageCodec::PAGE_LIMIT
+
+          bytes.insert(@payload, @offsets.pack("S<*"))
+        end
         bytes + Digest::SHA256.digest(bytes)
       end
 
       private
 
-      # rubocop:disable-next Naming/PredicateMethod -- Writes the schema before reserving row offsets.
+      def padded_rows(bytes)
+        output = bytes.byteslice(0, @payload) || raise(InvalidValueError, "missing page schema")
+        output[0, 4] = "XA01"
+        count = @offsets.size - 1
+        output << ("\x00" * (count * @max_width))
+        count.times do |index|
+          left = @offsets.fetch(index)
+          width = @offsets.fetch(index + 1) - left
+          output.bytesplice(@payload + (index * @max_width), width, bytes, @payload + left, width)
+        end
+        output
+      end
+
+      # rubocop:disable-next Naming/PredicateMethod -- Records the start of the row payload.
       def write_schema(first, count)
         return false unless super
 
-        size = (count + 1) * 2
-        return false if size > PageCodec::PAGE_LIMIT - 32 - @bytes.bytesize
-
-        @directory = @bytes.bytesize
-        @bytes << ("\x00".b * size)
         @payload = @bytes.bytesize
         true
       end
@@ -42,7 +61,9 @@ module XitDB
       def encode_row(row)
         return false unless super
 
-        @offsets << (@bytes.bytesize - @payload)
+        offset = @bytes.bytesize - @payload
+        @max_width = [@max_width, offset - @offsets.fetch(-1)].max
+        @offsets << offset
         true
       end
 

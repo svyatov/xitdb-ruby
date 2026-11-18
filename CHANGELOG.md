@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Breaking: Ruby profile files use `rb05`. Fixed-width row pages omit the offset directory. Row pages store integers from -64 through 63 in one byte. Export earlier files with their matching gem version before upgrading.
+
 ## 0.2.0 - 2026-11-18
 
 ### Changed

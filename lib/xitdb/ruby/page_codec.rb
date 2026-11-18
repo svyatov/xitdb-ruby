@@ -38,7 +38,7 @@ module XitDB
       def self.decoder(bytes, expected)
         # @type var prefix: String
         prefix = String.instance_method(:byteslice).bind_call(bytes, 0, 4)
-        prefix == "XR01" ? IndexedPageDecoder.new(bytes, expected) : PageDecoder.new(bytes, expected)
+        %w[XR01 XF01 XA01].include?(prefix) ? IndexedPageDecoder.new(bytes, expected) : PageDecoder.new(bytes, expected)
       end
       private_class_method :decoder
     end

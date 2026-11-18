@@ -6,10 +6,11 @@ module XitDB
     # @api private
     class PageEncoder
       SINGLE_BYTE_UNSIGNED = Array.new(128) { |value| value.chr.freeze }.freeze
+      SMALL_INTEGER_CELLS = Array.new(128) { |index| (index + 64).chr.freeze }.freeze
       INSTANCE_OF = Object.instance_method(:instance_of?)
       EQUAL = BasicObject.instance_method(:equal?)
       BYTE_SLICE = String.instance_method(:byteslice)
-      private_constant :SINGLE_BYTE_UNSIGNED, :INSTANCE_OF, :EQUAL, :BYTE_SLICE
+      private_constant :SINGLE_BYTE_UNSIGNED, :SMALL_INTEGER_CELLS, :INSTANCE_OF, :EQUAL, :BYTE_SLICE
 
       def initialize(stored: false)
         @stored = stored
@@ -115,6 +116,7 @@ module XitDB
       end
 
       def integer(value)
+        return SMALL_INTEGER_CELLS.fetch(value + 64) if value.between?(-64, 63)
         return unless value.between?(-(1 << 62), (1 << 62) - 1)
 
         "\x03#{unsigned(value.negative? ? (-value * 2) - 1 : value * 2)}"

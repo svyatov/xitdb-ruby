@@ -24,6 +24,7 @@ module XitDB
 
     class PageEncoder
       SINGLE_BYTE_UNSIGNED: Array[String]
+      SMALL_INTEGER_CELLS: Array[String]
       INSTANCE_OF: UnboundMethod
       EQUAL: UnboundMethod
       BYTE_SLICE: UnboundMethod
@@ -62,6 +63,7 @@ module XitDB
       def string_encoding: (Integer) -> Encoding
       def named_encoding: () -> Encoding
       def unsigned: () -> Integer
+      def integer_payload: () -> Integer
       def byte: () -> Integer
       def take: (Integer) -> String
       def advance!: (Integer) -> Integer
@@ -69,18 +71,21 @@ module XitDB
     end
 
     class IndexedPageEncoder < PageEncoder
+      @max_width: Integer
       @offsets: Array[Integer]
-      @directory: Integer
       @payload: Integer
       def initialize: (?stored: bool) -> void
       def encode: (top) -> String?
       private
+      def padded_rows: (String) -> String
       def write_schema: (top, Integer) -> bool
       def encode_row: (Hash[String, top]) -> bool
       def append: (String?) -> bool
     end
 
     class IndexedPageDecoder < PageDecoder
+      @padded: bool
+      @stride: Integer?
       @directory: Integer
       @payload: Integer
       @length: Integer
@@ -89,6 +94,8 @@ module XitDB
       def page: () -> Array[PageCodec::row]
       private
       def offset: (Integer) -> Integer
+      def read_layout: (bool) -> void
+      def framed_row: (Integer) -> PageCodec::row
     end
 
     def self.open: (String, ?readonly: bool, ?lock_timeout: Float, ?codecs: Array[Codec]) -> Database
