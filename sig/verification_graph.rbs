@@ -57,6 +57,7 @@ module XitDB
       @completed: Hash[Array[untyped], graph_summary]
       @stack: Array[Frame]
       @retained: Integer
+      @selector_bytes: Integer
 
       def initialize: (Scan) -> void
       def verify!: (Core::Slot?, role: Symbol) -> nil
@@ -64,7 +65,6 @@ module XitDB
       def traverse: () -> void
       def enter: (Integer, slot_tag, untyped, Integer, ^() -> graph_summary) -> graph_summary
       def complete: (Frame, graph_summary) -> void
-      def release_frame: (Frame) -> void
       def reference: [A] (Integer, slot_tag, untyped, Integer) { () -> A } -> A
       def at: [A] (String) { () -> A } -> A
       def key_selector: (byte_source) -> String

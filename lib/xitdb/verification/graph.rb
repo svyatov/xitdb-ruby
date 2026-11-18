@@ -36,15 +36,21 @@ module XitDB
         @completed = {}
         @stack = []
         @retained = 0
+        @selector_bytes = 0
         begin
           @stack << Frame.new(nil, nil, 0, @path, Fiber.new { value(root, @scan.root_offset) })
-          traverse
+          @budget.with(:path_bytes, @path.bytesize) { traverse }
         ensure
-          @stack.each { |frame| release_frame(frame) if frame.pointer }
+          @budget.release(:depth, @stack.count(&:pointer))
+          # An error in a child leaves the selecting parent fibers suspended.
+          @budget.release(:path_bytes, @selector_bytes)
           @budget.release(:references, @retained)
           @budget.release(:summary_bytes, @completed.size * SUMMARY_BYTES)
+          @stack.clear
+          @active.clear
           @completed.clear
           @layouts.clear
+          @path = "$"
         end
         nil
       end
@@ -82,12 +88,6 @@ module XitDB
         @budget.reserve!(:references)
         @retained += 1
         @budget.reserve!(:depth)
-        begin
-          @budget.reserve!(:path_bytes, path.bytesize)
-        rescue VerificationLimitError
-          @budget.release(:depth)
-          raise
-        end
         @layouts[pointer] = layout
         @active[pointer] = true
         @stack << Frame.new(pointer, identity, @retained, path, Fiber.new(&reader))
@@ -98,12 +98,7 @@ module XitDB
         @budget.reserve!(:summary_bytes, SUMMARY_BYTES)
         @completed[frame.identity] = output
         @active.delete(frame.pointer)
-        release_frame(frame)
-      end
-
-      def release_frame(frame)
         @budget.release(:depth)
-        @budget.release(:path_bytes, frame.path.bytesize)
       end
 
       def reference(pointer, layout, context, offset, &reader)
@@ -115,10 +110,19 @@ module XitDB
 
       def at(selector)
         parent = @path
-        @path = @budget.path(parent, selector)
-        yield
-      ensure
-        @path = parent
+        path = @budget.path(parent, selector)
+        return yield if path.equal?(parent)
+
+        @budget.reserve!(:path_bytes, path.bytesize)
+        @selector_bytes += path.bytesize
+        @path = path
+        begin
+          yield
+        ensure
+          @path = parent
+          @selector_bytes -= path.bytesize
+          @budget.release(:path_bytes, path.bytesize)
+        end
       end
 
       def key_selector(source)

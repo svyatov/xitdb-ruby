@@ -78,6 +78,37 @@ class VerificationGraphTest < Minitest::Test
     assert_equal 2, @fixture.reads[[shared.value, 16]]
   end
 
+  def test_active_cycle_rejected_in_both_shared_view_orders
+    block = @fixture.block([Slot.int(4), Slot.null])
+    short, long = [1, 2].map do |count|
+      Slot.new(tag: :array_list, value: @fixture.append([count, block].pack("Q>Q>")))
+    end
+    @fixture.data[block + 9, 9] = long.to_bytes
+
+    assert_nil verify(short)
+    [[short, long], [long, short]].each do |order|
+      assert_defect(:cycle, block + 9, @fixture.array(order))
+    end
+  end
+
+  def test_inline_selector_charged_to_graph_path_budget
+    @fixture = Fixture.new(path_bytes: 3)
+    error = assert_raises(XitDB::VerificationLimitError) { verify(@fixture.array([Slot.int(1)])) }
+
+    assert_equal :path_bytes, error.limit
+    assert_equal :released, @fixture.budget.with(:path_bytes, 3) { :released }
+  end
+
+  def test_suspended_selectors_release_path_bytes_after_error
+    @fixture = Fixture.new(path_bytes: 8)
+    root = @fixture.array([@fixture.array([Slot.int(2)])])
+    error = assert_raises(XitDB::VerificationLimitError) { verify(root) }
+
+    assert_equal :path_bytes, error.limit
+    assert_equal :released, @fixture.budget.with(:path_bytes, 8) { :released }
+    assert_nil verify(@fixture.array([Slot.int(1)]))
+  end
+
   def test_linked_unused_slots_require_known_tags_but_do_not_follow_pointers
     node = @fixture.append([0, 1].pack("CC"))
     @fixture.block([Slot.uint(10), Slot.new(tag: :bytes, value: 0)])
