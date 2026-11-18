@@ -31,7 +31,7 @@ Core empty stores may initialize. Public opening rejects pre-existing zero-byte 
 
 ## Verify a staged restore
 
-Keep the staged file under exclusive application control until installation. Verification opens it read-only and checks the latest committed snapshot on that descriptor. A concurrent append or pathname replacement cannot change which snapshot the scan examines. External modification of already committed bytes during the scan is unsupported.
+Keep the staged file under exclusive application control until installation. Verification opens it read-only and captures the latest committed boundary on that descriptor. Appends after capture fall outside the scan. Replacing the pathname after open leaves the scan on the original descriptor. External modification of already committed bytes during the scan is unsupported.
 
 ```ruby
 require "xitdb"
