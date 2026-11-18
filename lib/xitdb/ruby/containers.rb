@@ -111,6 +111,7 @@ module XitDB
       # @return [self] this adapter
       # @raise [ValueError] if the key or stored layout is invalid
       def assign(selector, stored)
+        stored = Pages.persist(stored, @context)
         if sorted?
           assign_sorted(selector, stored)
         elsif ordered?
@@ -176,6 +177,7 @@ module XitDB
       # @param stored [Core::Slot] encoded element
       # @return [self] this adapter
       def insert(index, stored)
+        stored = Pages.persist(stored, @context)
         if kind == :linked_array
           Core::BTree.new(linked_collection!.cursor).insert(index, stored)
         else
@@ -337,12 +339,6 @@ module XitDB
       end
 
       protected
-
-      # Underlying sorted or sequence storage; maps and sets use separate indexes.
-      #
-      # @return [Core::SortedMap, Core::ArrayList, Core::LinkedArrayList, nil]
-      #   underlying sorted or sequence storage, or nil for a map or set
-      attr_reader :collection
 
       # Checks the active layout before using its collection-specific operations.
       #

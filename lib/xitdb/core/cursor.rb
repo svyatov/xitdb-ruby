@@ -37,6 +37,12 @@ module XitDB
       # @raise [ClosedError] if the database is closed
       def slot
         database.check_open!
+        unless parent
+          transaction&.check_cursor!(self)
+          raise ExpiredViewError, "cursor ancestor was replaced" unless valid?
+
+          return local_slot
+        end
         # @type var path: Array[Cursor]
         path = []
         ancestor = self

@@ -22,6 +22,8 @@ class PackageTest < Minitest::Test
         assert_includes spec.files, path
       end
       assert_empty spec.extensions
+      assert_includes spec.files, "lib/xitdb/ruby/page_codec.rb"
+      refute(spec.files.any? { |path| path.end_with?(".c", ".so", ".bundle", ".dll") })
       assert_equal %w[bigdecimal date], spec.runtime_dependencies.map(&:name).sort
       refute(spec.files.any? { |path| path.start_with?("test/", ".superpowers/", "pkg/", "docs/superpowers/") })
     end

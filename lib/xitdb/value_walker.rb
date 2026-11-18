@@ -75,7 +75,9 @@ module XitDB
       materialized = nil
       while true # rubocop:disable Style/InfiniteLoop -- Codec StopIteration must propagate.
         if current
-          begin_materialization(current[0], current[1], selected, context, active, stack, state)
+          result = begin_materialization(current[0], current[1], selected, context, active, stack, state)
+          return result if result && stack.empty?
+
           current = nil
           selected = nil
         end
@@ -100,11 +102,18 @@ module XitDB
         encode_view(input, context, location)
       else
         profile = context.profile
+        if defined?(Ruby::Pages) && profile.is_a?(Profiles::Ruby)
+          stored = Ruby::Pages.encode(input, context: context)
+          return stored if stored
+        end
         kind = profile.input_kind(input, path: location)
         return encode_scalar(input, context, location, state) unless kind
 
         identity = BasicObject.instance_method(:__id__).bind_call(input)
-        raise CyclicValueError.new("cyclic value at #{location.inspect}", path: location) if active[identity]
+        if active[identity]
+          error = CyclicValueError.new("cyclic value", path: location)
+          raise error, "cyclic value at #{error.path.inspect}"
+        end
 
         active[identity] = true
         adapter = profile.empty_container(kind, context: context, path: location, state: state)
@@ -124,6 +133,9 @@ module XitDB
 
       context.writable_transaction!.freeze
       assigned = input.slot_for_assignment(context: context, path: location)
+      if defined?(Ruby::Pages) && context.profile.is_a?(Profiles::Ruby)
+        assigned = Ruby::Pages.persist(assigned, context)
+      end
       assigned.empty? ? encode({}, context: context, path: location) : assigned
     end
 
@@ -132,7 +144,8 @@ module XitDB
     def self.encode_scalar(input, context, location, state)
       context.profile.encode_scalar(input, core: context.database.core, state: state, validated: true)
     rescue ValueError => e
-      raise e.class.new("#{e.message} at #{location.inspect}", path: location), cause: e
+      error = e.class.new(e.message, path: location)
+      raise error, "#{error.message} at #{error.path.inspect}", cause: e
     end
 
     # Attach an encoded child at the parent frame's pending selector.
@@ -161,7 +174,7 @@ module XitDB
     end
 
     # Decode a scalar into its parent or push a fresh Ruby container frame.
-    # @return [void]
+    # @return [Hash, Array, nil]
     def self.begin_materialization(slot, path, selected, context, active, stack, state)
       adapter = selected || context.profile.container(slot, context: context, path: path, state: state)
       unless adapter
@@ -169,6 +182,11 @@ module XitDB
         frame = stack.last || raise(CorruptionError, "missing materialization frame")
         insert(frame, result)
         return
+      end
+
+      if (result = materialize_flat(adapter))
+        insert(stack.last || raise(CorruptionError, "missing materialization frame"), result) unless stack.empty?
+        return result
       end
 
       # @type var identity: [Symbol, Integer]
@@ -183,6 +201,15 @@ module XitDB
                else []
                end
       stack << [identity, path, adapter.each_entry, output, nil]
+      nil
+    end
+
+    # Reads bounded page layouts directly; mixed layouts use traversal frames.
+    def self.materialize_flat(adapter)
+      return unless defined?(Ruby::PageArray)
+      return unless adapter.is_a?(Ruby::PageArray) || adapter.is_a?(Ruby::PageRow)
+
+      adapter.materialize_flat
     end
 
     # Read the next stored selector/slot pair, or nil when exhausted.
@@ -230,6 +257,6 @@ module XitDB
     end
     private_class_method :insert, :begin_encoding, :encode_view, :encode_scalar, :assign_encoding_parent,
                          :finish_encoding, :next_input, :begin_materialization, :next_stored_entry,
-                         :materialized_child, :finish_materialization
+                         :materialized_child, :finish_materialization, :materialize_flat
   end
 end

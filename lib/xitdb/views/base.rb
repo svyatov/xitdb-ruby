@@ -43,10 +43,18 @@ module XitDB
       # @param context [Context] snapshot or transaction owner
       # @param path [::Array<Object>] selectors from the logical root
       # @param kind [Symbol] logical collection kind
-      def initialize(context:, path:, kind:)
+      # @param slot [Core::Slot, nil] resolved reference retained until the logical root changes
+      def initialize(context:, path:, kind:, slot: nil)
         @context = context
-        @path = path.map { |selector| selector.is_a?(String) ? selector.dup.freeze : selector }.freeze
+        @path = path.map do |selector|
+          case selector
+          when String then String.new(selector).freeze
+          else selector
+          end
+        end.freeze
         @kind = kind
+        @stored_slot = slot
+        @stored_root = context.root
         @location = context.observe(@path)
       end
 
@@ -67,7 +75,15 @@ module XitDB
       def slot
         context.read do
           check!
-          context.resolve(path)
+          stored = @stored_slot
+          return stored if stored && (!context.transaction || @stored_root.equal?(context.root))
+
+          stored = context.resolve(path)
+          unless frozen?
+            @stored_root = context.root
+            @stored_slot = stored
+          end
+          stored
         end
       end
 
@@ -281,7 +297,8 @@ module XitDB
             context.profile.key_bytes(key)
           end
           case key
-          when String, Time then key.dup.freeze
+          when String then String.new(key).freeze
+          when Time then key.dup.freeze
           else key
           end
         when :array, :linked_array then normalize_index(key)

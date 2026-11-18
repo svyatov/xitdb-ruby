@@ -23,7 +23,7 @@ module XitDB
         targets = Hash.instance_method(:keys).bind_call(hash).map { |key| path + [key] }
         edit(targets: targets) do |collection|
           context.profile.input_kind(hash, path: path)
-          hash.each_pair do |key, value|
+          Hash.instance_method(:each_pair).bind_call(hash) do |key, value|
             added = true unless collection.lookup(key)
             stored = context.profile.encode(value, context: context, path: path + [key])
             collection.assign(key, stored)

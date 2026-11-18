@@ -13,6 +13,27 @@ require_relative "../support/fault_store"
 class DatabaseTest < Minitest::Test
   Core = XitDB::Core
 
+  # Repeated root reads should not allocate one traversal object per lookup.
+  def test_root_cursor_reads_have_bounded_allocation
+    database = Core::Database.memory
+    snapshot = database.root_cursor
+    database.transaction do |root|
+      [snapshot, root].each do |cursor|
+        expected = cursor.slot
+        100.times { cursor.slot }
+        GC.start
+        before = GC.stat(:total_allocated_objects)
+        1000.times { cursor.slot }
+        allocated = GC.stat(:total_allocated_objects) - before
+
+        assert_operator allocated, :<=, 64
+        assert_same expected, cursor.slot
+      end
+    end
+  ensure
+    database&.close
+  end
+
   # Checks empty initialization can be disabled without changing raw defaults.
   def test_empty_initialization_can_be_disabled_without_changing_raw_defaults
     store = Core::MemoryStore.new

@@ -6,7 +6,7 @@ module XitDB
   module Profiles
     # Connects Ruby values to scalar encoders and collection adapters.
     # Maps and sets preserve insertion order; typed sorted collections preserve their declared key order.
-    # SHA-256 hashes canonical key bytes under the "rb02" header identifier.
+    # SHA-256 hashes canonical key bytes under the "rb04" header identifier.
     # Application codecs belong to this profile instance and are not written as executable code.
     class Ruby
       attr_reader :hasher, :codecs
@@ -27,7 +27,7 @@ module XitDB
       def initialize(codecs: [])
         @registry = XitDB::Ruby::CodecRegistry.new(codecs)
         @codecs = @registry.codecs
-        @hasher = Core::Hasher.new(id: "rb02", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
+        @hasher = Core::Hasher.new(id: "rb04", size: 32) { |bytes| Digest::SHA256.digest(bytes) }
         freeze
       end
 
@@ -49,7 +49,8 @@ module XitDB
       # @return [Core::Slot] stored scalar descriptor
       # @raise [ValueError] if the scalar cannot be represented
       def encode_scalar(value, core:, state: nil, validated: false)
-        InputGuard.check!(value) unless validated
+        XitDB::Ruby::Input.check!(value) unless validated
+        value = XitDB::Ruby::Input.string(value) if Object.instance_method(:instance_of?).bind_call(value, String)
         identity = state&.scalar_identity(value)
         cached = state.scalars[identity] if state && identity
         return cached if cached
@@ -73,6 +74,12 @@ module XitDB
       # @return [Object] collection view or scalar
       # @raise [ValueError] if stored data cannot be decoded by this profile
       def decode(slot, context:, path:, immutable: true)
+        if slot.is_a?(XitDB::Ruby::PageCell)
+          value = slot.decoded
+          return value unless value.is_a?(String)
+
+          return immutable ? value.dup.freeze : value.dup
+        end
         if (adapter = container(slot, context: context, path: path))
           context.view(slot, path: path, kind: adapter.kind)
         else
@@ -105,16 +112,11 @@ module XitDB
       # @param path [Array<Object>] logical collection location
       # @return [XitDB::Ruby::Containers, nil] bound adapter, or nil for a scalar
       def container(slot, context:, path:, state: nil)
-        if slot.tag == :record
-          record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
-          if [2, 3].include?(record.metadata)
-            return XitDB::Ruby::PackedArray.new(self, context.cursor(slot), context: context, path: path,
-                                                                            record: record)
-          end
-
-          return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path,
-                                                                        record: record, state: state)
+        return nil if slot.is_a?(XitDB::Ruby::PageCell)
+        if slot.is_a?(XitDB::Ruby::PageReference)
+          return XitDB::Ruby::PageRow.new(self, context.cursor(slot), context: context, path: path, reference: slot)
         end
+        return record_container(slot, context: context, path: path, state: state) if slot.tag == :record
         if slot.empty? && path.empty?
           return XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path)
         end
@@ -122,6 +124,26 @@ module XitDB
 
         XitDB::Ruby::Containers.new(self, context.cursor(slot), context: context, path: path)
       end
+
+      # Dispatches bounded native records after validating their common header.
+      def record_container(slot, context:, path:, state:)
+        raise InvalidValueError, "invalid Ruby record flag" if slot.full?
+
+        record = Core::Record.read(context.database.core, slot, bound: context.read_bound)
+        case record.metadata
+        when XitDB::Ruby::Pages::ARRAY
+          XitDB::Ruby::PageArray.new(self, context.cursor(slot), context: context, path: path, record: record)
+        when XitDB::Ruby::Pages::ROW
+          reference = XitDB::Ruby::Pages.reference(record)
+          XitDB::Ruby::PageRow.new(self, context.cursor(slot), context: context, path: path, reference: reference)
+        when 2, 3
+          XitDB::Ruby::PackedArray.new(self, context.cursor(slot), context: context, path: path, record: record)
+        else
+          XitDB::Ruby::PackedMap.new(self, context.cursor(slot), context: context, path: path, record: record,
+                                                                 state: state)
+        end
+      end
+      private :record_container
 
       # Creates an adapter for a new empty collection at a logical location.
       #
@@ -228,7 +250,7 @@ module XitDB
       # @return [Symbol, Array(Symbol, Symbol), nil] recognized kind and optional key kind
       # @raise [UnsupportedValueError] if collection behavior cannot be preserved
       def input_kind(value, path:)
-        InputGuard.check!(value, path: path)
+        XitDB::Ruby::Input.check!(value, path: path)
         return nil if @registry.for_value(value)
 
         klass = Object.instance_method(:class).bind_call(value)
@@ -246,8 +268,7 @@ module XitDB
       # @param value [Hash] input hash
       # @return [Boolean] whether a default value, default procedure, or identity comparison is configured
       def hash_defaults?(value)
-        default = !BasicObject.instance_method(:equal?).bind_call(value.default, nil)
-        !value.default_proc.nil? || default || value.compare_by_identity?
+        XitDB::Ruby::Input.hash_defaults?(value)
       end
 
       # Rejects collection subclasses and comparison or default behavior that cannot be stored.
@@ -261,12 +282,17 @@ module XitDB
         unless [Hash, ::Array, ::Set].include?(klass)
           raise UnsupportedValueError.new("container subclasses are unsupported", path: path)
         end
-        if value.is_a?(Hash) && hash_defaults?(value)
-          raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
-        end
-        return unless value.is_a?(::Set) && value.compare_by_identity?
 
-        raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+        case value
+        when Hash
+          if hash_defaults?(value)
+            raise UnsupportedValueError.new("Hash defaults and identity comparison are unsupported", path: path)
+          end
+        when ::Set
+          if value.compare_by_identity?
+            raise UnsupportedValueError.new("Set identity comparison is unsupported", path: path)
+          end
+        end
       end
 
       # Maps an explicit collection declaration to its Ruby-profile kind.
@@ -306,8 +332,12 @@ module XitDB
         Enumerator.new do |output|
           case value
           when Hash, ::Set
-            entries = value.is_a?(Hash) ? value.each_pair : value.each.lazy.map { |member| [member, nil] }
-            entries.each do |key, child|
+            entries = case value
+                      when Hash then XitDB::Ruby::Input.entries(value)
+                      else value.each.lazy.map { |member| [member, nil] }
+                      end
+            entries.each do |entry|
+              key, child = entry
               begin
                 key_bytes(key, state: state)
               rescue ValueError => e
@@ -316,7 +346,7 @@ module XitDB
               output << [key, child]
             end
           when ::Array
-            value.each_with_index { |child, index| output << [index, child] }
+            XitDB::Ruby::Input.entries(value).each { |entry| output << entry }
           end
         end
       end

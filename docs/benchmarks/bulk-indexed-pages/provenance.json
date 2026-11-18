@@ -1,0 +1,9 @@
+{
+  "production_commit": "6d26b1d",
+  "artifacts": {
+    "harness.json.gz": "727edf28409d9b03e62a6900fff868c7e9b983beb9c1e6ab080905851966b07d",
+    "qa.json.gz": "6167c04789f74092be293486d283e784da3a8743c1ff95afd75117ea859a7033",
+    "samples.json.gz": "cc2597e1c2802288e4b3cb25758da559e6ba7b5a54536d58624e31893de857ac",
+    "summary.json.gz": "4ec31072f58518bf7a0750d54231c404c23ed36cefcfede71df7b3ad667313a0"
+  }
+}

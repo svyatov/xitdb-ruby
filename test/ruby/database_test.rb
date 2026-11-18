@@ -39,7 +39,7 @@ class RubyDatabaseTest < Minitest::Test
       path = File.join(directory, "native.xit")
       XitDB::Ruby.open(path) { |db| db.transaction { |root| root[:name] = "native" } }
       assert_raises(XitDB::ProfileMismatchError) { XitDB.open(path) }
-      assert_equal "rb02", File.binread(path, 4, 8)
+      assert_equal "rb04", File.binread(path, 4, 8)
       assert_equal 32, File.binread(path, 2, 6).unpack1("n")
       portable = File.join(directory, "portable.xit")
       XitDB.open(portable, &:close)
@@ -103,8 +103,6 @@ class RubyDatabaseTest < Minitest::Test
   # Checks rejected input is atomic and does not execute hooks.
   def test_rejected_input_is_atomic_and_does_not_execute_hooks
     calls = []
-    singleton = []
-    singleton.define_singleton_method(:each) { calls << :each }
     subclass = Class.new(Array) { define_method(:each) { raise "hook ran" } }.new
     default = Hash.new { calls << :default }
     identity = {}.compare_by_identity
@@ -113,7 +111,7 @@ class RubyDatabaseTest < Minitest::Test
     cycle << cycle
     @db.transaction do |root|
       root[:kept] = 1
-      [singleton, subclass, default, Hash.new(0), identity, identity_set, Set[[1]], Set[Time.now]].each do |value|
+      [subclass, default, Hash.new(0), identity, identity_set, Set[[1]], Set[Time.now]].each do |value|
         assert_raises(XitDB::UnsupportedValueError) { root[:bad] = value }
         refute root.key?(:bad)
       end

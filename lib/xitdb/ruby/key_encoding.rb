@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "wire"
-require_relative "../input_guard"
+require_relative "input"
 
 module XitDB
   module Ruby
@@ -19,9 +19,10 @@ module XitDB
       #
       # @param value [nil, Boolean, Integer, Float, String, Symbol] key with an exact supported class
       # @return [String] frozen binary key identity
-      # @raise [UnsupportedValueError] if the key has an unsupported class, singleton behavior, or a NaN value
+      # @raise [UnsupportedValueError] if the key has an unsupported class or a NaN value
       def self.dump(value)
-        InputGuard.check!(value)
+        Input.check!(value)
+        value = Input.string(value) if Object.instance_method(:is_a?).bind_call(value, String)
         dump_stored(value)
       end
 
@@ -51,7 +52,7 @@ module XitDB
         when String then "\x05".b + string_body(value)
         when Symbol then "\x06".b + string_body(value.to_s)
         else
-          raise UnsupportedValueError, "unsupported Ruby key: #{value.class}"
+          raise UnsupportedValueError, "unsupported Ruby key class"
         end
       end
 

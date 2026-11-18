@@ -1,0 +1,15 @@
+{
+  "production_commit": "6d26b1d",
+  "baseline_commit": "57222b2",
+  "artifacts": {
+    "samples.json.gz": "18b4eec96c11edcda9de0f03d1562180511aaff14eb45fc00cbe17f41f8f0787",
+    "summary.json.gz": "d0f0a799b9aa8057365e8d25521a8072999e895b147065d6eeb780160352feac",
+    "harness.json.gz": "86a9c2c8b46f78134a7315cd14e8bbaf684c674fbe28090585168bae0024ed36"
+  },
+  "harness": {
+    "input_benchmark.rb": "e547899f9b14c4c0be8e3058bd83333daf241f9bd753d940eca2e45862b12af9",
+    "summarize_input.rb": "11db454a07e9b7e0b84b7b4b7c1a553b1c5613c5ab7d11b23abff8722f0d25d8",
+    "native_worker.rb": "1b22636aec125f9459a0f63421a5a51f2c60e1d5fb75d9261be165578a346449",
+    "core_worker.rb": "d6a590676489755af83870715313a6ca4ed67c90176d2078bc6cf036dafd2e4f"
+  }
+}

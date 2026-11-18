@@ -108,5 +108,5 @@ jobs:
           ruby-version: '4.0'
           bundler-cache: true
       # Provision explicitly; the test itself never pulls or uses networking.
-      - run: docker pull ruby:4.0.9-slim
+      - run: docker pull ruby:4.0.9
       - run: bundle exec rake stress
