@@ -72,7 +72,10 @@ module XitDB
       end
 
       def read_row
-        @keys.to_h { |key| [key, cell] }
+        # @type var row: PageCodec::row
+        row = {}
+        @keys.each { |key| row[key] = cell }
+        row
       end
 
       def cell
@@ -129,15 +132,18 @@ module XitDB
       end
 
       def unsigned
-        value = 0
-        (0..63).step(7) do |shift|
+        first = byte
+        return first if first < 128
+
+        value = first & 127
+        (7..63).step(7) do |shift|
           part = byte
           raise InvalidValueError, "Ruby page integer overflow" if shift == 63 && part > 1
 
           value |= (part & 127) << shift
           next unless part < 128
 
-          raise InvalidValueError, "noncanonical Ruby page integer" if shift.positive? && part.zero?
+          raise InvalidValueError, "noncanonical Ruby page integer" if part.zero?
 
           return value
         end
