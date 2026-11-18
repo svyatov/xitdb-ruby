@@ -5,6 +5,12 @@ module XitDB
     # Builds one bounded page without retaining caller-owned values.
     # @api private
     class PageEncoder
+      SINGLE_BYTE_UNSIGNED = Array.new(128) { |value| value.chr.freeze }.freeze
+      INSTANCE_OF = Object.instance_method(:instance_of?)
+      EQUAL = BasicObject.instance_method(:equal?)
+      BYTE_SLICE = String.instance_method(:byteslice)
+      private_constant :SINGLE_BYTE_UNSIGNED, :INSTANCE_OF, :EQUAL, :BYTE_SLICE
+
       def initialize(stored: false)
         @stored = stored
         @bytes = +"XP01".b
@@ -51,9 +57,7 @@ module XitDB
 
       # Bound reflection prevents object hooks from running before validation.
       def exact?(value, klass)
-        return false unless Object.instance_method(:instance_of?).bind_call(value, klass)
-
-        true
+        INSTANCE_OF.bind_call(value, klass)
       end
 
       def valid_row?(row)
@@ -81,7 +85,7 @@ module XitDB
       end
 
       def same_key?(key, expected)
-        return true if BasicObject.instance_method(:equal?).bind_call(key, expected)
+        return true if EQUAL.bind_call(key, expected)
         return false unless expected && exact?(key, String)
 
         # @type var key: String
@@ -101,11 +105,11 @@ module XitDB
 
       def cell(value)
         case value
-        when nil then "\x00".b
-        when false then "\x01".b
-        when true then "\x02".b
+        when nil then "\x00"
+        when false then "\x01"
+        when true then "\x02"
         when Integer then integer(value)
-        when Float then "\x04".b + [value].pack("G")
+        when Float then "\x04#{[value].pack("G")}"
         else text(value)
         end
       end
@@ -113,30 +117,29 @@ module XitDB
       def integer(value)
         return unless value.between?(-(1 << 62), (1 << 62) - 1)
 
-        "\x03".b + unsigned(value.negative? ? (-value * 2) - 1 : value * 2)
+        "\x03#{unsigned(value.negative? ? (-value * 2) - 1 : value * 2)}"
       end
 
       def text(value)
         return unless exact?(value, String)
 
         # @type var value: String
-        # @type var length: Integer
-        length = String.instance_method(:bytesize).bind_call(value)
-        return if length > PageCodec::PAGE_LIMIT
-
-        value = Input.string(value)
+        value = BYTE_SLICE.bind_call(value, 0, PageCodec::PAGE_LIMIT + 1)
+        return if value.bytesize > PageCodec::PAGE_LIMIT
 
         encoding = value.encoding
         prefix = case encoding
-                 when Encoding::UTF_8 then "\x05".b
-                 when Encoding::US_ASCII then "\x06".b
-                 when Encoding::BINARY then "\x07".b
-                 else "\x08".b + unsigned(encoding.name.bytesize) + encoding.name.b
+                 when Encoding::UTF_8 then "\x05"
+                 when Encoding::US_ASCII then "\x06"
+                 when Encoding::BINARY then "\x07"
+                 else "\x08#{unsigned(encoding.name.bytesize)}#{encoding.name.b}"
                  end
-        prefix + unsigned(value.bytesize) + value.b
+        prefix + unsigned(value.bytesize) + value.force_encoding(Encoding::BINARY)
       end
 
       def unsigned(value)
+        return SINGLE_BYTE_UNSIGNED.fetch(value) if value < 128
+
         bytes = +"".b
         while value > 127
           bytes << ((value & 127) | 128)

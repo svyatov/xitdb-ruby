@@ -23,6 +23,10 @@ module XitDB
     end
 
     class PageEncoder
+      SINGLE_BYTE_UNSIGNED: Array[String]
+      INSTANCE_OF: UnboundMethod
+      EQUAL: UnboundMethod
+      BYTE_SLICE: UnboundMethod
       @stored: bool
       @bytes: String
       @keys: Array[String]
