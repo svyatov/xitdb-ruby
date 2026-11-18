@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-18
+
 ### Changed
 
 - New files use upstream format version 2 to fix tearing caused by the unaligned version 1 size field. Version 1 files remain readable and writable.
