@@ -129,7 +129,7 @@ RuboCop loads the Minitest, Performance, and Rake plugins. Individual checks are
 RBS signatures ship in `sig/`. Custom codec results have an unknown type until callers validate their class.
 Type coverage measures checked method calls. It does not prove that arbitrary codec output meets an application's domain constraints.
 
-The workflow defines separate `reference` and `linux-memory` jobs alongside Linux MRI 3.3, 3.4, and 4.0 and macOS jobs.
+The workflow runs MRI 3.3, 3.4, and 4.0 on Ubuntu, with separate `reference` and `linux-memory` jobs.
 Configure every job as a required branch check. Workflow definitions alone do not enable repository branch protection.
 Reference tools are mandatory for `ruby script/interop.rb --all`; unavailable tools fail that gate.
 The [measurement guide](docs/benchmarks.md) records bounded-memory evidence and conversion costs.
