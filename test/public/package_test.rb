@@ -15,7 +15,12 @@ class PackageTest < Minitest::Test
     with_built_package do |spec|
       assert_equal "Ada", packaged_example("portable").fetch("name")
       assert_same true, packaged_example("ruby").fetch("enabled")
-      assert_equal %w[Ada Grace], packaged_example("indexed_users").fetch("names")
+      indexed = packaged_example("indexed_users")
+
+      assert_equal %w[1 3], indexed.fetch("ada_ids")
+      assert_equal %w[1 3 2], indexed.fetch("paged_ids")
+      assert_equal [%w[1 Ada], %w[3 Grace]], indexed.fetch("users_after_edits")
+      assert_equal %w[Ada Grace], indexed.fetch("names")
       %w[README.md CHANGELOG.md LICENSE docs/core.md docs/portable.md docs/ruby.md
          docs/ruby-profile-v1.md docs/ruby-profile-v2.md sig/base.rbs sig/core.rbs sig/native.rbs sig/public.rbs
          sig/ruby.rbs sig/manifest.yaml].each do |path|
