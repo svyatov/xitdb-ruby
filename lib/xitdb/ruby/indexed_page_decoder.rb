@@ -76,7 +76,7 @@ module XitDB
       def finish_frame!(bound)
         if @padded
           while @position < bound
-            raise InvalidValueError, "invalid row padding" unless byte.zero?
+            raise FieldError.new("invalid row padding", @position - 1) unless byte.zero?
           end
         end
         raise InvalidValueError, "compact row framing" unless @position == bound
@@ -89,8 +89,10 @@ module XitDB
         if fixed
           @stride, remainder = @length.divmod(@count)
           raise InvalidValueError, "compact page stride" unless remainder.zero?
-        elsif @length.negative? || !offset(0).zero? || offset(@count) != @length
-          raise InvalidValueError, "compact page directory"
+        elsif @length.negative? || !offset(0).zero?
+          raise FieldError.new("compact page directory", @directory)
+        elsif offset(@count) != @length
+          raise FieldError.new("compact page directory", @directory + (@count * 2))
         end
       end
 

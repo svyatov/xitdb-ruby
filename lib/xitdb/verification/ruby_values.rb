@@ -17,17 +17,18 @@ module XitDB
         payload = Payload.new(@scan, slot, offset)
         return unless payload.tag == "rb"
 
-        prefix = payload.take(2)
-        raise InvalidValueError, "invalid scalar version" unless prefix.getbyte(0) == 1
-
-        type = prefix.getbyte(1)
+        type = scalar_type!(payload, path)
         if [1, 10].include?(type)
           envelope!(payload, codec: type == 10, path: path)
         else
           # The decoder retains the wire, magnitude/hex or decimal text and
           # temporary bignums for reduced fractions and date/time arithmetic.
           @scan.budget.with(:scalar_bytes, (payload.size + 16) * 64) do
-            Ruby::Scalars.verify_builtin!(prefix + payload.take(payload.remaining))
+            bytes = [1, type].pack("CC") + payload.take(payload.remaining)
+            Ruby::Scalars.verify_builtin!(bytes) do |position|
+              raise VerificationError.new("invalid Ruby scalar field", check: :scalar,
+                                                                       offset: payload.start + position, path: path)
+            end
           end
         end
         nil
@@ -51,10 +52,27 @@ module XitDB
         end
         nil
       rescue ValueError => e
+        if payload && e.is_a?(Ruby::PageDecoder::FieldError)
+          location = payload.start + e.position
+          path = @scan.budget.path(path, "field[#{e.field}]") if e.field
+        end
         raise VerificationError.new(e.message, check: :page, offset: location, path: path)
       end
 
       private
+
+      def scalar_type!(payload, path)
+        offset = payload.start
+        raise InvalidValueError, "invalid scalar version" unless payload.take(1) == "\x01"
+
+        offset += 1
+        type = payload.take(1).getbyte(0)
+        raise InvalidValueError, "unknown scalar type" unless type && (1..10).cover?(type)
+
+        type
+      rescue ValueError => e
+        raise VerificationError.new(e.message, check: :scalar, offset: offset, path: path)
+      end
 
       # Strings and codecs both start with a UTF-8 name followed by raw bytes.
       # String contents may be invalid in the named encoding. Symbols go through

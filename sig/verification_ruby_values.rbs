@@ -20,6 +20,7 @@ module XitDB
       def scalar!: (Core::Slot, offset: Integer, path: String) -> nil
       def page!: (Core::Slot, count: Integer, offset: Integer, path: String) -> nil
       private
+      def scalar_type!: (Payload, String) -> Integer
       def envelope!: (Payload, codec: bool, path: String) -> void
     end
   end

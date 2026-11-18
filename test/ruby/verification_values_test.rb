@@ -56,6 +56,32 @@ class VerificationValuesTest < Minitest::Test
     end
   end
 
+  def test_scalar_prefix_precedes_work_budget_and_reports_the_field
+    [[2, 3, 0], [1, 99, 1]].each do |version, type, relative|
+      bytes = [version, type].pack("CC") + ("x" * 1000)
+      error = assert_raises(XitDB::VerificationError) { verify([bytes], limits: { scalar_bytes: 1 }) }
+      assert_equal @start + relative, error.offset
+    end
+    %w[010302 010402 01030001].zip([2, 2, 3]).each do |hex, relative|
+      error = assert_raises(XitDB::VerificationError) { verify([[hex].pack("H*")]) }
+      assert_equal @start + relative, error.offset
+    end
+  end
+
+  def test_page_header_schema_and_padding_offsets
+    header = "XP01".b + [2, 1].pack("CC")
+    [[header + "\xff".b, 1, 4], [header + "\xff".b, 2, 6],
+     ["XP01".b + [1, 17].pack("CC"), 1, 5]].each do |page, count, relative|
+      error = assert_raises(XitDB::VerificationError) { verify([page], format: nil, rows: count) }
+      assert_equal @start + relative, error.offset
+    end
+    body = "XA01".b + [2, 1, 5, 1, 97, 0, 0, 1, 0, 0, 0].pack("C*")
+    page = body + Digest::SHA256.digest(body)
+    error = assert_raises(XitDB::VerificationError) { verify([page], format: nil, rows: 2) }
+    assert_equal @start + 11, error.offset
+    assert_includes error.path, "row[0]"
+  end
+
   def test_codec_framing_and_inventory
     id = "example/custom"
     bytes = "x" * 180_000
