@@ -212,6 +212,16 @@ module XitDB
         raise InvalidValueError, e.message
       end
 
+      # Reads only built-in scalar types allowed in ordinary or typed sorted keys.
+      def self.decode_key_payload(bytes, time: false)
+        type = bytes.getbyte(1)
+        unless (type && (1..4).cover?(type)) || (time && type == 5)
+          raise InvalidValueError, "unsupported Ruby key payload"
+        end
+
+        decode_payload(bytes)
+      end
+
       # Consumes the type marker and dispatches to the corresponding scalar reader.
       #
       # @param reader [Wire::Reader] reader positioned after the version byte

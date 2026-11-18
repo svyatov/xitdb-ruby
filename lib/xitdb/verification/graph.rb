@@ -23,14 +23,40 @@ module XitDB
         @budget = scan.budget
       end
 
-      def verify!(root, role:)
+      def verify!(root, role:, values: nil)
         return unless root
 
         @portable = role == :portable_root
-        raise ArgumentError, "unknown graph role" unless @portable || role == :physical
+        @verify_digests = @portable || role == :ruby_root
+        raise ArgumentError, "unknown graph role" unless @verify_digests || role == :physical
 
         @path = "$"
         invalid!(:root, @scan.root_offset) if @portable && !MAP_TAGS.include?(root.tag)
+        walk { value(root, @scan.root_offset) }
+        return unless role == :ruby_root
+
+        require_relative "ruby_collections"
+        collections = RubyCollections.new(@scan, self, values: values)
+        walk { collections.visit(root, @scan.root_offset, role: :root) }
+      end
+
+      attr_reader :path
+
+      def logical_child(slot, role, count, offset, selector, &reader)
+        at(selector) do
+          if %i[record array_list bytes].include?(slot.tag)
+            reference(slot.value, slot.tag, [role, count, slot.full?], offset, &reader)
+          else
+            yield
+          end
+        end
+        nil
+      end
+
+      private
+
+      def walk(&)
+        @path = "$"
         @active = @scan.history_offsets.to_h { |offset| [offset, true] }
         @layouts = {}
         @completed = {}
@@ -38,7 +64,7 @@ module XitDB
         @retained = 0
         @selector_bytes = 0
         begin
-          @stack << Frame.new(nil, nil, 0, @path, Fiber.new { value(root, @scan.root_offset) })
+          @stack << Frame.new(nil, nil, 0, @path, Fiber.new(&))
           @budget.with(:path_bytes, @path.bytesize) { traverse }
         ensure
           @budget.release(:depth, @stack.count(&:pointer))
@@ -54,8 +80,6 @@ module XitDB
         end
         nil
       end
-
-      private
 
       def traverse
         # @type var result: graph_summary

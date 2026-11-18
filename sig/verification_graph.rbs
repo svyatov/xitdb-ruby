@@ -9,6 +9,7 @@ module XitDB
       @budget: Budget
       @scan: Scan
       @portable: bool
+      @verify_digests: bool
       private
       def tree_root: (Core::Slot) -> nil
       def tree_node: (Integer, slot_tag, Integer, Integer) -> tree_summary
@@ -52,6 +53,7 @@ module XitDB
       @budget: Budget
       @portable: bool
       @path: String
+      @verify_digests: bool
       @active: Hash[Integer, bool]
       @layouts: Hash[Integer, slot_tag]
       @completed: Hash[Array[untyped], graph_summary]
@@ -60,8 +62,11 @@ module XitDB
       @selector_bytes: Integer
 
       def initialize: (Scan) -> void
-      def verify!: (Core::Slot?, role: Symbol) -> nil
+      def verify!: (Core::Slot?, role: Symbol, ?values: _RubyValues?) -> nil
+      attr_reader path: String
+      def logical_child: (Core::Slot, Symbol, Integer?, Integer, String) { () -> nil } -> nil
       private
+      def walk: () { () -> graph_summary } -> nil
       def traverse: () -> void
       def enter: (Integer, slot_tag, untyped, Integer, ^() -> graph_summary) -> graph_summary
       def complete: (Frame, graph_summary) -> void

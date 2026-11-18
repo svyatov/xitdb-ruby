@@ -198,6 +198,8 @@ module XitDB
       def self.decode: (Core::Slot, core: Core::Database, ?bound: Integer?, ?registry: nil, ?immutable: bool) -> XitDB::value
                      | (Core::Slot, core: Core::Database, registry: CodecRegistry, ?bound: Integer?, ?immutable: bool) -> top
 
+      def self.decode_key_payload: (String, ?time: bool) -> XitDB::value
+
       def self.decode_payload: (String, ?registry: nil) -> XitDB::value
                              | (String, registry: CodecRegistry?) -> top
 

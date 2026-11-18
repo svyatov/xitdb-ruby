@@ -66,7 +66,7 @@ module XitDB
           digest = read(pointer, width)
           key = key_source(slot_at(pointer + width), pointer + width)
           at(key_selector(key)) do
-            check_digest!(key, digest, pointer) if @portable && width.positive?
+            check_digest!(key, digest, pointer) if @verify_digests && width.positive?
             hash_value(tag == :sorted_set, pointer + width + 9)
           end
           key

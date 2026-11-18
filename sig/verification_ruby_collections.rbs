@@ -1,0 +1,63 @@
+module XitDB
+  module Verification
+    interface _RubyValues
+      def scalar!: (Core::Slot, offset: Integer, path: String) -> void
+      def page!: (Core::Slot, count: Integer, offset: Integer, path: String) -> void
+    end
+
+    module RubyStorage
+      @graph: Graph
+      @scan: Scan
+      private
+      def uint: (Integer) -> Integer
+      def slot_at: (Integer) -> Core::Slot
+      def expect!: (Core::Slot, Symbol, Integer) -> Core::Slot
+      def invalid!: (Symbol, Integer) -> bot
+      def array_entry: (Core::Slot, Integer, Integer) -> [Core::Slot, Integer, Integer]
+      def fields!: (Core::Slot, Integer, Integer) -> Array[Core::Slot]
+      def tree_entry: (Core::Slot, Integer) -> [Core::Slot, Integer]
+      def sorted_pair: (Core::Slot, Integer) -> [Core::Slot, Core::Slot, Integer]
+      def lookup_pair!: (Core::Slot, String, Integer) -> [Core::Slot, Core::Slot, Integer]
+      def byte_size: (Core::Slot) -> Integer
+      def inline_data: (Core::Slot) -> String
+      def byte_data: (Core::Slot, Integer) -> String
+      def raw_bytes!: (Core::Slot, Integer, Integer) -> String
+    end
+
+    module RubyKeys : RubyStorage
+      @scan: Scan
+      private
+      def with_key: [A] (Core::Slot, Integer, ?kind: Symbol, ?packed: bool) { (String, String) -> A } -> A
+      def key_selector: (XitDB::value) -> String
+      def decode_key: (Core::Slot, Integer, Integer, Symbol) -> XitDB::value
+      def decode_key_bytes: (Core::Slot, Integer, Integer, Symbol) -> XitDB::value
+    end
+
+    class RubyCollections
+      include RubyStorage
+      include RubyKeys
+      Packed: singleton(Ruby::PackedMap)
+      Pages: singleton(Ruby::Pages)
+      @scan: Scan
+      @graph: Graph
+      @values: _RubyValues?
+      def initialize: (Scan, Graph, ?values: _RubyValues?) -> void
+      def visit: (Core::Slot, Integer, ?role: Symbol, ?count: Integer?) -> nil
+      private
+      def values: () -> _RubyValues
+      def child: (Core::Slot, Integer, String, ?role: Symbol, ?count: Integer?) -> nil
+      def record: (Core::Slot, Symbol, Integer?) -> void
+      def validate_metadata!: (Integer, Symbol, Integer) -> void
+      def literal: (Integer, Integer, Integer) -> void
+      def inline: (Integer, Integer, Integer?) -> void
+      def dictionary: (Integer, Integer) -> void
+      def packed: (Integer, Integer, Integer, Integer?) -> void
+      def page_array: (Integer, Integer) -> void
+      def row: (Integer, Integer) -> void
+      def sequence: (Core::Slot, ?Integer?) -> void
+      def envelope: (Core::Slot, Symbol) -> void
+      def indexed: (Core::Slot, Symbol, Integer) -> void
+      def sorted: (Core::Slot, Symbol, Integer) -> void
+    end
+  end
+end
