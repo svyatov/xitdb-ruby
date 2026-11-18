@@ -21,8 +21,9 @@ class VerificationScanTest < Minitest::Test
     XitDB.open(@path) do |writer|
       17.times { |index| writer.transaction { |root| root["index"] = index } }
       original_bound = File.size(@path)
+      original_slot = writer.snapshot.slot
       scan do |cursor|
-        original_slot = cursor.root
+        assert_equal original_slot, cursor.root
         writer.transaction { |root| root["index"] = 17 }
 
         assert_equal original_bound, cursor.bound
@@ -135,6 +136,7 @@ class VerificationScanTest < Minitest::Test
     assert_operator path.bytesize, :<=, 1024
     assert path.end_with?("[...]")
     assert_equal path, budget.path(path, "more")
+    assert_equal "$/literal[...]/more", budget.path(budget.path("$", "literal[...]"), "more")
   end
 
   private

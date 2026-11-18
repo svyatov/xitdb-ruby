@@ -43,7 +43,7 @@ module XitDB
 
       # Build a bounded diagnostic from a prior path and a string selector.
       def path(parent, component)
-        return parent if parent.end_with?(OMISSION)
+        return parent if parent.bytesize == PATH_SIZE && parent.end_with?(OMISSION)
 
         return "#{parent}/#{component}".freeze if parent.bytesize + component.bytesize + 1 <= PATH_SIZE
 
