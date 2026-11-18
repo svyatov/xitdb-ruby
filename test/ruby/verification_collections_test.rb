@@ -74,6 +74,58 @@ class VerificationCollectionsTest < Minitest::Test
     end
   end
 
+  def test_envelope_reports_the_invalid_field_offset
+    markers = XitDB::Ruby::Containers::MARKERS
+    [[:sorted_map, 1, :key_kind], [:sorted_map, 2, :layout], [:map, 1, :layout],
+     [:map, 2, :layout], [:map, 3, :layout], [:linked_array, 1, :layout]].each do |kind, index, check|
+      error = assert_raises(XitDB::VerificationError) do
+        verify do
+          lookup = Core::HashMap.new(@tx.cursor(slot: Slot.new), counted: true)
+          sorted = Core::SortedMap.new(@tx.cursor(slot: Slot.new))
+          fields = case kind
+                   when :sorted_map then [Slot.uint(markers.fetch(kind)), Slot.uint(1), sorted.cursor.slot]
+                   when :map then [Slot.uint(markers.fetch(kind)), Slot.uint(0), lookup.cursor.slot, sorted.cursor.slot]
+                   else [Slot.uint(markers.fetch(kind)), Slot.null]
+                   end
+          fields[index] = check == :key_kind ? Slot.uint(99) : Slot.null
+          envelope = list(*fields)
+          @expected_offset = Core::Format.unsigned(@tx.read_at(envelope.value + 8, 8)) + (index * Slot::SIZE)
+          record(Packed::MAP, Slot.int(0), envelope)
+        end
+      end
+      assert_equal check, error.check
+      assert_equal @expected_offset, error.offset, "#{kind} field #{index}"
+    end
+  end
+
+  def test_entry_reports_the_original_key_field_offset
+    order_key = [0].pack("Q>")
+    %i[sorted_map map].each do |kind|
+      error = assert_raises(XitDB::VerificationError) do
+        verify do
+          marker = Slot.uint(XitDB::Ruby::Containers::MARKERS.fetch(kind))
+          sorted = Core::SortedMap.new(@tx.cursor(slot: Slot.new))
+          invalid_key = list
+          entry = kind == :map ? list(invalid_key, Slot.null, Slot.uint(0)) : list(invalid_key, Slot.null)
+          @expected_offset = Core::Format.unsigned(@tx.read_at(entry.value + 8, 8))
+          if kind == :sorted_map
+            sorted.put("s", value: entry)
+            list(marker, Slot.uint(1), sorted.cursor.slot)
+          else
+            identity = XitDB::Ruby::KeyEncoding.dump("s")
+            digest = Digest::SHA256.digest(identity)
+            lookup = Core::HashMap.new(@tx.cursor(slot: Slot.new), counted: true)
+            lookup.put(digest, key: @core.bytes(identity), value: entry)
+            sorted.put(order_key, value: @core.bytes(digest))
+            list(marker, Slot.uint(1), lookup.cursor.slot, sorted.cursor.slot)
+          end
+        end
+      end
+      assert_equal :key_identity, error.check
+      assert_equal @expected_offset, error.offset
+    end
+  end
+
   def test_duplicate_canonical_keys
     error = assert_raises(XitDB::VerificationError) do
       verify { record(Packed::MAP, Slot.float(-0.0), Slot.null, Slot.float(0.0), Slot.null) }

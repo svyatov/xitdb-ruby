@@ -151,62 +151,74 @@ module XitDB
       def envelope(slot, role)
         size = uint(slot.value)
         invalid!(:record_arity, slot.value) unless size.between?(2, 4)
-        marker, offset, = array_entry(slot, size, 0)
-        kind = Ruby::Containers::MARKERS.key(expect!(marker, :uint, offset).value)
-        invalid!(:record_metadata, offset) unless kind
-        invalid!(:root, offset) if role == :root && !%i[map sorted_map].include?(kind)
+        fields = fixed_fields(slot, size)
+        kind = envelope_kind!(fields.fetch(0), role)
         case kind
         when :array, :linked_array
-          seq = fields!(slot, 2, offset).fetch(1)
-          sequence(expect!(seq, kind == :array ? :array_list : :linked_array_list, offset))
-        when :map, :set then indexed(slot, kind, offset)
-        else sorted(slot, kind, offset)
+          invalid!(:record_arity, slot.value) unless size == 2
+          sequence(field_slot!(fields.fetch(1), kind == :array ? :array_list : :linked_array_list))
+        when :map, :set
+          invalid!(:record_arity, slot.value) unless size == 4
+          indexed(fields, kind)
+        else
+          invalid!(:record_arity, slot.value) unless size == 3
+          sorted(fields, kind)
         end
       end
 
-      def indexed(slot, kind, offset)
-        fields = fields!(slot, 4, offset)
-        maximum = expect!(fields.fetch(1), :uint, offset).value
-        lookup = expect!(fields.fetch(2), :counted_hash_map, offset)
-        order = expect!(fields.fetch(3), :sorted_map, offset)
+      def envelope_kind!(marker, role)
+        kind = Ruby::Containers::MARKERS.key(field_slot!(marker, :uint).value)
+        invalid!(:record_metadata, marker.offset) unless kind
+        invalid!(:root, marker.offset) if role == :root && !%i[map sorted_map].include?(kind)
+        kind
+      end
+
+      def indexed(fields, kind)
+        counter = fields.fetch(1)
+        maximum = field_slot!(counter, :uint).value
+        lookup = field_slot!(fields.fetch(2), :counted_hash_map)
+        order = field_slot!(fields.fetch(3), :sorted_map)
         size = uint(order.value)
-        invalid!(:index_membership, offset) unless size == uint(lookup.value) && size <= maximum
+        invalid!(:index_membership, order.value) unless size == uint(lookup.value)
+        invalid!(:index_membership, counter.offset) if size > maximum
         # Sorted order keys are unique. Requiring each to resolve to a lookup
         # record with that same ID proves a bijection when both counts agree.
         size.times do |rank|
-          id_key, digest_slot, position = sorted_pair(order, rank)
-          id = Core::Format.unsigned(raw_bytes!(id_key, 8, position))
-          invalid!(:order_id, position) unless id < maximum
-          digest = raw_bytes!(digest_slot, 32, position)
-          key, record, source = lookup_pair!(lookup, digest, position)
-          entry = fields!(record, 3, source)
-          invalid!(:index_membership, source) unless expect!(entry.fetch(2), :uint, source).value == id
-          selector = with_key(entry.fetch(0), source) do |identity, name|
-            invalid!(:key_identity, source) unless raw_bytes!(key, identity.bytesize, source) == identity
-            invalid!(:key_digest, source) unless Digest::SHA256.digest(identity) == digest
+          id_key, hash_field = sorted_pair(order, rank)
+          id = Core::Format.unsigned(raw_bytes!(id_key.slot, 8, id_key.offset))
+          invalid!(:order_id, id_key.offset) unless id < maximum
+          digest = raw_bytes!(hash_field.slot, 32, hash_field.offset)
+          key, record = lookup_pair!(lookup, digest, hash_field.offset)
+          entry = fields!(record.slot, 3, record.offset)
+          stored_id = entry.fetch(2)
+          invalid!(:index_membership, stored_id.offset) unless field_slot!(stored_id, :uint).value == id
+          original = entry.fetch(0)
+          selector = with_key(original.slot, original.offset) do |identity, name|
+            invalid!(:key_identity, key.offset) unless raw_bytes!(key.slot, identity.bytesize, key.offset) == identity
+            invalid!(:key_digest, key.offset - 32) unless Digest::SHA256.digest(identity) == digest
             name
           end
           value = entry.fetch(1)
-          invalid!(:set_value, source) if kind == :set && value != Core::Slot.null
-          child(value, array_entry(record, 3, 1)[1], selector)
+          invalid!(:set_value, value.offset) if kind == :set && value.slot != Core::Slot.null
+          child(value.slot, value.offset, selector)
         end
       end
 
-      def sorted(slot, kind, offset)
-        fields = fields!(slot, 3, offset)
+      def sorted(fields, kind)
         declaration = fields.fetch(1)
-        key_kind = Ruby::Containers::KEY_KINDS.key(expect!(declaration, :uint, offset).value)
-        invalid!(:key_kind, offset) unless key_kind
-        tree = expect!(fields.fetch(2), :sorted_map, offset)
+        key_kind = Ruby::Containers::KEY_KINDS.key(field_slot!(declaration, :uint).value)
+        invalid!(:key_kind, declaration.offset) unless key_kind
+        tree = field_slot!(fields.fetch(2), :sorted_map)
         uint(tree.value).times do |rank|
-          key, stored, position = sorted_pair(tree, rank)
-          pair = fields!(stored, 2, position) if kind == :sorted_map
+          key, stored = sorted_pair(tree, rank)
+          pair = fields!(stored.slot, 2, stored.offset) if kind == :sorted_map
           original = pair ? pair.fetch(0) : stored
-          selector = with_key(original, position, kind: key_kind) do |identity, name|
-            invalid!(:key_identity, position) unless raw_bytes!(key, identity.bytesize, position) == identity
+          selector = with_key(original.slot, original.offset, kind: key_kind) do |identity, name|
+            invalid!(:key_identity, key.offset) unless raw_bytes!(key.slot, identity.bytesize, key.offset) == identity
             name
           end
-          child(pair.fetch(1), array_entry(stored, 2, 1)[1], selector) if pair
+          value = pair.fetch(1) if pair
+          child(value.slot, value.offset, selector) if value
         end
       end
     end

@@ -4,6 +4,8 @@ module XitDB
   module Verification
     # Reads individual slots after Graph has checked physical layout and routing.
     module RubyStorage
+      Field = Data.define(:slot, :offset)
+
       private
 
       def uint(offset)
@@ -41,7 +43,20 @@ module XitDB
       def fields!(array, count, offset)
         expect!(array, :array_list, offset)
         invalid!(:record_arity, array.value) unless uint(array.value) == count
-        Array.new(count) { |index| array_entry(array, count, index).first }
+        fixed_fields(array, count)
+      end
+
+      # Ruby envelopes and index records fit in a single sixteen-slot block.
+      def fixed_fields(array, count)
+        block = uint(array.value + 8)
+        Array.new(count) do |index|
+          position = block + (index * Core::Slot::SIZE)
+          Field.new(slot_at(position), position)
+        end
+      end
+
+      def field_slot!(field, tag)
+        expect!(field.slot, tag, field.offset)
       end
 
       def tree_entry(tree, rank)
@@ -66,10 +81,10 @@ module XitDB
 
       def sorted_pair(tree, rank)
         slot, offset = tree_entry(tree, rank)
-        return [slot, Core::Slot.new, offset] if Graph::BYTE_TAGS.include?(slot.tag)
+        return [Field.new(slot, offset), Field.new(Core::Slot.new, offset)] if Graph::BYTE_TAGS.include?(slot.tag)
 
         key = slot.value + (slot.tag == :kv_pair ? @scan.header.hash_size : 0)
-        [slot_at(key), slot_at(key + 9), key + 9]
+        [Field.new(slot_at(key), key), Field.new(slot_at(key + 9), key + 9)]
       end
 
       def lookup_pair!(lookup, digest, offset)
@@ -78,7 +93,8 @@ module XitDB
           [byte & 15, byte >> 4].each do |index|
             slot = slot_at(block + (index * 9))
             if slot.tag == :kv_pair && @scan.read(slot.value, 32) == digest
-              return [slot_at(slot.value + 32), slot_at(slot.value + 41), slot.value + 41]
+              key = slot.value + 32
+              return [Field.new(slot_at(key), key), Field.new(slot_at(key + 9), key + 9)]
             end
 
             invalid!(:index_membership, offset) unless slot.tag == :index

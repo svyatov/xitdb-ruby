@@ -6,6 +6,11 @@ module XitDB
     end
 
     module RubyStorage
+      class Field < Data
+        attr_reader slot: Core::Slot
+        attr_reader offset: Integer
+        def self.new: (Core::Slot, Integer) -> instance
+      end
       @graph: Graph
       @scan: Scan
       private
@@ -14,10 +19,12 @@ module XitDB
       def expect!: (Core::Slot, Symbol, Integer) -> Core::Slot
       def invalid!: (Symbol, Integer) -> bot
       def array_entry: (Core::Slot, Integer, Integer) -> [Core::Slot, Integer, Integer]
-      def fields!: (Core::Slot, Integer, Integer) -> Array[Core::Slot]
+      def fields!: (Core::Slot, Integer, Integer) -> Array[Field]
+      def fixed_fields: (Core::Slot, Integer) -> Array[Field]
+      def field_slot!: (Field, Symbol) -> Core::Slot
       def tree_entry: (Core::Slot, Integer) -> [Core::Slot, Integer]
-      def sorted_pair: (Core::Slot, Integer) -> [Core::Slot, Core::Slot, Integer]
-      def lookup_pair!: (Core::Slot, String, Integer) -> [Core::Slot, Core::Slot, Integer]
+      def sorted_pair: (Core::Slot, Integer) -> [Field, Field]
+      def lookup_pair!: (Core::Slot, String, Integer) -> [Field, Field]
       def byte_size: (Core::Slot) -> Integer
       def inline_data: (Core::Slot) -> String
       def byte_data: (Core::Slot, Integer) -> String
@@ -56,8 +63,9 @@ module XitDB
       def row: (Integer, Integer) -> void
       def sequence: (Core::Slot, ?Integer?) -> void
       def envelope: (Core::Slot, Symbol) -> void
-      def indexed: (Core::Slot, Symbol, Integer) -> void
-      def sorted: (Core::Slot, Symbol, Integer) -> void
+      def envelope_kind!: (RubyStorage::Field, Symbol) -> Symbol
+      def indexed: (Array[RubyStorage::Field], Symbol) -> void
+      def sorted: (Array[RubyStorage::Field], Symbol) -> void
     end
   end
 end
