@@ -46,8 +46,12 @@ module XitDB
       attr_reader file_id: Integer
       attr_reader hash_id: String
       attr_reader hash_size: Integer
-      def initialize: (file_id: Integer, hash_id: String, hash_size: Integer, ?padding: Integer) -> void
+      attr_reader version: Integer
+      def self.validate_version!: (Integer) -> void
+      def initialize: (file_id: Integer, hash_id: String, hash_size: Integer, ?padding: Integer, ?version: Integer) -> void
       def self.parse: (String) -> Header
+      def committed_size_offset: () -> Integer
+      def data_offset: () -> Integer
       def to_bytes: () -> String
     end
 
@@ -256,8 +260,6 @@ module XitDB
 
     class Database
       include Replication
-      ROOT_OFFSET: Integer
-      DATA_OFFSET: Integer
       TRAILER_SIZE: Integer
       MINIMUM_SIZE: Integer
       @store: store
@@ -265,11 +267,11 @@ module XitDB
       @needs_reopen: bool
       @transaction: Transaction?
       attr_reader header: Header
-      def self.open: (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) -> Database
-                   | [A] (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) { (Database) -> A } -> A
+      def self.open: (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool, ?format_version: Integer) -> Database
+                   | [A] (String, ?readonly: bool, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool, ?format_version: Integer) { (Database) -> A } -> A
       def self.memory: (?hash_size: Integer, ?hash_id: String, ?file_id: Integer?) -> Database
       def self.copy_replica: (to: String, source_io: _Reader, length: Integer) -> Database
-      def initialize: (store: store, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool) -> void
+      def initialize: (store: store, ?hash_size: Integer?, ?hash_id: String?, ?file_id: Integer?, ?lock_timeout: Float, ?initialize_empty: bool, ?require_empty: bool, ?format_version: Integer) -> void
       def close: () -> void
       def closed?: () -> bool
       def with_operation: [A] () { () -> A } -> A
@@ -277,7 +279,7 @@ module XitDB
       def needs_reopen?: () -> bool
       def check_open!: () -> void
       def committed_size: () -> Integer
-      def compact: (to: String) -> Database
+      def compact: (to: String, ?format_version: Integer) -> Database
       def copy_compacted_root: (Database, FileStore, Integer, Cursor, Slot, bool, OffsetMap) -> void
       def cleanup_compaction: (FileStore, Database?, OffsetMap?, bool?) -> void
       def root_cursor: () -> Cursor
@@ -290,8 +292,8 @@ module XitDB
       def close_unreturned: () -> void
       def restore_empty_target: () -> void
       def active_transaction!: () -> Transaction
-      def prepare_file: (Integer?, String?, Integer?, bool, bool) -> void
-      def initialize_empty_file: (Integer?, String?, Integer?, bool) -> void
+      def prepare_file: (Integer?, String?, Integer?, bool, bool, Integer) -> void
+      def initialize_empty_file: (Integer?, String?, Integer?, bool, Integer) -> void
       def reset_failed_initialization: (bool) -> void
       def check_header!: (Symbol, Integer | String | nil, Integer | String) -> void
       def check_range!: (Integer, Integer, Integer) -> void
@@ -689,6 +691,8 @@ module XitDB
       def committed_state: () -> [ Integer, Slot ]
 
       def header: () -> Header
+
+      private def write_root_header: (Slot, Integer) -> Integer
 
       CHUNK_SIZE: Integer
 

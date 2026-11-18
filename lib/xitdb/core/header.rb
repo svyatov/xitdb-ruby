@@ -8,8 +8,8 @@ module XitDB
     class Header
       # Width of the encoded file header in bytes.
       SIZE = 20
-      # Supported version of the binary database format.
-      VERSION = 1
+      # Default version of the binary database format.
+      VERSION = 2
 
       # @!attribute [r] file_id
       #   Unsigned 64-bit file identifier.
@@ -20,18 +20,35 @@ module XitDB
       # @!attribute [r] hash_size
       #   Digest width in bytes.
       #   @return [Integer]
-      attr_reader :file_id, :hash_id, :hash_size
+      # @!attribute [r] version
+      #   On-disk format version.
+      #   @return [Integer]
+      attr_reader :file_id, :hash_id, :hash_size, :version
+
+      # Rejects unsupported file format versions before creating a file.
+      # @param version [Integer] requested file format version
+      # @return [void]
+      # @raise [FormatVersionError] if the format version is unsupported
+      def self.validate_version!(version)
+        return if [1, VERSION].any? { |supported| supported.eql?(version) }
+
+        raise FormatVersionError, "unsupported xitdb format version #{version}"
+      end
 
       # Builds a frozen header identifying the file and its hash format.
       # @param file_id [Integer] unsigned 64-bit file identifier
       # @param hash_id [String] four-byte hash algorithm identifier
       # @param hash_size [Integer] number of bytes in each stored digest
       # @param padding [Integer] header padding byte, from 0 through 255
+      # @param version [Integer] on-disk format version, 1 or 2
       # @return [Header]
       # @raise [ArgumentError] if hash_id is not four bytes
       # @raise [TypeError] if an argument has the wrong type
       # @raise [RangeError] if a numeric field exceeds its encoded range
-      def initialize(file_id:, hash_id:, hash_size:, padding: 0)
+      # @raise [FormatVersionError] if the format version is unsupported
+      def initialize(file_id:, hash_id:, hash_size:, padding: 0, version: VERSION)
+        Header.validate_version!(version)
+        @version = version
         @file_id = Format.integer!(file_id, 0..Format::UINT64_MAX)
         @hash_size = Format.integer!(hash_size, 0..65_535)
         raise TypeError, "hash_id must be a String" unless hash_id.is_a?(String)
@@ -55,15 +72,26 @@ module XitDB
         hash_id = Format.slice(bytes, 8, 4)
         file_id = Format.unsigned(Format.slice(bytes, 12, 8))
         raise CorruptionError, "invalid xitdb magic number" unless magic == "xit"
-        raise FormatVersionError, "unsupported xitdb format version #{version}" unless version == VERSION
 
-        new(file_id: file_id, hash_id: hash_id, hash_size: hash_size, padding: padding)
+        new(file_id: file_id, hash_id: hash_id, hash_size: hash_size, padding: padding, version: version)
+      end
+
+      # Returns the position of the eight-byte committed file size.
+      # @return [Integer]
+      def committed_size_offset
+        version == 1 ? 29 : 24
+      end
+
+      # Returns the first byte after the root header.
+      # @return [Integer]
+      def data_offset
+        committed_size_offset + 8
       end
 
       # Encodes the header in the database's binary format.
       # @return [String]
       def to_bytes
-        ["xit", @padding, VERSION, hash_size, hash_id, file_id].pack("a3Cnn a4Q>")
+        ["xit", @padding, version, hash_size, hash_id, file_id].pack("a3Cnn a4Q>")
       end
     end
   end

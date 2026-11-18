@@ -11,6 +11,26 @@ require "tmpdir"
 class CompactionTest < Minitest::Test
   Core = XitDB::Core
 
+  # Copies a legacy file to v2 without changing the source image or losing its latest state.
+  def test_public_compaction_upgrades_version_one
+    Dir.mktmpdir do |dir|
+      source_path = File.join(dir, "legacy.xit")
+      target_path = File.join(dir, "upgraded.xit")
+      XitDB.open(source_path, format_version: 1) do |source|
+        source.transaction { |root| root["data"] = "stored outside the root slot" }
+        original = File.binread(source_path)
+        compacted = source.compact(to: target_path)
+
+        assert_equal 1, source.core.header.version
+        assert_equal 2, compacted.core.header.version
+        assert_equal source.snapshot.to_ruby, compacted.snapshot.to_ruby
+        assert_equal original, File.binread(source_path)
+      ensure
+        compacted&.close
+      end
+    end
+  end
+
   # Checks short external bytes keep their representation and tag.
   def test_short_external_bytes_keep_their_representation_and_tag
     Dir.mktmpdir do |dir|
@@ -128,7 +148,7 @@ class CompactionTest < Minitest::Test
       compacted = source.compact(to: File.join(dir, "empty-history"))
 
       assert_empty compacted.root_cursor.slot
-      assert_equal 62, compacted.committed_size
+      assert_equal 57, compacted.committed_size
     ensure
       compacted&.close
       source&.close
@@ -615,7 +635,7 @@ class CompactionTest < Minitest::Test
         Core::Database.open(target, readonly: true) do |reader|
           if change == :generation
             assert_empty reader.root_cursor.slot
-            assert_equal 62, reader.committed_size
+            assert_equal 57, reader.committed_size
           else
             assert_equal 99, reader.root_cursor.slot.value
           end
@@ -705,7 +725,7 @@ class CompactionTest < Minitest::Test
           error = assert_raises(XitDB::CommitError) { source.compact(to: target) }
           assert_equal(failed_sync == 1 ? :not_committed : :unknown, error.outcome)
         end
-        assert_equal(failed_sync == 1 ? 0 : 62, File.size(target))
+        assert_equal(failed_sync == 1 ? 0 : 57, File.size(target))
       ensure
         source&.close
       end

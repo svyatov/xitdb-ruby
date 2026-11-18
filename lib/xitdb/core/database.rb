@@ -22,14 +22,10 @@ module XitDB
     class Database
       include Replication
 
-      # Byte offset of the published root slot and committed length.
-      ROOT_OFFSET = 20
-      # First byte offset available for appended object records.
-      DATA_OFFSET = 37
       # Bytes in a root trailer: slot, commit identifier, and checksum.
       TRAILER_SIZE = 25
-      # Bytes in an initialized database containing an empty root and its trailer.
-      MINIMUM_SIZE = 62
+      # Smallest possible complete database, using the version 2 root header.
+      MINIMUM_SIZE = 57
 
       # @!attribute [r] header
       #   Validated immutable file profile.
@@ -39,16 +35,18 @@ module XitDB
       # Opens a database file and closes it after an optional block.
       # @param path [String] database file path
       # @param readonly [Boolean] whether to reject writes
+      # @param format_version [Integer] file format version used when creating a file
       # Additional keyword options are forwarded to {#initialize}.
       # @return [Database, Object]
       # @yield [database] uses the database before automatic close
       # @yieldparam database [Database] opened database
       # @yieldreturn [Object] result returned by open when a block is supplied
       # @see #initialize
-      def self.open(path, readonly: false, **)
+      def self.open(path, readonly: false, format_version: Header::VERSION, **)
+        Header.validate_version!(format_version)
         store = FileStore.open(path, readonly: readonly)
         begin
-          database = new(store: store, **)
+          database = new(store: store, format_version: format_version, **)
         rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
           store.send(:close_unreturned)
           raise
@@ -90,18 +88,19 @@ module XitDB
       # @param lock_timeout [Float] maximum wait for the exclusive writer lock, in seconds
       # @param initialize_empty [Boolean] whether an empty writable store may be initialized
       # @param require_empty [Boolean] whether opening must reject a nonempty store
+      # @param format_version [Integer] file format version used only when creating a database
       # @return [Database]
       # @raise [CorruptionError] if the header, root, or existing empty store is invalid
       # @raise [ProfileMismatchError] if supplied profile fields differ from the stored header
       # @raise [ArgumentError] if require_empty is true and the store contains data
       def initialize(store:, hash_size: nil, hash_id: nil, file_id: nil, lock_timeout: 5.0, initialize_empty: true,
-                     require_empty: false)
+                     require_empty: false, format_version: Header::VERSION)
         @store = store
         @lock_timeout = lock_timeout
         @needs_reopen = false
         @transaction = nil
         initialize_file = lambda do
-          prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty)
+          prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty, format_version)
         end
         if store.readonly?
           initialize_file.call
@@ -162,10 +161,12 @@ module XitDB
 
       # Copies the current reachable value to an empty target with a new file identifier.
       # @param to [String] destination file path, which must be empty or absent
+      # @param format_version [Integer] file format version of the destination
       # @return [Database]
       # @note An array-list root is treated as history; only its latest element is retained.
       # @raise [ArgumentError] if the target is nonempty or identifies the source file
-      def compact(to:)
+      def compact(to:, format_version: Header::VERSION)
+        Header.validate_version!(format_version)
         with_operation do
           # @type var offsets_for_cleanup: OffsetMap?
           offsets_for_cleanup = nil
@@ -182,7 +183,7 @@ module XitDB
             file_id = random_id
             file_id = random_id while file_id == header.file_id
             target = Database.new(store: store, hash_id: header.hash_id, hash_size: header.hash_size, file_id: file_id,
-                                  lock_timeout: @lock_timeout, require_empty: true)
+                                  lock_timeout: @lock_timeout, require_empty: true, format_version: format_version)
             target_for_cleanup = target
             offsets = OffsetMap.new
             offsets_for_cleanup = offsets
@@ -314,7 +315,7 @@ module XitDB
       def copy_compacted_root(target, store, file_id, source, slot, history, offsets)
         target.transaction do |root|
           current = Header.parse(store.read_at(0, Header::SIZE))
-          unless current.file_id == file_id && root.bound == MINIMUM_SIZE && root.slot.empty?
+          unless current.file_id == file_id && root.bound == current.data_offset + TRAILER_SIZE && root.slot.empty?
             raise ArgumentError, "compaction target changed before copying"
           end
 
@@ -359,14 +360,14 @@ module XitDB
       end
 
       # Checks profile compatibility or initializes an allowed empty store.
-      def prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty)
+      def prepare_file(hash_size, hash_id, file_id, initialize_empty, require_empty, format_version)
         raise ArgumentError, "compaction target must be empty" if require_empty && !@store.empty?
 
         if @store.empty?
           raise CorruptionError, "empty read-only database" if @store.readonly?
           raise CorruptionError, "existing empty database" unless initialize_empty
 
-          initialize_empty_file(hash_size, hash_id, file_id, require_empty)
+          initialize_empty_file(hash_size, hash_id, file_id, require_empty, format_version)
         else
           @header = Header.parse(@store.read_at(0, Header::SIZE))
           check_header!(:hash_size, hash_size, @header.hash_size)
@@ -377,9 +378,10 @@ module XitDB
       end
 
       # Writes the format header and publishes the initial empty root.
-      def initialize_empty_file(hash_size, hash_id, file_id, require_empty)
-        @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id)
-        @store.write_at(0, @header.to_bytes + ("\0".b * 17))
+      def initialize_empty_file(hash_size, hash_id, file_id, require_empty, format_version)
+        @header = Header.new(hash_size: hash_size || 20, hash_id: hash_id || "sha1", file_id: file_id || random_id,
+                             version: format_version)
+        @store.write_at(0, @header.to_bytes + ("\0".b * (@header.data_offset - Header::SIZE)))
         publish(Slot.new, 0)
       rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         reset_failed_initialization(require_empty)
@@ -415,7 +417,7 @@ module XitDB
           next unless current.file_id == header.file_id
 
           size, slot = committed_state
-          @store.truncate(0) if size == MINIMUM_SIZE && slot.empty?
+          @store.truncate(0) if size == current.data_offset + TRAILER_SIZE && slot.empty?
         end
       rescue Exception # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         # Cleanup must preserve the original failure or nonlocal exit. A new
@@ -437,7 +439,7 @@ module XitDB
       # Rejects data reads outside the object region and read boundary.
       def check_range!(offset, size, bound)
         unless offset.is_a?(Integer) && size.is_a?(Integer) && bound.is_a?(Integer) &&
-               offset >= DATA_OFFSET && size >= 0 && offset + size <= bound
+               offset >= header.data_offset && size >= 0 && offset + size <= bound
           raise CorruptionError, "object exceeds its read boundary"
         end
       end
@@ -445,8 +447,9 @@ module XitDB
       # Validates the published byte boundary and its root trailer.
       def committed_state
         check_open!
-        size = Format.unsigned(@store.read_at(ROOT_OFFSET + Slot::SIZE, 8))
-        raise CorruptionError, "invalid committed file size" if size < MINIMUM_SIZE || size > @store.length
+        size = Format.unsigned(@store.read_at(header.committed_size_offset, 8))
+        minimum_size = header.data_offset + TRAILER_SIZE
+        raise CorruptionError, "invalid committed file size" if size < minimum_size || size > @store.length
 
         slot, = Replication.trailer(@store, header, size, size)
         [size, slot]
@@ -464,11 +467,21 @@ module XitDB
         @store.append(body + [checksum].pack("Q>"))
         @store.sync
         outcome = :unknown
-        @store.write_at(ROOT_OFFSET, slot.to_bytes + [position + TRAILER_SIZE].pack("Q>"))
+        write_root_header(slot, position + TRAILER_SIZE)
         @store.sync
       rescue Exception => e # rubocop:disable Lint/RescueException -- Cleanup must also preserve nonstandard exceptions.
         @needs_reopen = true if outcome == :unknown
         raise CommitError.new(e.message, outcome: outcome || :not_committed), cause: e
+      end
+
+      # Publishes the size alone in v2. Maintains the cached slot for older v1 readers.
+      def write_root_header(slot, size)
+        bytes = [size].pack("Q>")
+        if header.version == 1
+          @store.write_at(Header::SIZE, slot.to_bytes + bytes)
+        else
+          @store.write_at(header.committed_size_offset, bytes)
+        end
       end
 
       # Generates an unsigned 64-bit identifier from random bytes.

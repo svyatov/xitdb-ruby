@@ -77,8 +77,8 @@ module XitDB
     def self.hasher: (Symbol | Core::Hasher) -> Core::Hasher
     def self.header_hasher: (Core::Header) -> Core::Hasher
     def self.open_store: (String, readonly: bool) -> [ Core::FileStore, bool ]
-    def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) -> Database
-                 | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) { (Database) -> A } -> A
+    def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float, ?format_version: Integer) -> Database
+                 | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float, ?format_version: Integer) { (Database) -> A } -> A
     def self.memory: (?hash: Symbol | Core::Hasher) -> Database
                    | [A] (?hash: Symbol | Core::Hasher) { (Database) -> A } -> A
     def transaction: () { (Views::Map) -> void } -> Snapshot
@@ -88,7 +88,7 @@ module XitDB
     def revert: (Snapshot | Revision) -> Snapshot
     def perform_revert: (Snapshot | Revision) -> Snapshot
     def close: () -> void
-    def compact: (to: String) -> Database
+    def compact: (to: String, ?format_version: Integer) -> Database
     def closed?: () -> bool
     def convert: (to: String, profile: :portable | :ruby | profile, ?history: :all | :latest, ?transform: transform?) -> Database
     def conversion_profile: (:portable | :ruby | profile) -> profile
@@ -100,8 +100,8 @@ module XitDB
     def revision_for: (Core::Cursor, Integer) -> Revision
   end
 
-  def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) -> Database
-               | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float) { (Database) -> A } -> A
+  def self.open: (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float, ?format_version: Integer) -> Database
+               | [A] (String, ?readonly: bool, ?hash: (Symbol | Core::Hasher)?, ?lock_timeout: Float, ?format_version: Integer) { (Database) -> A } -> A
 
   def self.memory: (?hash: Symbol | Core::Hasher) -> Database
                  | [A] (?hash: Symbol | Core::Hasher) { (Database) -> A } -> A

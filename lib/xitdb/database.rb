@@ -48,19 +48,22 @@ module XitDB
     # @param readonly [Boolean] forbid transactions and require an existing file
     # @param hash [Symbol, Core::Hasher, nil] hash configuration; nil reads the header or defaults to SHA-1
     # @param lock_timeout [Float] seconds to wait for the writer lock
+    # @param format_version [Integer] binary format version used when creating a file
     # @yield [database] use the database before automatic closure
     # @yieldparam database [Database] open handle
     # @return [Database, Object] handle without a block, otherwise the block's result
     # @raise [ProfileMismatchError] if the file uses an incompatible profile
     # @raise [CorruptionError] if the existing file has invalid storage data
     # @see XitDB.open
-    def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0)
+    def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0, format_version: Core::Header::VERSION)
+      Core::Header.validate_version!(format_version)
       selected = hasher(hash) unless hash.nil?
       # @type var options: { ?hash_id: String, ?hash_size: Integer }
       options = selected ? { hash_id: selected.id, hash_size: selected.size } : {}
       store, created = open_store(path, readonly: readonly)
       begin
-        core = Core::Database.new(store: store, initialize_empty: created, lock_timeout: lock_timeout, **options)
+        core = Core::Database.new(store: store, initialize_empty: created, lock_timeout: lock_timeout,
+                                  format_version: format_version, **options)
         if %w[rb01 rb02 rb03 rb04].include?(core.header.hash_id)
           raise ProfileMismatchError, "Ruby profile file requires XitDB::Ruby.open"
         end
@@ -268,10 +271,11 @@ module XitDB
     # Shared structures remain shared. Compaction preserves the stored profile.
     # The caller closes the returned database.
     # @param to [String] separate empty destination file
+    # @param format_version [Integer] binary format version of the destination
     # @return [Database] compacted database
     # @see #convert
-    def compact(to:)
-      compacted = core.compact(to: to)
+    def compact(to:, format_version: Core::Header::VERSION)
+      compacted = core.compact(to: to, format_version: format_version)
       begin
         selected_profile = profile
         copied_profile = if defined?(Profiles::Ruby) && selected_profile.is_a?(Profiles::Ruby)
@@ -407,7 +411,8 @@ module XitDB
       target_core = target.core
       target_core.transaction do |cursor|
         current_header = Core::Header.parse(store.read_at(0, Core::Header::SIZE))
-        unchanged = current_header.file_id == target_core.header.file_id && cursor.bound == Core::Database::MINIMUM_SIZE
+        minimum_size = current_header.data_offset + Core::Database::TRAILER_SIZE
+        unchanged = current_header.file_id == target_core.header.file_id && cursor.bound == minimum_size
         raise ArgumentError, "conversion target changed before copying" unless unchanged && cursor.slot.empty?
 
         if histories.size.zero? # rubocop:disable Style/ZeroLengthPredicate -- Core arrays expose size, not empty?.
@@ -471,15 +476,17 @@ module XitDB
   # @param readonly [Boolean] require an existing file and forbid writes
   # @param hash [Symbol, Core::Hasher, nil] algorithm or configuration; nil detects existing files
   # @param lock_timeout [Float] seconds allowed to acquire the writer lock
+  # @param format_version [Integer] binary format version used when creating a file
   # @yield [database] use a handle that closes when the block ends
   # @yieldparam database [Database]
   # @return [Database, Object] open handle or block result
   # @see Database.open
-  def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0, &block)
+  def self.open(path, readonly: false, hash: nil, lock_timeout: 5.0, format_version: Core::Header::VERSION, &block)
     if block
-      Database.open(path, readonly: readonly, hash: hash, lock_timeout: lock_timeout, &block)
+      Database.open(path, readonly: readonly, hash: hash, lock_timeout: lock_timeout, format_version: format_version,
+                    &block)
     else
-      Database.open(path, readonly: readonly, hash: hash, lock_timeout: lock_timeout)
+      Database.open(path, readonly: readonly, hash: hash, lock_timeout: lock_timeout, format_version: format_version)
     end
   end
 

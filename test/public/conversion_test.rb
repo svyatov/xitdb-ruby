@@ -415,7 +415,7 @@ class ConversionTest < Minitest::Test
       if failed_sync.odd?
         assert_equal 0, File.size(target_path)
       else
-        assert_operator File.size(target_path), :>=, 62
+        assert_operator File.size(target_path), :>=, 57
       end
     end
   end

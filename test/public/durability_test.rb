@@ -75,8 +75,8 @@ class PublicDurabilityTest < Minitest::Test
   # Checks partial header publication is unknown and reopens at previous trailer.
   def test_partial_header_publication_is_unknown_and_reopens_at_previous_trailer
     @store.fault = lambda do |name, args|
-      if name == :write_at && args.first == 20
-        @real.write_at(20, args.last.byteslice(0, 9))
+      if name == :write_at && args.first == 24
+        @real.write_at(24, args.last.byteslice(0, 3))
         @real.flush
         raise IOError, "partial root header"
       end
