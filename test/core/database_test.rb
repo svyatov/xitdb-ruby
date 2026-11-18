@@ -559,15 +559,18 @@ class DatabaseTest < Minitest::Test
   def test_released_checkpoints_do_not_retain_completed_operations
     Core::Database.memory.transaction do |root|
       tx = root.transaction
-      references = Array.new(200) do
-        checkpoint, reference = checkpoint_with_temporary_cursor(tx)
-        tx.release_checkpoint(checkpoint)
-        assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
-        [WeakRef.new(checkpoint), reference]
-      end
-      GC.start
+      200.times do
+        cursor = tx.cursor(slot: Core::Slot.uint(2))
+        checkpoint = tx.checkpoint
 
-      assert_equal(0, references.sum { |pair| pair.count(&:weakref_alive?) })
+        assert_includes checkpoint.slots, cursor
+        tx.release_checkpoint(checkpoint)
+
+        assert_equal 0, checkpoint.slots.size, "released checkpoint still owns cursor states"
+        assert_raises(XitDB::TransactionStateError) { tx.restore(checkpoint) }
+      end
+
+      assert_equal 0, tx.instance_variable_get(:@checkpoints).size, "transaction still owns released checkpoints"
     end
   end
 
