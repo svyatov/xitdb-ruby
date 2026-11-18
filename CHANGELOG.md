@@ -4,6 +4,9 @@
 
 ### Changed
 
+- New files use upstream format version 2 to fix tearing caused by the unaligned version 1 size field. Version 1 files remain readable and writable.
+- Use `format_version: 1` when creating or compacting a portable file for a version 1 reader.
+- Use `db.header.committed_size_offset` and `db.header.data_offset` for format-specific offsets. These replace the fixed Core database offsets.
 - Breaking: Native files use `rb02` with compact ordered records, shared field dictionaries, and bounded array construction. The `rb01` format has no backward reader or migration.
 - Native String, Symbol, and codec payloads append in bounded chunks without joining complete encoded payloads. Scalar wire bytes remain unchanged.
 - Pinned references retain portable graphs and opaque Ruby scalar maintenance. Native containers require the Core record extension and are incompatible with those references.

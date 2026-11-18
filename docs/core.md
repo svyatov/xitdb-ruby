@@ -110,9 +110,15 @@ Library errors inherit `XitDB::Error`; standard argument, missing-key, index, an
 
 ## Physical contract
 
-The header occupies 20 bytes. The root header adds a nine-byte slot and eight-byte committed size.
+The immutable database header occupies 20 bytes.
+In version 2, four padding bytes precede the eight-byte committed size at offset 24.
+A commit requests an aligned eight-byte write. A short write can still expose a partial size before the retry.
+In version 1, the root header contains a nine-byte cached slot and the eight-byte committed size at offset 29.
+A version 1 file can still have a torn header read during a concurrent commit. The trailer supplies the root in both versions.
 A trailer contains a root slot, commit identifier, and CRC-64/XZ checksum, occupying 25 bytes.
-An initialized empty database occupies 62 bytes. Parsing checks object ranges against committed boundaries before allocating.
+An initialized empty database occupies 57 bytes in version 2 or 62 bytes in version 1.
+Parsing checks object ranges against committed boundaries before allocating.
+Use `db.header.committed_size_offset` and `db.header.data_offset` for version-specific offsets.
 Graph traversal uses an explicit stack. Write buffers are bounded at 2 MiB, byte transfers at 64 KiB, and offset caches spill after 16,384 entries.
 
 `XitDB::Core::Bytes` owns physical byte storage, including inline selection, lengths, format tags, and bounded transfers.

@@ -201,8 +201,8 @@ class BytesTest < Minitest::Test
     end
     assert_same original, error
     assert_equal [[0, 65_536], [65_536, 1]], calls
-    assert_equal 62, store.length
-    assert_equal 62, core.committed_size
+    assert_equal 57, store.length
+    assert_equal 57, core.committed_size
     assert_empty core.root_cursor.slot
   end
 

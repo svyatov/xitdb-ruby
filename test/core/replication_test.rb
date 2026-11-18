@@ -19,6 +19,55 @@ class ReplicationTest < Minitest::Test
   DIVERGED = ["0800000000000000078877665544332211bd45d60798aeec1e"].pack("H*").freeze
   SECOND = ["080000000000000008123456789abcdef02f0a1a87b732917d"].pack("H*").freeze
 
+  # Exports an older v2 boundary and advances the replica with a delta.
+  def test_version_two_historical_full_copy_and_incremental_replication
+    Dir.mktmpdir do |dir|
+      source = Core::Database.memory(file_id: 1)
+      source.transaction { |root| root.replace(Core::Slot.uint(7)) }
+      first = source.committed_size
+      source.transaction { |root| root.replace(Core::Slot.uint(8)) }
+      base = StringIO.new("".b)
+      source.read_committed(0, first, base)
+
+      path = File.join(dir, "replica")
+      replica = Core::Database.copy_replica(to: path, source_io: StringIO.new(base.string), length: first)
+
+      assert_equal 2, replica.header.version
+      assert_equal 7, replica.root_cursor.slot.value
+      assert_equal 82, first
+      assert_equal first, source.replication_start(replica.replica_state)
+      delta = StringIO.new("".b)
+      source.read_committed(first, source.committed_size, delta)
+      replica.apply_replicated(first, StringIO.new(delta.string), delta.size)
+
+      assert_equal 8, replica.root_cursor.slot.value
+      assert_equal source.replica_state, replica.replica_state
+      full = StringIO.new("".b)
+      source.read_committed(0, source.committed_size, full)
+
+      assert_equal full.string, File.binread(path)
+    ensure
+      replica&.close
+      source&.close
+    end
+  end
+
+  # The v1 trailer is authoritative when newer upstream writers leave the cache stale.
+  def test_version_one_full_copy_accepts_an_upstream_stale_cached_slot
+    bytes = image(FIRST)
+    bytes[20, 9] = "\0".b * 9
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "replica")
+      replica = Core::Database.copy_replica(to: path, source_io: StringIO.new(bytes), length: bytes.bytesize)
+
+      assert_equal bytes, File.binread(path)
+      assert_equal 1, replica.header.version
+      assert_equal 7, replica.root_cursor.slot.value
+    ensure
+      replica&.close
+    end
+  end
+
   # Checks that incremental replication resumes matching history and detects divergent commits.
   def test_incremental_replication_and_diverged_history
     source = database(image(FIRST, SECOND))
@@ -175,8 +224,12 @@ class ReplicationTest < Minitest::Test
   def test_staging_rejects_malformed_headers_root_slots_and_trailers
     corruptions = [
       ->(bytes) { bytes[0, 3] = "bad" },
-      ->(bytes) { bytes[4, 2] = [2].pack("n") },
-      ->(bytes) { bytes.setbyte(20, 9) },
+      ->(bytes) { bytes[4, 2] = [3].pack("n") },
+      lambda { |bytes|
+        bytes.setbyte(62, 0x7f)
+        checksum = Core::CRC64.call([1, 62].pack("Q>Q>") + bytes.byteslice(62, 17))
+        bytes[79, 8] = [checksum].pack("Q>")
+      },
       ->(bytes) { bytes.setbyte(86, bytes.getbyte(86) ^ 1) }
     ]
     Dir.mktmpdir do |dir|

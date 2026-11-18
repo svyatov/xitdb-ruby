@@ -78,6 +78,10 @@ Portable maps and sets require String keys or members; portable values exclude b
 The Ruby profile supports these types and preserves insertion order in ordinary maps and sets.
 Profile conversion is explicit. Conversion can duplicate shared data across histories; see [measurements and costs](docs/benchmarks.md).
 
+New files use xitdb format version 2 to fix tearing caused by the unaligned version 1 size field. Version 1 files remain readable and writable.
+Pass `format_version: 1` to `XitDB.open` when creating a portable file for a version 1 reader.
+To upgrade an existing file and keep its latest state, use `db.compact(to: "upgraded.xit")`.
+
 Version 0.1.0 is the initial release. The public API can change before 1.0.
 
 ## Documentation

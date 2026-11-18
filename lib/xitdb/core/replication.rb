@@ -45,7 +45,7 @@ module XitDB
         Format.integer!(state.checksum, 0..Format::UINT64_MAX)
         with_operation do
           size, = committed_state
-          next 0 if state.committed_size > size || state.committed_size < Database::MINIMUM_SIZE
+          next 0 if state.committed_size > size
 
           begin
             _, checksum = Replication.trailer(@store, header, state.committed_size, size)
@@ -69,15 +69,20 @@ module XitDB
         Replication.ensure_position!(finish)
         with_operation do
           size, = committed_state
-          if start > finish || finish > size || (start.positive? && start < Database::DATA_OFFSET)
+          if start > finish || finish > size || (start.positive? && start < header.data_offset)
             raise ArgumentError, "invalid committed byte range"
           end
 
           if start.zero?
             slot, = Replication.trailer(@store, header, finish, size)
-            Replication.write_all(io, @store.read_at(0, Header::SIZE))
-            Replication.write_all(io, slot.to_bytes + [finish].pack("Q>"))
-            start = Database::DATA_OFFSET
+            if header.version == 1
+              Replication.write_all(io, @store.read_at(0, Header::SIZE))
+              Replication.write_all(io, slot.to_bytes)
+            else
+              Replication.write_all(io, @store.read_at(0, header.committed_size_offset))
+            end
+            Replication.write_all(io, [finish].pack("Q>"))
+            start = header.data_offset
           end
           while start < finish
             chunk = @store.read_at(start, [finish - start, CHUNK_SIZE].min)
@@ -120,7 +125,7 @@ module XitDB
               Replication.storage_write { @store.sync }
               outcome = :unknown
               Replication.storage_write(outcome: outcome) do
-                @store.write_at(Database::ROOT_OFFSET, slot.to_bytes + [finish].pack("Q>"))
+                write_root_header(slot, finish)
                 @store.sync
               end
               outcome = :committed
@@ -221,18 +226,14 @@ module XitDB
       end
       private_class_method :cleanup_staged_replica
 
-      # Checks the declared size and matching root header and trailer.
+      # Checks the declared size and trailer. Upstream v1 writers may leave the cached slot stale.
       def self.validate_replica!(store, length)
         header = Header.parse(store.read_at(0, Header::SIZE))
-        root = store.read_at(Database::ROOT_OFFSET, 17)
-        unless Format.unsigned(Format.slice(root, 9, 8)) == length
+        unless Format.unsigned(store.read_at(header.committed_size_offset, 8)) == length
           raise CorruptionError, "full replica length does not match its root header"
         end
 
-        slot, = trailer(store, header, length, length)
-        return if root.byteslice(0, 9) == slot.to_bytes
-
-        raise CorruptionError, "full replica root does not match its trailer"
+        trailer(store, header, length, length)
       end
       private_class_method :validate_replica!
 
@@ -252,7 +253,8 @@ module XitDB
       # @return [Array(Slot, Integer)]
       # @raise [CorruptionError] if the boundary, slot tag, or checksum is invalid
       def self.trailer(store, header, finish, bound)
-        raise CorruptionError, "invalid root trailer position" unless finish.between?(Database::MINIMUM_SIZE, bound)
+        minimum_size = header.data_offset + Database::TRAILER_SIZE
+        raise CorruptionError, "invalid root trailer position" unless finish.between?(minimum_size, bound)
 
         position = finish - Database::TRAILER_SIZE
         bytes = store.read_at(position, Database::TRAILER_SIZE)

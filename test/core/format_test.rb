@@ -11,7 +11,7 @@ class FormatTest < Minitest::Test
   def test_header_and_null_vectors
     header = XitDB::Core::Header.new(file_id: 1, hash_id: "sha1", hash_size: 20)
 
-    assert_equal "7869740000010014736861310000000000000001", header.to_bytes.unpack1("H*")
+    assert_equal "7869740000020014736861310000000000000001", header.to_bytes.unpack1("H*")
     assert_equal "800000000000000000", XitDB::Core::Slot.new(tag: :none, value: 0, full: true).to_bytes.unpack1("H*")
   end
 
@@ -46,7 +46,7 @@ class FormatTest < Minitest::Test
 
   # Checks unsupported header version has a distinct error.
   def test_unsupported_header_version_has_a_distinct_error
-    bytes = ["7869740000020014736861310000000000000001"].pack("H*")
+    bytes = ["7869740000030014736861310000000000000001"].pack("H*")
     assert_raises(XitDB::FormatVersionError) { XitDB::Core::Header.parse(bytes) }
   end
 

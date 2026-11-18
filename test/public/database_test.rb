@@ -19,6 +19,17 @@ class PublicDatabaseTest < Minitest::Test
     @db&.close unless @db&.closed?
   end
 
+  # Rejects an unsupported creation version before creating a file.
+  def test_unsupported_format_version_leaves_path_available_for_retry
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "test.xit")
+
+      assert_raises(XitDB::FormatVersionError) { XitDB.open(path, format_version: 3) }
+      refute_path_exists path
+      XitDB.open(path) { |database| assert_equal 2, database.core.header.version }
+    end
+  end
+
   # Checks that snapshots retain prior revisions, revert creates the expected state, and early exits abort writes.
   def test_snapshot_history_revert_and_block_exits
     assert_nil @db.snapshot.revision

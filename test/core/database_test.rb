@@ -13,6 +13,42 @@ require_relative "../support/fault_store"
 class DatabaseTest < Minitest::Test
   Core = XitDB::Core
 
+  # Checks the upstream v2 byte vector and a read across a size rollover.
+  def test_version_two_publishes_only_the_aligned_size
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, "aligned.xit")
+      Core::Database.open(path, file_id: 0x0102030405060708) do |writer|
+        expected = ["7869740000020014736861310102030405060708" \
+                    "000000000000000000000039" \
+                    "000000000000000000000000000000000095d494c34df807e5"].pack("H*")
+
+        assert_equal expected, File.binread(path)
+        7.times { |value| writer.transaction { |root| root.replace(Core::Slot.uint(value)) } }
+
+        file = writer.instance_variable_get(:@store).instance_variable_get(:@file)
+        original = file.method(:pwrite)
+        writes = []
+        observed_roots = []
+        Core::Database.open(path, readonly: true) do |reader|
+          file.define_singleton_method(:pwrite) do |bytes, offset|
+            writes << [offset, bytes.bytesize]
+            observed_roots << reader.root_cursor.slot.value if offset == 24
+            original.call(bytes, offset).tap do
+              observed_roots << reader.root_cursor.slot.value if offset == 24
+            end
+          end
+          writer.transaction { |root| root.replace(Core::Slot.uint(7)) }
+
+          assert_equal 7, reader.root_cursor.slot.value
+        end
+
+        assert_equal [[232, 25], [24, 8]], writes
+        assert_equal [6, 7], observed_roots
+        assert_equal expected.byteslice(0, 24), File.binread(path, 24)
+      end
+    end
+  end
+
   # Repeated root reads should not allocate one traversal object per lookup.
   def test_root_cursor_reads_have_bounded_allocation
     database = Core::Database.memory
@@ -41,7 +77,7 @@ class DatabaseTest < Minitest::Test
     assert_equal 0, store.length
     core = Core::Database.new(store: store)
 
-    assert_equal 62, core.committed_size
+    assert_equal 57, core.committed_size
     existing = Core::Database.new(store: store, initialize_empty: false)
 
     assert_empty existing.root_cursor.slot
@@ -50,8 +86,8 @@ class DatabaseTest < Minitest::Test
       File.binwrite(path, "")
       assert_raises(XitDB::CorruptionError) { Core::Database.open(path, initialize_empty: false) }
       assert_equal 0, File.size(path)
-      Core::Database.open(path) { |raw| assert_equal 62, raw.committed_size }
-      assert_equal 62, File.size(path)
+      Core::Database.open(path) { |raw| assert_equal 57, raw.committed_size }
+      assert_equal 57, File.size(path)
     end
   ensure
     store&.close
@@ -61,7 +97,7 @@ class DatabaseTest < Minitest::Test
   def test_empty_file_and_exception_rollback
     core = Core::Database.memory(file_id: 1)
 
-    assert_equal 62, core.committed_size
+    assert_equal 57, core.committed_size
     error = RuntimeError.new("abort")
 
     assert_same error, assert_raises(RuntimeError) {
@@ -71,7 +107,7 @@ class DatabaseTest < Minitest::Test
       }
     }
     assert_empty core.root_cursor.slot
-    assert_equal 62, core.committed_size
+    assert_equal 57, core.committed_size
   end
 
   # Checks scalars and old cursor keep exact bits.
@@ -128,7 +164,7 @@ class DatabaseTest < Minitest::Test
       end
     end
     assert_empty core.root_cursor.slot
-    assert_equal 62, core.committed_size
+    assert_equal 57, core.committed_size
     core.transaction do |cursor|
       cursor.replace(Core::Slot.uint(5))
       next :ignored
@@ -148,7 +184,7 @@ class DatabaseTest < Minitest::Test
         syncs += 1 if name == :sync
         fail_here = (point == :append && name == :append) ||
                     (point == :data_sync && name == :sync && syncs == 1) ||
-                    (point == :header_write && name == :write_at && args[0] == 20) ||
+                    (point == :header_write && name == :write_at && args[0] == 24) ||
                     (point == :header_sync && name == :sync && syncs == 2)
         raise IOError, point.to_s if fail_here
       end
@@ -170,7 +206,7 @@ class DatabaseTest < Minitest::Test
         assert_raises(XitDB::TransactionStateError) { core.transaction { flunk "must not run" } }
       else
         assert_empty core.root_cursor.slot
-        assert_equal 62, store.length
+        assert_equal 57, store.length
         core.transaction { |cursor| cursor.replace(Core::Slot.uint(7)) }
 
         assert_equal 7, core.root_cursor.slot.value
@@ -191,8 +227,8 @@ class DatabaseTest < Minitest::Test
         cursor.replace(Core::Slot.uint(2))
       end
 
-      assert_equal 112, second.committed_size
-      assert_equal 112, File.size(path)
+      assert_equal 107, second.committed_size
+      assert_equal 107, File.size(path)
       first.close
       second.close
       Core::Database.open(path, readonly: true) do |reader|
@@ -208,8 +244,8 @@ class DatabaseTest < Minitest::Test
     Core::Database.new(store: store, file_id: 1)
     original = store.read_at(0, store.length)
     bad_crc = original.dup
-    bad_crc.setbyte(61, bad_crc.getbyte(61) ^ 1)
-    [original.byteslice(0, 61), bad_crc, original.byteslice(0, 19)].each do |bytes|
+    bad_crc.setbyte(56, bad_crc.getbyte(56) ^ 1)
+    [original.byteslice(0, 56), bad_crc, original.byteslice(0, 19)].each do |bytes|
       bad = Core::MemoryStore.new(bytes)
       assert_raises(XitDB::CorruptionError) { Core::Database.new(store: bad) }
       assert_equal bytes, bad.read_at(0, bad.length)
@@ -244,7 +280,7 @@ class DatabaseTest < Minitest::Test
       assert_equal 1, root.slot.value
       assert_equal 2, detached.slot.value
       assert_raises(XitDB::ExpiredViewError) { temporary.slot }
-      assert_equal 62, tx.freeze
+      assert_equal 57, tx.freeze
       error = Thread.new do
         root.slot
       rescue StandardError
@@ -267,7 +303,7 @@ class DatabaseTest < Minitest::Test
   # Checks trailer not cached header supplies root and initial id is zero.
   def test_trailer_not_cached_header_supplies_root_and_initial_id_is_zero
     store = Core::MemoryStore.new
-    core = Core::Database.new(store: store, file_id: 1)
+    core = Core::Database.new(store: store, file_id: 1, format_version: 1)
 
     assert_equal "0000000000000000", store.read_at(46, 8).unpack1("H*")
     store.write_at(20, Core::Slot.uint(99).to_bytes)
@@ -275,13 +311,16 @@ class DatabaseTest < Minitest::Test
     assert_empty core.root_cursor.slot
     core.transaction { |cursor| cursor.replace(Core::Slot.uint(42)) }
 
-    assert_equal 42, Core::Database.new(store: store).root_cursor.slot.value
+    reopened = Core::Database.new(store: store)
+
+    assert_equal 42, reopened.root_cursor.slot.value
+    assert_equal 1, reopened.header.version
   end
 
   # Checks empty database matches independent go fixture.
   def test_empty_database_matches_independent_go_fixture
     store = Core::MemoryStore.new
-    Core::Database.new(store: store, file_id: 1)
+    Core::Database.new(store: store, file_id: 1, format_version: 1)
     expected = File.read(File.expand_path("../fixtures/core/empty-v1.hex", __dir__)).strip
 
     assert_equal expected, store.read_at(0, store.length).unpack1("H*")
@@ -325,7 +364,7 @@ class DatabaseTest < Minitest::Test
   def test_interrupt_during_publication_is_unknown_after_header_attempt
     store = FaultStore.new(Core::MemoryStore.new)
     core = Core::Database.new(store: store)
-    store.fault = ->(name, args) { raise Interrupt if name == :write_at && args.first == 20 }
+    store.fault = ->(name, args) { raise Interrupt if name == :write_at && args.first == 24 }
     error = assert_raises(XitDB::CommitError) { core.transaction { |cursor| cursor.replace(Core::Slot.uint(9)) } }
     assert_equal :unknown, error.outcome
     assert_instance_of Interrupt, error.cause
@@ -391,8 +430,8 @@ class DatabaseTest < Minitest::Test
           if point == :trailer && name == :append
             real.append(args.first.byteslice(0, 10))
             raise IOError, "partial trailer"
-          elsif point == :header && name == :write_at && args.first == 20
-            real.write_at(20, args.last.byteslice(0, 9))
+          elsif point == :header && name == :write_at && args.first == 24
+            real.write_at(24, args.last.byteslice(0, 3))
             real.flush
             raise IOError, "partial root header"
           elsif (point == :data_sync && name == :sync && syncs == 1) ||
@@ -451,7 +490,7 @@ class DatabaseTest < Minitest::Test
     end
     assert_same original, error
     assert_equal 1, calls
-    assert_equal 62, core.committed_size
+    assert_equal 57, core.committed_size
   end
 
   # Checks release failure does not replace application exception.
@@ -486,7 +525,7 @@ class DatabaseTest < Minitest::Test
 
           assert_equal :original_exit, result
           assert_predicate core, :needs_reopen?
-          assert_equal 62, core.committed_size
+          assert_equal 57, core.committed_size
           assert_raises(XitDB::TransactionStateError) { core.transaction { flunk "must not run" } }
         ensure
           store.release_fault = nil if store

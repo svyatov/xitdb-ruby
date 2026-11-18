@@ -152,7 +152,7 @@ module Interop
   def self.write_tree(path, hash_size: 20, hash_id: "sha1")
     core = XitDB::Core
     collection_sizes = [0, 17]
-    core::Database.open(path, file_id: 1, hash_size: hash_size, hash_id: hash_id) do |db|
+    core::Database.open(path, file_id: 1, hash_size: hash_size, hash_id: hash_id, format_version: 1) do |db|
       db.transaction { |root| core::ArrayList.new(root).append(core::Slot.uint(7)) }
       first = db.committed_size
       db.transaction do |root|
@@ -244,7 +244,9 @@ module Interop
     assert_equal! File.binread("#{path}.base"), File.binread("#{path}.reference.base")
     assert_equal! File.binread("#{path}.delta"), File.binread("#{path}.reference.delta")
     check_ruby_replication!(path)
-    XitDB::Core::Database.open(path, readonly: true) { |db| db.compact(to: "#{path}.ruby-compact").close }
+    XitDB::Core::Database.open(path, readonly: true) do |db|
+      db.compact(to: "#{path}.ruby-compact", format_version: 1).close
+    end
     assert_equal! compacted, invoke.call("read", "all-kinds", "#{path}.ruby-compact").fetch("tree")
   end
 
@@ -261,7 +263,7 @@ module Interop
     })
     registry = XitDB::Ruby::CodecRegistry.new([codec])
     values = [2**100, :symbol, "a\0b".b, Time.at(1, 123_456_789, :nanosecond)]
-    XitDB::Core::Database.open(path) do |db|
+    XitDB::Core::Database.open(path, format_version: 1) do |db|
       db.transaction { |root| XitDB::Core::ArrayList.new(root).append(db.bytes("first")) }
       first = File.size(path)
       db.transaction do |root|
@@ -524,7 +526,7 @@ module Interop
   def self.empty(binary, dir)
     expected = File.read(File.join(ROOT, "test/fixtures/core/empty-v1.hex")).strip
     ruby_path = File.join(dir, "ruby.xit")
-    XitDB::Core::Database.open(ruby_path, file_id: 1, &:close)
+    XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1, &:close)
     assert_equal! expected, adapter(binary, "read", "empty", ruby_path).fetch("file_hex")
     go_path = File.join(dir, "go.xit")
     assert_equal! expected, adapter(binary, "write", "empty", go_path).fetch("file_hex")
@@ -540,7 +542,7 @@ module Interop
   def self.scalars(binary, dir)
     ruby_path = File.join(dir, "ruby.xit")
     go_path = File.join(dir, "go.xit")
-    XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+    XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
       MANIFEST.fetch("scalars").each do |value|
         db.transaction do |cursor|
           slot = if value.key?("hex")
@@ -592,7 +594,7 @@ module Interop
       values[0] = { "tag" => "none", "full" => false, "bits" => "0" } if length.positive?
       values[1] = { "tag" => "none", "full" => true, "bits" => "0" } if length > 1
       ruby_path = File.join(dir, "ruby-array-#{length}.xit")
-      XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+      XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
         db.transaction do |root|
           list = XitDB::Core::ArrayList.new(root)
           values.each do |value|
@@ -629,7 +631,7 @@ module Interop
     core = XitDB::Core
     payload = "opaque\0replication".b * 6000
     ruby_path = File.join(dir, "ruby-replication")
-    core::Database.open(ruby_path, file_id: 1) do |source|
+    core::Database.open(ruby_path, file_id: 1, format_version: 1) do |source|
       source.transaction { |root| root.replace(core::Slot.uint(7)) }
       first = source.committed_size
       source.transaction { |root| root.replace(source.bytes(payload, format_tag: "\xff\0".b)) }
@@ -698,7 +700,7 @@ module Interop
           end
         end
         original = File.binread(source_path)
-        db.compact(to: ruby_path).close
+        db.compact(to: ruby_path, format_version: 1).close
         assert_equal! original, File.binread(source_path)
       end
       assert_equal! expected, adapter(binary, "read", "compaction", ruby_path, { "collection" => kind })
@@ -770,7 +772,7 @@ module Interop
           entry.fetch("hash")
         end, "missing" => true }
         ruby_path = File.join(dir, "ruby-#{tag}-#{index}.xit")
-        XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+        XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
           db.transaction do |root|
             map = XitDB::Core::HashMap.new(root, counted: tag.to_s.start_with?("counted"),
                                                  set: tag.to_s.end_with?("set"))
@@ -838,7 +840,7 @@ module Interop
       end
       request = { "positions" => positions }
       ruby_path = File.join(dir, "ruby-linked-#{length}.xit")
-      XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+      XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
         db.transaction do |root|
           tree = XitDB::Core::BTree.new(root)
           positions.each_with_index do |position, index|
@@ -905,7 +907,7 @@ module Interop
         expected = { "tag" => tag, "count" => final.size, "entries" => expected_entries }
         request = { "collection" => tag, "sorted_entries" => entries, "removals" => removals }
         ruby_path = File.join(dir, "ruby-#{tag}-#{length}.xit")
-        XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+        XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
           db.transaction do |root|
             map = XitDB::Core::SortedMap.new(root, set: tag == "sorted_set")
             entries.each do |entry|
@@ -961,7 +963,7 @@ module Interop
                   "size" => size }
       expected = oracle.slice(offset, size).map(&:to_s)
       ruby_path = File.join(dir, "ruby-edit-#{length}.xit")
-      XitDB::Core::Database.open(ruby_path, file_id: 1) do |db|
+      XitDB::Core::Database.open(ruby_path, file_id: 1, format_version: 1) do |db|
         db.transaction do |root|
           list = XitDB::Core::LinkedArrayList.new(root)
           length.times { |index| list.append(XitDB::Core::Slot.uint(index)) }
