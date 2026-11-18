@@ -2,18 +2,20 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-11-18
+
 ### Changed
 
 - New files use upstream format version 2 to fix tearing caused by the unaligned version 1 size field. Version 1 files remain readable and writable.
 - Use `format_version: 1` when creating or compacting a portable file for a version 1 reader.
 - Use `db.header.committed_size_offset` and `db.header.data_offset` for format-specific offsets. These replace the fixed Core database offsets.
-- Breaking: Native files use `rb02` with compact ordered records, shared field dictionaries, and bounded array construction. The `rb01` format has no backward reader or migration.
+- Breaking: Native files use `rb04` with compact ordered records, shared field dictionaries, and indexed row pages. Ruby handles reject `rb01`, `rb02`, and `rb03` files. Export data with its matching version before upgrading.
 - Native String, Symbol, and codec payloads append in bounded chunks without joining complete encoded payloads. Scalar wire bytes remain unchanged.
 - Pinned references retain portable graphs and opaque Ruby scalar maintenance. Native containers require the Core record extension and are incompatible with those references.
 
 - Core boolean readers are now `Slot#full?` and `Cursor#valid?`; the old names were removed.
 - Validation and assertion helpers now use `!`, including `Core::Format.integer!` and `Core::Format.ensure_width!`.
-- Substantial classes have dedicated files. Existing require entry points and on-disk encodings remain unchanged.
+- Substantial classes have dedicated files. Existing require entry points still work.
 - The interoperability workflow uses Zig 0.17.1.
 
 ## 0.1.0 - 2026-11-05
