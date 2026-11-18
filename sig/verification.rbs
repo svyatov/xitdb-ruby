@@ -1,0 +1,40 @@
+module XitDB
+  module Verification
+    class Budget
+      DEFAULTS: Hash[Symbol, Integer]
+      PATH_SIZE: Integer
+      OMISSION: String
+      @limits: Hash[Symbol, Integer]
+      @usage: Hash[Symbol, Integer]
+      def initialize: (?Hash[Symbol, Integer]) -> void
+      def reserve!: (Symbol, ?Integer) -> Integer
+      def release: (Symbol, ?Integer) -> Integer
+      def with: [A] (Symbol, Integer) { () -> A } -> A
+      def path: (String, String) -> String
+    end
+
+    class Scan
+      CHUNK_SIZE: Integer
+      @store: Core::FileStore
+      attr_reader header: Core::Header
+      attr_reader bound: Integer
+      attr_reader budget: Budget
+      attr_reader profile: :portable | :ruby
+      attr_reader root: Core::Slot?
+      attr_reader root_offset: Integer
+      attr_reader history_offsets: Array[Integer]
+      def self.open: [A] (String, ?limits: Hash[Symbol, Integer]) { (Scan) -> A } -> A
+      def initialize: (Core::FileStore, Budget) -> void
+      @codec_ids: Hash[String, bool]
+      def codec_ids: () -> Array[String]
+      def register_codec!: (String) -> void
+      def read: (Integer, Integer) -> String
+      private
+      def checked: [A] (Symbol, Integer) { () -> A } -> A
+      def select_profile: () -> (:portable | :ruby)
+      def latest: (Core::Slot) -> Core::Slot?
+      def history_record: (Integer, Integer) -> String
+      def history_entry: (Core::Slot) -> Core::Slot
+    end
+  end
+end

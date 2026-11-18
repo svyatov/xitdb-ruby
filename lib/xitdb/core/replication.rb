@@ -245,6 +245,15 @@ module XitDB
         raise ArgumentError, "offset and length must be nonnegative" if value.negative?
       end
 
+      # Reads the published size once and checks it against this descriptor.
+      def self.committed_size(store, header)
+        size = Format.unsigned(store.read_at(header.committed_size_offset, 8))
+        minimum_size = header.data_offset + Database::TRAILER_SIZE
+        raise CorruptionError, "invalid committed file size" if size < minimum_size || size > store.length
+
+        size
+      end
+
       # Validates a committed trailer's location, slot tag, and checksum.
       # @param store [MemoryStore, FileStore] underlying byte storage
       # @param header [Header] file header containing the checksum identity

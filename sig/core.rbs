@@ -79,6 +79,7 @@ module XitDB
       attr_reader size: Integer
       def initialize: (id: String, size: Integer) { (String) -> String } -> void
       def digest: (String) -> String
+      def self.for_header: (Header) -> Hasher
       def self.sha1: () -> Hasher
       def self.sha256: () -> Hasher
       def self.sha384: () -> Hasher
@@ -716,6 +717,7 @@ module XitDB
 
       def self.ensure_position!: (Integer) -> void
 
+      def self.committed_size: (store, Header) -> Integer
       def self.trailer: (store, Header, Integer, Integer) -> [ Slot, Integer ]
 
       def self.read_chunks: (_Reader, Integer) { (String) -> top } -> void

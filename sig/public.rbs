@@ -10,6 +10,17 @@ module ObjectSpace
 end
 
 module XitDB
+  class VerificationResult < Data
+    attr_reader profile: :portable | :ruby
+    attr_reader hash_id: String
+    attr_reader hash_size: Integer
+    attr_reader committed_size: Integer
+    attr_reader codec_ids: Array[String]
+    def self.new: (profile: :portable | :ruby, hash_id: String, hash_size: Integer, committed_size: Integer, codec_ids: Array[String]) -> VerificationResult
+  end
+
+  def self.verify!: (String) -> VerificationResult
+
   type selector = String | Integer | Float | Time | Symbol | bool | nil | UInt
 
   type path = ::Array[selector]

@@ -200,8 +200,7 @@ module XitDB
       # @return [Object] decoded scalar
       # @raise [UnsupportedEncodingError] if the version or type is unsupported
       # @raise [InvalidValueError] if fields are malformed, truncated, or followed by extra bytes
-      def self.decode_payload(bytes, registry: nil)
-        reader = Wire::Reader.new(bytes)
+      def self.decode_payload(bytes, registry: nil, reader: Wire::Reader.new(bytes))
         version = reader.byte
         raise UnsupportedEncodingError, "unsupported Ruby payload version #{version}" unless version == 1
 
@@ -210,6 +209,27 @@ module XitDB
         value
       rescue ArgumentError, RangeError => e
         raise InvalidValueError, e.message
+      end
+
+      # Checks the builtin payload selected by the verifier, using the same
+      # field and representability rules as ordinary reads.
+      def self.verify_builtin!(bytes)
+        reader = Wire::Reader.new(bytes)
+        decode_payload(bytes, reader: reader)
+        nil
+      rescue ValueError, EncodingError
+        yield(reader&.field_position || 0)
+        raise
+      end
+
+      # Reads only built-in scalar types allowed in ordinary or typed sorted keys.
+      def self.decode_key_payload(bytes, time: false)
+        type = bytes.getbyte(1)
+        unless (type && (1..4).cover?(type)) || (time && type == 5)
+          raise InvalidValueError, "unsupported Ruby key payload"
+        end
+
+        decode_payload(bytes)
       end
 
       # Consumes the type marker and dispatches to the corresponding scalar reader.
@@ -321,10 +341,10 @@ module XitDB
       def self.read_time(reader)
         instant = reader.q
         offset = reader.z
+        raise InvalidValueError, "invalid Time offset or UTC flag" unless offset.abs < 86_400
+
         utc = reader.byte
-        unless utc <= 1 && offset.abs < 86_400 && (utc.zero? || offset.zero?)
-          raise InvalidValueError, "invalid Time offset or UTC flag"
-        end
+        raise InvalidValueError, "invalid Time offset or UTC flag" unless utc <= 1 && (utc.zero? || offset.zero?)
 
         time = Time.at(instant)
         utc == 1 ? time.utc : time.getlocal(offset)
@@ -350,9 +370,9 @@ module XitDB
       def self.read_datetime(reader)
         instant = reader.q
         offset = reader.q
-        start = read_start(reader)
         raise InvalidValueError, "invalid DateTime offset" unless offset.abs <= 1 && (offset * 86_400).denominator == 1
 
+        start = read_start(reader)
         day, fraction = (instant + Rational(1, 2) + offset).divmod(1)
         # @type var date: DateTime
         date = DateTime.jd(day.to_i, 0, 0, 0, offset, start)
@@ -381,11 +401,13 @@ module XitDB
       # @raise [InvalidValueError] if digits, sign, exponent, or the reconstructed fields are invalid
       def self.read_finite_decimal(reader)
         sign = reader.byte
+        raise InvalidValueError, "invalid finite decimal fields" unless sign <= 1
+
         digits = reader.t
+        raise InvalidValueError, "invalid finite decimal fields" unless /\A(?:0|[1-9](?:[0-9]*[1-9])?)\z/.match?(digits)
+
         exponent = reader.z
-        unless sign <= 1 && /\A(?:0|[1-9](?:[0-9]*[1-9])?)\z/.match?(digits) && (digits != "0" || exponent.zero?)
-          raise InvalidValueError, "invalid finite decimal fields"
-        end
+        raise InvalidValueError, "invalid finite decimal fields" if digits == "0" && !exponent.zero?
 
         text = "#{"-" if sign == 1}0.#{digits}e#{exponent}"
         value = build_decimal(text)
@@ -417,7 +439,6 @@ module XitDB
       # @raise [UnsupportedEncodingError] if Ruby does not recognize the encoding name
       def self.read_string(reader)
         name = reader.t
-        bytes = reader.b
         begin
           encoding = Encoding.find(name)
         rescue ArgumentError => e
@@ -425,7 +446,7 @@ module XitDB
         end
         raise UnsupportedEncodingError, "unknown encoding #{name}" unless encoding
 
-        bytes.force_encoding(encoding)
+        reader.b.force_encoding(encoding)
       end
       private_class_method :decode_payload, :read_string, :decimal_bytes, :read_time, :read_start,
                            :read_datetime, :read_decimal, :builtin_slot, :builtin_payload, :time_bytes,

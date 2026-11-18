@@ -5,6 +5,17 @@ module XitDB
     # Validates every cell while allocating only requested row values.
     # @api private
     class PageDecoder
+      # Byte position of a failed page field, relative to the page magic.
+      class FieldError < InvalidValueError
+        attr_reader :position, :field
+
+        def initialize(message, position, field: nil)
+          @position = position
+          @field = field
+          super(message)
+        end
+      end
+
       def initialize(bytes, expected)
         raise TypeError, "page must be a String" unless Object.instance_method(:is_a?).bind_call(bytes, String)
 
@@ -17,8 +28,11 @@ module XitDB
         raise InvalidValueError, "invalid Ruby page magic" unless take(4) == "XP01"
 
         @count = unsigned
+        validate_count!(@count, expected)
+        width_position = @position
         width = unsigned
-        validate_count!(@count, width, expected)
+        raise FieldError.new("invalid Ruby page count", width_position) if width > PageCodec::FIELD_LIMIT
+
         @keys = schema(width)
       end
 
@@ -43,24 +57,51 @@ module XitDB
         result || raise(IndexError, "row outside Ruby page")
       end
 
+      # Walks every frame without retaining decoded rows. On a parser failure the
+      # callback receives the known row, field and byte position of that check.
+      def verify!
+        row = field = nil
+        position = @position
+        @count.times do |index|
+          row = index
+          @keys.size.times do |column|
+            field = column
+            position = @position
+            skip_cell
+          end
+          field = nil
+          position = @position
+          verify_frame!(index)
+        end
+        row = nil
+        position = @position
+        finish!
+      rescue InvalidValueError
+        yield row, field, position || @position
+        raise
+      end
+
       private
 
-      def validate_count!(count, width, expected)
-        unless count.between?(1, PageCodec::ROW_LIMIT) && width <= PageCodec::FIELD_LIMIT
-          raise InvalidValueError, "invalid Ruby page count"
-        end
+      # Sequential rows end after their last cell.
+      def verify_frame!(_index); end
+
+      def validate_count!(count, expected)
+        raise FieldError.new("invalid Ruby page count", 4) unless count.between?(1, PageCodec::ROW_LIMIT)
+
         return if BasicObject.instance_method(:equal?).bind_call(expected, nil)
 
         unless Object.instance_method(:is_a?).bind_call(expected, Integer)
           raise TypeError, "expected row count must be an Integer"
         end
-        raise InvalidValueError, "Ruby page row count mismatch" unless expected == count
+        raise FieldError.new("Ruby page row count mismatch", 4) unless expected == count
       end
 
       def schema(width)
         # @type var seen: Hash[String, bool]
         seen = {}
-        ::Array.new(width) do
+        ::Array.new(width) do |index|
+          position = @position
           key = cell
           raise InvalidValueError, "Ruby page key must be a String" unless key.is_a?(String)
           raise InvalidValueError, "duplicate Ruby page key" if seen.key?(key)
@@ -68,6 +109,8 @@ module XitDB
           key = -key
           seen[key] = true
           key
+        rescue InvalidValueError => e
+          raise FieldError.new(e.message, e.is_a?(FieldError) ? e.position : (position || @position), field: index)
         end
       end
 
@@ -121,23 +164,26 @@ module XitDB
       end
 
       def named_encoding
+        position = @position
         length = unsigned
-        raise InvalidValueError, "invalid Ruby page encoding name" unless length.between?(1, 127)
+        raise FieldError.new("invalid Ruby page encoding name", position) unless length.between?(1, 127)
 
+        position = @position
         name = take(length)
         encoding = Encoding.find(name)
         unless encoding && encoding.name == name && ![Encoding::UTF_8, Encoding::US_ASCII, Encoding::BINARY].include?(encoding)
-          raise InvalidValueError, "noncanonical Ruby page encoding"
+          raise FieldError.new("noncanonical Ruby page encoding", position)
         end
 
         encoding
       rescue ArgumentError
-        raise InvalidValueError, "invalid Ruby page encoding"
+        raise FieldError.new("invalid Ruby page encoding", position || @position)
       end
 
       def integer_payload
+        position = @position
         value = unsigned
-        raise InvalidValueError, "noncanonical Ruby page integer" if value < 128
+        raise FieldError.new("noncanonical Ruby page integer", position) if value < 128
 
         value
       end
@@ -149,12 +195,12 @@ module XitDB
         value = first & 127
         (7..63).step(7) do |shift|
           part = byte
-          raise InvalidValueError, "Ruby page integer overflow" if shift == 63 && part > 1
+          raise FieldError.new("Ruby page integer overflow", @position - 1) if shift == 63 && part > 1
 
           value |= (part & 127) << shift
           next unless part < 128
 
-          raise InvalidValueError, "noncanonical Ruby page integer" if part.zero?
+          raise FieldError.new("noncanonical Ruby page integer", @position - 1) if part.zero?
 
           return value
         end
@@ -163,7 +209,7 @@ module XitDB
 
       def byte
         value = @bytes.getbyte(@position)
-        raise InvalidValueError, "truncated Ruby page" unless value
+        raise FieldError.new("truncated Ruby page", @position) unless value
 
         @position += 1
         value
@@ -176,7 +222,7 @@ module XitDB
       end
 
       def advance!(length)
-        raise InvalidValueError, "truncated Ruby page" if length > @bytes.bytesize - @position
+        raise FieldError.new("truncated Ruby page", @position) if length > @bytes.bytesize - @position
 
         @position += length
       end

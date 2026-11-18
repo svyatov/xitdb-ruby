@@ -447,9 +447,7 @@ module XitDB
       # Validates the published byte boundary and its root trailer.
       def committed_state
         check_open!
-        size = Format.unsigned(@store.read_at(header.committed_size_offset, 8))
-        minimum_size = header.data_offset + TRAILER_SIZE
-        raise CorruptionError, "invalid committed file size" if size < minimum_size || size > @store.length
+        size = Replication.committed_size(@store, header)
 
         slot, = Replication.trailer(@store, header, size, size)
         [size, slot]

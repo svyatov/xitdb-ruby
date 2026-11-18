@@ -29,6 +29,43 @@ Slots contain a tag, full flag, and unsigned 64-bit payload. Use `db.bytes(data,
 Core cursor ownership and transaction-local references are lower-level contracts; public views provide value capture and operation rollback.
 Core empty stores may initialize. Public opening rejects pre-existing zero-byte files.
 
+## Verify a staged restore
+
+Keep the staged file under exclusive application control until installation. Verification opens it read-only and captures the latest committed boundary on that descriptor. Appends after capture fall outside the scan. Replacing the pathname after open leaves the scan on the original descriptor. External modification of already committed bytes during the scan is unsupported.
+
+```ruby
+require "xitdb"
+
+staged = "restore/staging.xit"
+result = XitDB.verify!(staged) # raises on failure
+puts "Verified #{result.profile} snapshot through byte #{result.committed_size - 1}"
+puts "Required application codecs: #{result.codec_ids.join(", ")}"
+# Apply application-specific restore checks before installing the staged file.
+```
+
+Core versions 1 and 2 support portable `sha1` (20 bytes), portable `sha2` (32, 48 or 64 bytes), and Ruby `rb05` (32 bytes). The returned `XitDB::VerificationResult` and its fields are immutable. `profile` is `:portable` or `:ruby`, `hash_id` is the four-byte header identifier, and `hash_size` is the digest width in bytes. `committed_size` is the exclusive end of the captured commit. `codec_ids` lists the distinct Ruby application codec IDs encountered, including unknown IDs. Verification requires no codec registry and never calls application loaders.
+
+The verifier checks the root trailer checksum, the path through history to the latest root, and every value reachable from that root. Checks include record extents and tags, visible array entries, collection counts, key hashes and routing, tree ordering, and subtree sizes. Ruby checks also cover record metadata and arity, field dictionaries, lookup and ordered storage agreement, builtin scalar fields, and every row and cell of sequential, offset-directory, fixed-stride and padded pages, including checksums where defined.
+
+A valid initialized file with no history succeeds. A zero-byte file fails. Earlier snapshots, unreachable records and unpublished tail bytes are outside the scan. Portable tagged data and Ruby application codec payloads are opaque. Ordinary byte records have no general payload checksum. Success establishes structural readability of the captured snapshot. Application rules and payload authenticity require separate checks.
+
+The first structural defect raises `XitDB::VerificationError`, a subclass of `XitDB::CorruptionError`. Its `check` identifies the failed check. Its `offset` is the absolute byte offset when known and its `path` identifies the logical location when available. A page checksum error refers to the start of the page contents. Unsupported formats raise `XitDB::UnsupportedVerificationFormatError`. Filesystem errors propagate, including `Errno::ENOENT` for a missing source.
+
+The verifier reads at most 64 KiB per read. These fixed budgets apply even to structurally valid files:
+
+| Resource | Limit |
+| --- | ---: |
+| Active referenced records (`depth`) | 256 |
+| Retained reference contexts per traversal (`references`) | 262,144 |
+| Diagnostic path length | 1,024 bytes, with a trailing `[...]` on truncation |
+| Retained diagnostic paths (`path_bytes`) | 1 MiB |
+| Scalar and page decoding work (`scalar_bytes`) | 8 MiB |
+| Codec inventory (`codec_bytes`) | 1 MiB, charged as identifier bytes plus 96 bytes per distinct ID |
+| Completed record summaries (`summary_bytes`) | 16 MiB, charged as 64 bytes per summary |
+| Comparison buffers (`comparison_bytes`) | 16 MiB |
+
+Decoding charges include space for intermediate values. Large opaque values stream in chunks. Exhausting a budget raises `XitDB::VerificationLimitError`; its `limit` names the resource. The snapshot remains unverified.
+
 ## Conversion and copying
 
 `db.convert(to:, profile:, history: :all, transform: nil)` returns an open writable destination handle owned by the caller.

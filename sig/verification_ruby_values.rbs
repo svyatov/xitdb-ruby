@@ -1,0 +1,27 @@
+module XitDB
+  module Verification
+    class Payload
+      @scan: Scan
+      @inline: String?
+      attr_reader start: Integer
+      attr_reader size: Integer
+      attr_reader position: Integer
+      attr_reader tag: String?
+      def initialize: (Scan, Core::Slot, Integer) -> void
+      def remaining: () -> Integer
+      def length: () -> Integer
+      def take: (Integer) -> String
+      def chunks: (Integer) { (String) -> void } -> void
+    end
+
+    class RubyValues
+      @scan: Scan
+      def initialize: (Scan) -> void
+      def scalar!: (Core::Slot, offset: Integer, path: String) -> nil
+      def page!: (Core::Slot, count: Integer, offset: Integer, path: String) -> nil
+      private
+      def scalar_type!: (Payload, String) -> Integer
+      def envelope!: (Payload, codec: bool, path: String) -> void
+    end
+  end
+end

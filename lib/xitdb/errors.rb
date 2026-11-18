@@ -7,6 +7,32 @@ module XitDB
   class FormatVersionError < Error; end
   # Invalid structural data in the database file.
   class CorruptionError < Error; end
+
+  # A reachable storage record failed the named structural check.
+  class VerificationError < CorruptionError
+    attr_reader :check, :offset, :path
+
+    def initialize(message, check:, offset: nil, path: nil)
+      @check = check
+      @offset = offset
+      @path = path&.dup&.freeze
+      super(message)
+    end
+  end
+
+  # Verification has no reader for this format and hash configuration.
+  class UnsupportedVerificationFormatError < FormatVersionError; end
+
+  # A finite resource limit prevented complete verification.
+  class VerificationLimitError < Error
+    attr_reader :limit
+
+    def initialize(limit)
+      @limit = limit
+      super("verification exceeded #{limit} limit")
+    end
+  end
+
   # A database opened with an incompatible value profile.
   class ProfileMismatchError < Error; end
   # An operation outside the allowed transaction state.

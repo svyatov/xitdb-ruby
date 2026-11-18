@@ -7,12 +7,14 @@ module XitDB
       # Each read advances the position. Call {#finish!} after the last field to reject extra bytes.
       # Integer and rational readers reject alternate, nonminimal representations of the same value.
       class Reader
+        attr_reader :field_position
+
         # Starts reading at the first byte of a payload.
         #
         # @param bytes [String] complete binary payload
         def initialize(bytes)
           @bytes = bytes.b
-          @position = 0
+          @position = @field_position = 0
         end
 
         # Reads one unsigned byte.
@@ -31,6 +33,7 @@ module XitDB
         # @return [Integer] nonnegative number
         # @raise [InvalidValueError] if the field is truncated or has redundant leading groups
         def u
+          start = @position
           value = 0
           shift = 0
           loop do
@@ -39,6 +42,7 @@ module XitDB
             if part < 0x80
               raise InvalidValueError, "nonminimal unsigned field" if shift.positive? && part.zero?
 
+              @field_position = start
               return value
             end
             shift += 7
@@ -69,6 +73,7 @@ module XitDB
         # @return [Integer] signed number
         # @raise [InvalidValueError] if the sign is invalid, bytes are truncated, or the magnitude is nonminimal
         def z
+          start = @position
           sign = byte
           raise InvalidValueError, "invalid integer sign" unless sign <= 1
 
@@ -78,6 +83,7 @@ module XitDB
           end
 
           value = magnitude.empty? ? 0 : magnitude.unpack1("H*").to_s.to_i(16)
+          @field_position = start
           sign.zero? ? value : -value
         end
 
@@ -86,12 +92,14 @@ module XitDB
         # @return [Rational] exact fraction
         # @raise [InvalidValueError] if fields are truncated or the fraction is not reduced with a positive denominator
         def q
+          start = @position
           numerator = z
           denominator = u
           unless denominator.positive? && numerator.gcd(denominator) == 1
             raise InvalidValueError, "rational must have a positive reduced denominator"
           end
 
+          @field_position = start
           Rational(numerator, denominator)
         end
 
@@ -111,6 +119,7 @@ module XitDB
         # @return [self] this reader
         # @raise [InvalidValueError] if unread bytes remain
         def finish!
+          @field_position = @position
           raise InvalidValueError, "trailing payload bytes" unless @position == @bytes.bytesize
 
           self
@@ -124,6 +133,7 @@ module XitDB
         # @return [String] requested binary bytes
         # @raise [InvalidValueError] if the requested bytes extend past the payload
         def take(size)
+          @field_position = @position
           raise InvalidValueError, "truncated payload field" if size > @bytes.bytesize - @position
 
           result = @bytes.byteslice(@position, size)

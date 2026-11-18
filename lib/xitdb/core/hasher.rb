@@ -52,6 +52,17 @@ module XitDB
         result.b.freeze
       end
 
+      # Selects the builtin portable digest identified by the file header.
+      def self.for_header(header)
+        case [header.hash_id, header.hash_size]
+        when ["sha1", 20] then sha1
+        when ["sha2", 32] then sha256
+        when ["sha2", 48] then sha384
+        when ["sha2", 64] then sha512
+        else raise ProfileMismatchError, "unknown hash identifier or size; supply an explicit hash configuration"
+        end
+      end
+
       # Builds the default 20-byte SHA-1 hasher.
       # @return [Hasher]
       def self.sha1
