@@ -56,14 +56,22 @@ module XitDB
         offset = pointer + width
         key = slot_at(offset)
         if @portable
-          check_digest!(key_source(key, offset), digest, pointer)
+          source = key_source(key, offset)
+          at(key_selector(source)) do
+            check_digest!(source, digest, pointer)
+            hash_value(set, offset + 9)
+          end
         else
           value(key, offset)
+          hash_value(set, offset + 9)
         end
-        entry = slot_at(offset + 9)
-        invalid!(:set_value, offset + 9) if set && entry != Core::Slot.new
-        value(entry, offset + 9)
         1
+      end
+
+      def hash_value(set, offset)
+        entry = slot_at(offset)
+        invalid!(:set_value, offset) if set && entry != Core::Slot.new
+        value(entry, offset)
       end
 
       def check_digest!(source, expected, offset)

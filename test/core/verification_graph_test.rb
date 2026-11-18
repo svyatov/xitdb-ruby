@@ -11,11 +11,12 @@ class VerificationGraphTest < Minitest::Test
 
   # Small synthetic records let checks assert the precise source field.
   class Fixture
-    attr_reader :data, :budget
+    attr_reader :data, :budget, :reads
 
     def initialize(limits = {})
       @data = "\0".b * 32
       @budget = XitDB::Verification::Budget.new(limits)
+      @reads = Hash.new(0)
     end
 
     def append(bytes)
@@ -32,7 +33,11 @@ class VerificationGraphTest < Minitest::Test
       Slot.new(tag: :array_list, value: append([slots.size, block(slots)].pack("Q>Q>")))
     end
 
-    def read(offset, size) = Core::Format.slice(data, offset, size)
+    def read(offset, size)
+      reads[[offset, size]] += 1
+      Core::Format.slice(data, offset, size)
+    end
+
     def bound = data.size + Core::Database::TRAILER_SIZE
     def header = Header.new(32, 20)
     def history_offsets = []
@@ -62,6 +67,39 @@ class VerificationGraphTest < Minitest::Test
     array = @fixture.append([65_537, block].pack("Q>Q>"))
 
     assert_nil verify(Slot.new(tag: :array_list, value: array))
+  end
+
+  def test_distinct_ancestor_paths_recheck_shared_subtrees
+    shared = @fixture.array([Slot.int(4)])
+    first = @fixture.array([shared, shared])
+    second = @fixture.array([shared])
+
+    assert_nil verify(@fixture.array([first, second]))
+    assert_equal 2, @fixture.reads[[shared.value, 16]]
+  end
+
+  def test_linked_unused_slots_require_known_tags_but_do_not_follow_pointers
+    node = @fixture.append([0, 1].pack("CC"))
+    @fixture.block([Slot.uint(10), Slot.new(tag: :bytes, value: 0)])
+    root = Slot.new(tag: :linked_array_list, value: @fixture.append([1, node].pack("Q>Q>")))
+
+    assert_nil verify(root)
+    @fixture.data[node + 11, 9] = Slot.new(tag: 123).to_bytes
+
+    assert_defect(:slot, node + 11, root)
+  end
+
+  def test_map_and_array_logical_path
+    items = @fixture.array([Slot.int(1), Slot.new(tag: 123)])
+    key = Slot.new(tag: :short_bytes, value: "items".ljust(8, "\0").unpack1("Q>"))
+    digest = Digest::SHA1.digest("items")
+    pair = @fixture.append(digest + key.to_bytes + items.to_bytes)
+    entries = Array.new(16, Slot.new)
+    entries[digest.getbyte(-1) & 15] = Slot.new(tag: :kv_pair, value: pair)
+    root = Slot.new(tag: :hash_map, value: @fixture.block(entries))
+    error = assert_raises(XitDB::VerificationError) { verify(root, :portable_root) }
+
+    assert_equal '$/"items"/1', error.path
   end
 
   def test_graph_limits_release_retained_state_after_failure

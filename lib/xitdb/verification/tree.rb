@@ -10,25 +10,33 @@ module XitDB
 
       def tree_root(slot)
         count, pointer = Core::Format.pair(read(slot.value, 16), "Q>Q>")
-        summary = tree_node(pointer, slot.tag, slot.value + 8)
+        summary = tree_node(pointer, slot.tag, slot.value + 8, 0)
         invalid!(:count, slot.value) unless count == summary[0]
         nil
       end
 
-      def tree_node(pointer, tag, offset)
+      def tree_node(pointer, tag, offset, base)
         reference(pointer, :tree_node, tag, offset) do
           kind, count = Core::Format.pair(read(pointer, 2), "CC")
           invalid!(:node, pointer) unless count <= 16 && [0, 1].include?(kind)
+          linked_padding!(pointer, count) if tag == :linked_array_list
           if kind.zero?
-            tree_leaf(pointer, tag, count)
+            tree_leaf(pointer, tag, count, base)
           else
             invalid!(:node, pointer) if count.zero?
-            tree_branch(pointer, tag, count)
+            tree_branch(pointer, tag, count, base)
           end
         end
       end
 
-      def tree_leaf(pointer, tag, count)
+      def linked_padding!(pointer, count)
+        (count...Core::BTree::CAPACITY).each do |index|
+          offset = pointer + 2 + (index * 9)
+          invalid!(:slot, offset) unless Core::Slot::TAGS.include?(slot_at(offset).tag)
+        end
+      end
+
+      def tree_leaf(pointer, tag, count, base)
         read(pointer, Core::BTree::LEAF_SIZE)
         # @type var first: byte_source?
         # @type var last: byte_source?
@@ -37,10 +45,10 @@ module XitDB
           offset = pointer + 2 + (index * 9)
           slot = slot_at(offset)
           if tag == :linked_array_list
-            value(slot, offset)
+            at((base + index).to_s) { value(slot, offset) }
           else
             key = sorted_entry(slot, tag, offset)
-            invalid!(:key_order, offset) if last && compare(last, key) >= 0
+            at(key_selector(key)) { invalid!(:key_order, offset) } if last && compare(last, key) >= 0
             first ||= key
             last = key
           end
@@ -57,16 +65,15 @@ module XitDB
           width = slot.tag == :kv_pair ? @scan.header.hash_size : 0
           digest = read(pointer, width)
           key = key_source(slot_at(pointer + width), pointer + width)
-          check_digest!(key, digest, pointer) if @portable && width.positive?
-          pos = pointer + width + 9
-          stored = slot_at(pos)
-          invalid!(:set_value, pos) if tag == :sorted_set && stored != Core::Slot.new
-          value(stored, pos)
+          at(key_selector(key)) do
+            check_digest!(key, digest, pointer) if @portable && width.positive?
+            hash_value(tag == :sorted_set, pointer + width + 9)
+          end
           key
         end
       end
 
-      def tree_branch(pointer, tag, count)
+      def tree_branch(pointer, tag, count, base)
         sorted = tag != :linked_array_list
         counts = sorted ? 290 : Core::BTree::LEAF_SIZE
         read(pointer, counts + 128)
@@ -79,7 +86,7 @@ module XitDB
           offset = pointer + 2 + (index * 9)
           slot = slot_at(offset)
           expect_tag!(slot, :index, offset)
-          size, child_height, low, high = tree_node(slot.value, tag, offset)
+          size, child_height, low, high = tree_node(slot.value, tag, offset, base + total)
           position = pointer + counts + (index * 8)
           invalid!(:count, position) unless size.positive? && size == uint(position)
           invalid!(:height, offset) if height && child_height != height

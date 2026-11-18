@@ -12,7 +12,7 @@ module XitDB
       include HashIndex
       include Tree
 
-      Frame = Data.define(:pointer, :identity, :path, :reader)
+      Frame = Data.define(:pointer, :identity, :number, :path, :reader)
       BYTE_TAGS = %i[bytes short_bytes].freeze
       MAP_TAGS = %i[hash_map counted_hash_map sorted_map].freeze
       # A completed tree summary holds four fields and at most two inline keys.
@@ -37,7 +37,7 @@ module XitDB
         @stack = []
         @retained = 0
         begin
-          @stack << Frame.new(nil, nil, @path, Fiber.new { value(root, @scan.root_offset) })
+          @stack << Frame.new(nil, nil, 0, @path, Fiber.new { value(root, @scan.root_offset) })
           traverse
         ensure
           @stack.each { |frame| release_frame(frame) if frame.pointer }
@@ -72,10 +72,13 @@ module XitDB
       def enter(pointer, layout, context, offset, reader)
         invalid!(:cycle, offset) if @active[pointer]
         invalid!(:layout, offset) if @layouts.key?(pointer) && @layouts[pointer] != layout
-        identity = [pointer, layout, context]
+        # A completed subtree proves absence of cycles only for the ancestors
+        # under which it was traversed. Byte records have no outgoing edges.
+        parent = layout == :bytes ? 0 : @stack.fetch(-1).number
+        identity = [pointer, layout, context, parent]
         return @completed[identity] if @completed.key?(identity)
 
-        path = @budget.path(@path, offset.to_s)
+        path = @path
         @budget.reserve!(:references)
         @retained += 1
         @budget.reserve!(:depth)
@@ -87,7 +90,7 @@ module XitDB
         end
         @layouts[pointer] = layout
         @active[pointer] = true
-        @stack << Frame.new(pointer, identity, path, Fiber.new(&reader))
+        @stack << Frame.new(pointer, identity, @retained, path, Fiber.new(&reader))
         nil
       end
 
@@ -104,7 +107,24 @@ module XitDB
       end
 
       def reference(pointer, layout, context, offset, &reader)
+        path = @path
         Fiber.yield([pointer, layout, context, offset, reader])
+      ensure
+        @path = path
+      end
+
+      def at(selector)
+        parent = @path
+        @path = @budget.path(parent, selector)
+        yield
+      ensure
+        @path = parent
+      end
+
+      def key_selector(source)
+        location, size = source
+        sample = part(location, 0, [size, 32].min).dump
+        size > 32 ? "#{sample}[...key]" : sample
       end
 
       def invalid!(check, offset)
@@ -154,7 +174,7 @@ module XitDB
         invalid!(:record_count, pointer + 4) if count > Core::Record::MAX_FIELDS
         count.times do |index|
           position = pointer + Core::Record::HEADER_SIZE + (index * 9)
-          value(slot_at(position), position)
+          at("field[#{index}]") { value(slot_at(position), position) }
         end
         nil
       end
@@ -162,21 +182,22 @@ module XitDB
       def array(pointer)
         count, block = Core::Format.pair(read(pointer, 16), "Q>Q>")
         level = [((count - 1).bit_length - 1) / 4, 0].max
-        array_block(block, level, count, pointer + 8)
+        array_block(block, level, count, pointer + 8, 0)
       end
 
-      def array_block(pointer, level, count, offset)
+      def array_block(pointer, level, count, offset, base)
         reference(pointer, :array_block, [level, count], offset) do
           read(pointer, Core::ArrayList::BLOCK_SIZE)
           span = 1 << (4 * level)
           count.ceildiv(span).times do |index|
             position = pointer + (index * 9)
             slot = slot_at(position)
+            rank = base + (span * index)
             if level.zero?
-              value(slot, position)
+              at(rank.to_s) { value(slot, position) }
             elsif slot != Core::Slot.new
-              expect_tag!(slot, :index, position)
-              array_block(slot.value, level - 1, [span, count - (span * index)].min, position)
+              at(rank.to_s) { expect_tag!(slot, :index, position) }
+              array_block(slot.value, level - 1, [span, count - (span * index)].min, position, rank)
             end
           end
           nil
