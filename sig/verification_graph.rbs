@@ -74,7 +74,7 @@ module XitDB
       def at: [A] (String) { () -> A } -> A
       def key_selector: (byte_source) -> String
       def invalid!: (Symbol, Integer) -> bot
-      def read: (Integer, Integer) -> String
+      def read: (Integer, Integer, ?extent_offset: Integer) -> String
       def slot_at: (Integer) -> Core::Slot
       def uint: (Integer) -> Integer
       def value: (Core::Slot, Integer) -> graph_summary

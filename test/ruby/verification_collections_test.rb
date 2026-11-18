@@ -74,6 +74,20 @@ class VerificationCollectionsTest < Minitest::Test
     end
   end
 
+  [XitDB::Ruby::PackedArray::TREE, Packed::SCHEMA_MAP, Pages::ARRAY, Pages::ROW].each do |metadata|
+    define_method("test_record_#{metadata}_reports_the_invalid_count_field") do
+      count_offset = nil
+      error = assert_raises(XitDB::VerificationError) do
+        verify do
+          value = record(metadata)
+          count_offset = value.value + 4
+          record(Packed::MAP, Slot.int(1), value)
+        end
+      end
+      assert_equal [:record_arity, count_offset], [error.check, error.offset]
+    end
+  end
+
   def test_envelope_reports_the_invalid_field_offset
     markers = XitDB::Ruby::Containers::MARKERS
     [[:sorted_map, 1, :key_kind], [:sorted_map, 2, :layout], [:map, 1, :layout],

@@ -74,8 +74,12 @@ class VerificationGraphTest < Minitest::Test
     first = @fixture.array([shared, shared])
     second = @fixture.array([shared])
 
-    assert_nil verify(@fixture.array([first, second]))
-    assert_equal 2, @fixture.reads[[shared.value, 16]]
+    [[first, second], [second, first]].each do |order|
+      @fixture.reads.clear
+
+      assert_nil verify(@fixture.array(order))
+      assert_equal 2, @fixture.reads[[shared.value, 16]]
+    end
   end
 
   def test_active_cycle_rejected_in_both_shared_view_orders
@@ -156,6 +160,13 @@ class VerificationGraphTest < Minitest::Test
     @fixture.data[block, 9] = Slot.new(tag: :bytes, value: outside).to_bytes
 
     assert_defect(:extent, outside, root)
+  end
+
+  def test_external_bytes_report_the_invalid_length_field
+    pointer = @fixture.append([5, "data"].pack("Q>a*"))
+    root = Slot.new(tag: :bytes, value: pointer)
+
+    assert_defect(:extent, pointer, root)
   end
 
   def test_record_reused_in_incompatible_layout

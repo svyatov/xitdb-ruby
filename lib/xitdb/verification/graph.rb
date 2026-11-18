@@ -160,9 +160,9 @@ module XitDB
         raise VerificationError.new("invalid #{check.to_s.tr("_", " ")}", check: check, offset: offset, path: @path)
       end
 
-      def read(offset, length)
+      def read(offset, length, extent_offset: offset)
         limit = @scan.bound - Core::Database::TRAILER_SIZE
-        invalid!(:extent, offset) if offset < @scan.header.data_offset || offset + length > limit
+        invalid!(:extent, extent_offset) if offset < @scan.header.data_offset || offset + length > limit
         @scan.read(offset, length)
       end
 
@@ -243,7 +243,7 @@ module XitDB
         reference(slot.value, :bytes, slot.full?, offset) do
           size = uint(slot.value)
           start = slot.value + 8
-          read(start + size, slot.full? ? 2 : 0)
+          read(start + size, slot.full? ? 2 : 0, extent_offset: slot.value)
           # @type var source: byte_source
           source = [start, size]
           each_chunk(source) { |_chunk| nil } # Reading every chunk checks its physical extent.

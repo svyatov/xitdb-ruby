@@ -56,7 +56,7 @@ module XitDB
         when Packed::SCHEMA_MAP then dictionary(start, count)
         when Ruby::PackedArray::INLINE then inline(start, count, expected)
         when Ruby::PackedArray::TREE
-          invalid!(:record_arity, pointer) unless count == 1
+          invalid!(:record_arity, pointer + 4) unless count == 1
           sequence(expect!(slot_at(start), :array_list, start), expected)
         when Pages::ARRAY then page_array(start, count)
         when Pages::ROW then row(start, count)
@@ -84,7 +84,7 @@ module XitDB
       end
 
       def dictionary(start, count)
-        invalid!(:record_arity, start) unless count.between?(3, 17)
+        invalid!(:record_arity, start - 4) unless count.between?(3, 17)
         pointer = expect!(slot_at(start), :record, start).value
         metadata, width = Core::Format.pair(@scan.read(pointer, 8), "NN")
         invalid!(:dictionary, pointer) unless metadata == Packed::DICTIONARY
@@ -110,7 +110,7 @@ module XitDB
       end
 
       def page_array(start, count)
-        invalid!(:record_arity, start) unless count == 2
+        invalid!(:record_arity, start - 4) unless count == 2
         rows = expect!(slot_at(start), :uint, start).value
         pages = expect!(slot_at(start + 9), :array_list, start + 9)
         size = uint(pages.value)
@@ -123,7 +123,7 @@ module XitDB
       end
 
       def row(start, count)
-        invalid!(:record_arity, start) unless count == 3
+        invalid!(:record_arity, start - 4) unless count == 3
         page = slot_at(start)
         invalid!(:page, start) unless Graph::BYTE_TAGS.include?(page.tag) && !page.full?
         index = expect!(slot_at(start + 9), :uint, start + 9).value
