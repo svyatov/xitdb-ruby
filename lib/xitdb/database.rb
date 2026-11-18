@@ -88,13 +88,7 @@ module XitDB
     # @return [Core::Hasher]
     # @raise [ProfileMismatchError] if explicit configuration is required
     def self.header_hasher(header)
-      case [header.hash_id, header.hash_size]
-      when ["sha1", 20] then Core::Hasher.sha1
-      when ["sha2", 32] then Core::Hasher.sha256
-      when ["sha2", 48] then Core::Hasher.sha384
-      when ["sha2", 64] then Core::Hasher.sha512
-      else raise ProfileMismatchError, "unknown hash identifier or size; supply an explicit hash configuration"
-      end
+      Core::Hasher.for_header(header)
     end
     private_class_method :header_hasher
 

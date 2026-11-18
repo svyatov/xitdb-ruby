@@ -12,6 +12,21 @@ module XitDB
   class CorruptionError < Error
   end
 
+  class VerificationError < CorruptionError
+    attr_reader check: Symbol
+    attr_reader offset: Integer?
+    attr_reader path: String?
+    def initialize: (String, check: Symbol, ?offset: Integer?, ?path: String?) -> void
+  end
+
+  class UnsupportedVerificationFormatError < FormatVersionError
+  end
+
+  class VerificationLimitError < Error
+    attr_reader limit: Symbol
+    def initialize: (Symbol) -> void
+  end
+
   class ProfileMismatchError < Error
   end
 
