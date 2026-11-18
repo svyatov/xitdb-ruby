@@ -1,8 +1,8 @@
 # Ruby profile
 
 `require "xitdb/ruby"` provides `XitDB::Ruby.open(path, readonly: false, lock_timeout: 5.0, codecs: [])` and `XitDB::Ruby.memory(codecs: [])`.
-Configuration belongs to each handle. The file identifier `rb04` selects SHA-256 over canonical typed keys, compact native containers, and indexed row pages.
-Files using `rb01`, `rb02`, or `rb03` are incompatible and reject without modification.
+Configuration belongs to each handle. The file identifier `rb05` selects SHA-256 over canonical typed keys, compact native containers, and indexed row pages.
+Files using `rb01`, `rb02`, `rb03`, or `rb04` are incompatible and reject without modification.
 This pre-1.0 format has no migration or backward reader.
 
 Small maps and sets store up to sixteen original keys directly in insertion order in a Core record. Map metadata is `1`, followed by alternating original-key and value slots; set metadata is `6`, followed by original-key slots. Keys must have distinct canonical identities, at most 128 canonical bytes and at most 256 encoded scalar bytes. Larger collections and oversized keys use the indexed envelope representation. Promotion preserves order and the first original key representation, and clearing an indexed collection retains that representation.
@@ -81,4 +81,4 @@ Callbacks can read transaction views. Coercion, dump, load, and conversion callb
 The guard applies across Context instances; nested writes raise `TransactionStateError` before changing state.
 Callback failure aborts the affected assignment. Byte-stream callbacks retain their separate non-overlapping sibling-write behavior.
 
-See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v4.md).
+See [native workflows](../examples/ruby.rb) and the [wire contract](ruby-profile-v5.md).

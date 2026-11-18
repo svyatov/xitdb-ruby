@@ -17,36 +17,35 @@ module XitDB
 
         body = source.byteslice(0, source.bytesize - 32) || raise(InvalidValueError, "compact page body")
         raise InvalidValueError, "compact page checksum" unless Digest::SHA256.digest(body) == source.byteslice(-32, 32)
-        raise InvalidValueError, "compact page magic" unless body.byteslice(0, 4) == "XR01"
+
+        magic = body.byteslice(0, 4)
+        raise InvalidValueError, "compact page magic" unless %w[XR01 XF01 XA01].include?(magic)
 
         body[0, 4] = "XP01"
         super(body, expected)
-        @directory = @position
-        @payload = @directory + ((@count + 1) * 2)
-        @length = @bytes.bytesize - @payload
-        return if @length >= 0 && offset(0).zero? && offset(@count) == @length
-
-        raise InvalidValueError, "compact page directory"
+        @padded = magic == "XA01"
+        read_layout(magic != "XR01")
       end
 
       def row(index)
         raise IndexError, "row outside page" unless index.between?(0, @count - 1)
 
-        # @type var positions: Array[Integer]
-        positions = (@bytes.byteslice(@directory + (index * 2),
-                                      4) || raise(InvalidValueError, "compact row offsets")).unpack("S<2")
-        left = positions.fetch(0)
-        right = positions.fetch(1)
+        left = offset(index)
+        right = offset(index + 1)
         raise InvalidValueError, "compact row offsets" unless right.between?(left, @length)
 
         @position = @payload + left
-        result = read_row
-        raise InvalidValueError, "compact row framing" unless @position == @payload + right
-
-        result
+        framed_row(@payload + right)
       end
 
       def page
+        if (stride = @stride)
+          @position = @payload
+          return ::Array.new(@count) do |index|
+            framed_row(@payload + ((index + 1) * stride))
+          end
+        end
+
         # @type var positions: Array[Integer]
         positions = (@bytes.byteslice(@directory,
                                       (@count + 1) * 2) || raise(InvalidValueError,
@@ -63,9 +62,35 @@ module XitDB
 
       private
 
+      def framed_row(bound)
+        result = read_row
+        if @padded
+          while @position < bound
+            raise InvalidValueError, "invalid row padding" unless byte.zero?
+          end
+        end
+        raise InvalidValueError, "compact row framing" unless @position == bound
+
+        result
+      end
+
+      def read_layout(fixed)
+        @directory = @position
+        @payload = fixed ? @directory : @directory + ((@count + 1) * 2)
+        @length = @bytes.bytesize - @payload
+        if fixed
+          @stride, remainder = @length.divmod(@count)
+          raise InvalidValueError, "compact page stride" unless remainder.zero?
+        elsif @length.negative? || !offset(0).zero? || offset(@count) != @length
+          raise InvalidValueError, "compact page directory"
+        end
+      end
+
       def offset(index)
-        Integer((@bytes.byteslice(@directory + (index * 2),
-                                  2) || raise(InvalidValueError, "compact page directory")).unpack1("S<"))
+        stride = @stride
+        return index * stride if stride
+
+        Integer(@bytes.unpack1("S<", offset: @directory + (index * 2)))
       end
     end
   end

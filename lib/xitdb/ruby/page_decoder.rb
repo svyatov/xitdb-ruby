@@ -72,7 +72,10 @@ module XitDB
       end
 
       def read_row
-        @keys.to_h { |key| [key, cell] }
+        # @type var row: PageCodec::row
+        row = {}
+        @keys.each { |key| row[key] = cell }
+        row
       end
 
       def cell
@@ -82,10 +85,12 @@ module XitDB
         when 1 then false
         when 2 then true
         when 3
-          value = unsigned
+          value = integer_payload
           (value >> 1) ^ -(value & 1)
         when 4 then take(8).unpack1("G")
         else
+          return tag - 128 if tag.between?(64, 191)
+
           encoding = string_encoding(tag)
           take(unsigned).force_encoding(encoding)
         end
@@ -95,9 +100,11 @@ module XitDB
         tag = byte
         case tag
         when 0, 1, 2 then nil
-        when 3 then unsigned
+        when 3 then integer_payload
         when 4 then advance!(8)
         else
+          return if tag.between?(64, 191)
+
           string_encoding(tag)
           advance!(unsigned)
         end
@@ -128,16 +135,26 @@ module XitDB
         raise InvalidValueError, "invalid Ruby page encoding"
       end
 
+      def integer_payload
+        value = unsigned
+        raise InvalidValueError, "noncanonical Ruby page integer" if value < 128
+
+        value
+      end
+
       def unsigned
-        value = 0
-        (0..63).step(7) do |shift|
+        first = byte
+        return first if first < 128
+
+        value = first & 127
+        (7..63).step(7) do |shift|
           part = byte
           raise InvalidValueError, "Ruby page integer overflow" if shift == 63 && part > 1
 
           value |= (part & 127) << shift
           next unless part < 128
 
-          raise InvalidValueError, "noncanonical Ruby page integer" if shift.positive? && part.zero?
+          raise InvalidValueError, "noncanonical Ruby page integer" if part.zero?
 
           return value
         end

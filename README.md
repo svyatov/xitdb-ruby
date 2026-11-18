@@ -58,7 +58,7 @@ end
 | Entry point | Values and keys | File identifier |
 | --- | --- | --- |
 | `XitDB.open`, `XitDB.memory` | Portable integers, floats, bytes, collections, and String keys | `sha1` by default; `hash: :sha256` selects `sha2` |
-| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb04` |
+| `XitDB::Ruby.open`, `XitDB::Ruby.memory` | Ruby scalar values, typed keys, and ordered maps and sets | `rb05` |
 | `XitDB::Core::Database` | Raw slots, every upstream collection, and arbitrary roots | Explicit storage configuration |
 
 Opening never converts a profile. Public entry points reject a mismatched profile and pre-existing zero-byte files.
@@ -90,8 +90,8 @@ Start with [Learn xitdb](docs/learning.md) for a beginner's explanation of value
 Ruby source includes YARD API comments. With YARD available, run `yard doc` and open `doc/index.html`.
 
 Read the [portable guide](docs/portable.md), [Ruby guide](docs/ruby.md), and [core guide](docs/core.md).
-The [Ruby wire contract](docs/ruby-profile-v4.md) defines compact native containers, indexed row pages, and exact scalar payloads.
-Pinned references preserve opaque Ruby scalar bytes inside portable containers. Native `rb04` containers require the Core record extension.
+The [Ruby wire contract](docs/ruby-profile-v5.md) defines compact native containers, indexed row pages, and exact scalar payloads.
+Pinned references preserve opaque Ruby scalar bytes inside portable containers. Native `rb05` containers require the Core record extension.
 
 ## Run the workflows
 
@@ -129,7 +129,7 @@ RuboCop loads the Minitest, Performance, and Rake plugins. Individual checks are
 RBS signatures ship in `sig/`. Custom codec results have an unknown type until callers validate their class.
 Type coverage measures checked method calls. It does not prove that arbitrary codec output meets an application's domain constraints.
 
-The workflow defines separate `reference` and `linux-memory` jobs alongside Linux MRI 3.3, 3.4, and 4.0 and macOS jobs.
+The workflow runs MRI 3.3, 3.4, and 4.0 on Ubuntu, with separate `reference` and `linux-memory` jobs.
 Configure every job as a required branch check. Workflow definitions alone do not enable repository branch protection.
 Reference tools are mandatory for `ruby script/interop.rb --all`; unavailable tools fail that gate.
 The [measurement guide](docs/benchmarks.md) records bounded-memory evidence and conversion costs.

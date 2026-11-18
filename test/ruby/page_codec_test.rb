@@ -50,6 +50,25 @@ class PageCodecTest < Minitest::Test
     assert_raises(TypeError) { @codec.decode_page(bytes, object) }
   end
 
+  def test_small_integer_cells_have_a_unique_one_byte_encoding
+    values = (-64..63).to_a
+    rows = values.map { |value| { "a" => value } }
+    indexed = @codec.encode_page(rows)
+    sequential = XitDB::Ruby::PageEncoder.new.encode(rows)
+
+    assert_equal "XF01", indexed.byteslice(0, 4)
+    assert_equal (64..191).to_a.pack("C*"), sequential.byteslice(-128, 128)
+    [indexed, sequential].each do |page|
+      assert_equal rows, @codec.decode_page(page)
+      assert_equal rows.last, @codec.decode_row(page, 127)
+    end
+
+    # A long-form -64 is invalid even when skipping the first row.
+    invalid = "XP01\x02\x01\x05\x01a\x03\x7f\x00".b
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_page(invalid) }
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_row(invalid, 1) }
+  end
+
   def test_exact_cells_and_selected_rows
     values = [nil, false, true, 0, -1, (2**62) - 1, -(2**62), 0.0, -0.0,
               Float::INFINITY, -Float::INFINITY, ["7ff800000000002a"].pack("H*").unpack1("G")]

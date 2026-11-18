@@ -16,7 +16,7 @@ class IndexedPageTest < Minitest::Test
       rows = Array.new(count) { |index| { "integer" => index - 100, "float" => -0.0, "string" => "\xff".b } }
       bytes = @codec.encode_page(rows)
 
-      assert_equal "XR01", bytes.byteslice(0, 4)
+      assert_equal(count <= 32 ? "XF01" : "XA01", bytes.byteslice(0, 4))
       assert_operator bytes.bytesize, :<=, 65_536
       assert_equal rows, @codec.decode_page(bytes, count)
       [0, count / 2, count - 1].uniq.each do |index|
@@ -57,8 +57,8 @@ class IndexedPageTest < Minitest::Test
 
   def test_rechecksummed_unaccessed_invalid_cells_are_deferred
     bytes = @codec.encode_page([{ "a" => nil }, { "a" => nil }])
-    # Nine schema bytes, six offset bytes, then two nil cells.
-    bytes.setbyte(16, 255)
+    # Nine schema bytes precede two fixed-width nil cells.
+    bytes.setbyte(10, 255)
     bytes = checksum(bytes)
 
     assert_equal({ "a" => nil }, @codec.decode_row(bytes, 0))
@@ -67,7 +67,10 @@ class IndexedPageTest < Minitest::Test
   end
 
   def test_rechecksummed_offsets_reject_missing_and_overlapping_rows
-    bytes = @codec.encode_page([{ "a" => nil }, { "a" => nil }])
+    bytes = @codec.encode_page([{ "a" => nil }, { "a" => "long enough to need offsets" }])
+
+    assert_equal "XR01", bytes.byteslice(0, 4)
+
     [0, 65_535].each do |offset|
       damaged = bytes.dup
       damaged[11, 2] = [offset].pack("S<")
@@ -76,6 +79,37 @@ class IndexedPageTest < Minitest::Test
       assert_raises(XitDB::InvalidValueError) { @codec.decode_row(damaged, 0) }
       assert_raises(XitDB::InvalidValueError) { @codec.decode_page(damaged) }
     end
+  end
+
+  def test_fixed_width_pages_validate_stride_and_each_row_boundary
+    empty_rows = Array.new(32) { {} }
+    bytes = @codec.encode_page(empty_rows)
+
+    assert_equal "XF01", bytes.byteslice(0, 4)
+    assert_equal empty_rows, @codec.decode_page(bytes)
+    assert_equal({}, @codec.decode_row(bytes, 31))
+
+    bytes = @codec.encode_page([{ "a" => false }, { "a" => nil }])
+    uneven = checksum(bytes.dup.insert(9, "\x00"))
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_row(uneven, 0) }
+    bytes.setbyte(9, 5) # A string length would consume the next row's byte.
+    damaged = checksum(bytes)
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_row(damaged, 0) }
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_page(damaged) }
+  end
+
+  def test_padded_rows_reject_nonzero_padding_in_an_accessed_row
+    rows = [{ "a" => nil }, { "a" => "" }]
+    bytes = @codec.encode_page(rows)
+
+    assert_equal "XA01", bytes.byteslice(0, 4)
+    assert_equal rows, @codec.decode_page(bytes)
+    bytes.setbyte(10, 1) # Padding after the first row's nil.
+    damaged = checksum(bytes)
+
+    assert_equal rows.last, @codec.decode_row(damaged, 1)
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_row(damaged, 0) }
+    assert_raises(XitDB::InvalidValueError) { @codec.decode_page(damaged) }
   end
 
   def test_directory_and_integrity_overhead_falls_back_without_losing_values
@@ -107,9 +141,9 @@ class IndexedPageTest < Minitest::Test
   end
 
   def test_new_profile_identifier_and_legacy_rejection_preserve_files
-    XitDB::Ruby.memory { |database| assert_equal "rb04", database.core.header.hash_id }
+    XitDB::Ruby.memory { |database| assert_equal "rb05", database.core.header.hash_id }
     Dir.mktmpdir do |directory|
-      %w[rb01 rb02 rb03].each do |identifier|
+      %w[rb01 rb02 rb03 rb04].each do |identifier|
         path = File.join(directory, identifier)
         core = XitDB::Core::Database.open(path, hash_id: identifier, hash_size: 32)
         core.close
