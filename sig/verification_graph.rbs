@@ -1,0 +1,83 @@
+module XitDB
+  module Verification
+    type byte_source = [String | Integer, Integer]
+    type tree_summary = [Integer, Integer, byte_source?, byte_source?]
+    type graph_summary = byte_source | tree_summary | Integer | nil
+    type slot_tag = Symbol | Integer
+
+    module Tree
+      @budget: Budget
+      @scan: Scan
+      @portable: bool
+      private
+      def tree_root: (Core::Slot) -> nil
+      def tree_node: (Integer, slot_tag, Integer) -> tree_summary
+      def tree_leaf: (Integer, slot_tag, Integer) -> tree_summary
+      def sorted_entry: (Core::Slot, slot_tag, Integer) -> byte_source
+      def tree_branch: (Integer, slot_tag, Integer) -> tree_summary
+      def separator!: (Integer, Integer, byte_source?, byte_source?) -> void
+      def compare: (byte_source, byte_source) -> Integer
+    end
+
+    module HashIndex
+      @scan: Scan
+      @portable: bool
+      private
+      def hash_root: (Core::Slot) -> Integer
+      def hash_block: (Integer, bool, Integer, Integer) -> Integer
+      def hash_child: (Core::Slot, Integer, bool, Integer, Integer) -> Integer
+      def hash_entry: (Integer, bool, Integer, Integer) -> Integer
+      def check_digest!: (byte_source, String, Integer) -> void
+    end
+
+    class Graph
+      include Tree
+      include HashIndex
+
+      class Frame < Data
+        attr_reader pointer: Integer?
+        attr_reader identity: untyped
+        attr_reader path: String
+        attr_reader reader: Fiber
+        def self.new: (Integer?, untyped, String, Fiber) -> instance
+      end
+
+      BYTE_TAGS: Array[Symbol]
+      MAP_TAGS: Array[Symbol]
+      SUMMARY_BYTES: Integer
+      @scan: Scan
+      @budget: Budget
+      @portable: bool
+      @path: String
+      @active: Hash[Integer, bool]
+      @layouts: Hash[Integer, slot_tag]
+      @completed: Hash[Array[untyped], graph_summary]
+      @stack: Array[Frame]
+      @retained: Integer
+
+      def initialize: (Scan) -> void
+      def verify!: (Core::Slot?, role: Symbol) -> nil
+      private
+      def traverse: () -> void
+      def enter: (Integer, slot_tag, untyped, Integer, ^() -> graph_summary) -> graph_summary
+      def complete: (Frame, graph_summary) -> void
+      def release_frame: (Frame) -> void
+      def reference: [A] (Integer, slot_tag, untyped, Integer) { () -> A } -> A
+      def invalid!: (Symbol, Integer) -> bot
+      def read: (Integer, Integer) -> String
+      def slot_at: (Integer) -> Core::Slot
+      def uint: (Integer) -> Integer
+      def value: (Core::Slot, Integer) -> graph_summary
+      def collection: (Core::Slot, Integer) -> graph_summary
+      def record: (Integer) -> nil
+      def array: (Integer) -> nil
+      def array_block: (Integer, Integer, Integer, Integer) -> nil
+      def expect_tag!: (Core::Slot, Symbol, Integer) -> void
+      def bytes: (Core::Slot, Integer) -> byte_source
+      def inline_bytes: (Core::Slot, Integer) -> byte_source
+      def key_source: (Core::Slot, Integer) -> byte_source
+      def each_chunk: (byte_source) { (String) -> void } -> void
+      def part: (Integer | String, Integer, Integer) -> String
+    end
+  end
+end

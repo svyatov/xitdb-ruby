@@ -10,7 +10,7 @@ module XitDB
     # One captured committed boundary and its latest history entry.
     class Scan
       CHUNK_SIZE = 65_536
-      attr_reader :bound, :header, :profile, :root, :root_offset, :budget
+      attr_reader :bound, :header, :profile, :root, :root_offset, :budget, :history_offsets
 
       def self.open(path, limits: {})
         store = Core::FileStore.open(path, readonly: true)
@@ -30,7 +30,9 @@ module XitDB
         trailer = bound - Core::Database::TRAILER_SIZE
         history = checked(:trailer, trailer) { Core::Replication.trailer(store, header, bound, bound).first }
         @root_offset = trailer
+        @history_offsets = []
         @root = latest(history)
+        @history_offsets.freeze
       rescue FormatVersionError => e
         raise if e.is_a?(UnsupportedVerificationFormatError)
 
@@ -73,7 +75,7 @@ module XitDB
         count, pointer = Core::Format.pair(history_record(history.value, Core::ArrayList::HEADER_SIZE), "Q>Q>")
         index = count - 1
         levels = [((index.bit_length - 1) / 4), 0].max
-        ancestors = [history.value]
+        ancestors = @history_offsets << history.value
         levels.downto(0) do |level|
           if ancestors.include?(pointer)
             raise VerificationError.new("cycle in history", check: :history, offset: pointer)
